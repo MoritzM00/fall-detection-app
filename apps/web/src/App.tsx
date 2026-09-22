@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createJob, createSample, getJob, uploadVideo } from "./api";
 import type { AnalysisJob, VideoAsset } from "./api";
 
@@ -8,13 +8,51 @@ function formatLabel(label: string): string {
   return label.replaceAll("_", " ");
 }
 
+function formatTime(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds - minutes * 60;
+  return `${String(minutes).padStart(2, "0")}:${remainder.toFixed(3).padStart(6, "0")}`;
+}
+
+function sampleTimestamps(startSeconds: number, endSeconds: number, count = 16): number[] {
+  const step = (endSeconds - startSeconds) / (count - 1);
+  return Array.from({ length: count }, (_, index) => startSeconds + step * index);
+}
+
+function UploadedFrame({ src, timestamp }: { src: string; timestamp: number }) {
+  const frame = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    const element = frame.current;
+    if (!element) return;
+    const seek = () => {
+      element.currentTime = Math.min(timestamp, Math.max(0, element.duration - 0.001));
+    };
+    if (element.readyState >= 1) seek();
+    else element.addEventListener("loadedmetadata", seek, { once: true });
+    return () => element.removeEventListener("loadedmetadata", seek);
+  }, [src, timestamp]);
+
+  return <video ref={frame} src={src} muted playsInline preload="metadata" aria-hidden="true" />;
+}
+
 export default function App() {
   const [video, setVideo] = useState<VideoAsset | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [job, setJob] = useState<AnalysisJob | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [duration, setDuration] = useState<number | null>(null);
+  const [startSeconds, setStartSeconds] = useState(0);
+  const [endSeconds, setEndSeconds] = useState(2);
   const fileInput = useRef<HTMLInputElement>(null);
+
+  const previewTimestamps = useMemo(
+    () => endSeconds > startSeconds ? sampleTimestamps(startSeconds, endSeconds) : [],
+    [startSeconds, endSeconds],
+  );
+  const rangeDuration = endSeconds - startSeconds;
+  const isBaselineWindow = Math.abs(rangeDuration - 2) < 0.001;
 
   useEffect(() => {
     return () => {
@@ -40,8 +78,12 @@ export default function App() {
     setError(null);
     setJob(null);
     try {
-      setVideo(await createSample());
+      const sample = await createSample();
+      setVideo(sample);
       setPreviewUrl(null);
+      setDuration(sample.duration_seconds ?? 2);
+      setStartSeconds(0);
+      setEndSeconds(2);
     } catch (sampleError) {
       setError(sampleError instanceof Error ? sampleError.message : "Could not create sample");
     } finally {
@@ -59,6 +101,9 @@ export default function App() {
       const uploaded = await uploadVideo(file);
       setVideo(uploaded);
       setPreviewUrl(URL.createObjectURL(file));
+      setDuration(null);
+      setStartSeconds(0);
+      setEndSeconds(2);
     } catch (uploadError) {
       setError(uploadError instanceof Error ? uploadError.message : "Upload failed");
     } finally {
@@ -71,7 +116,7 @@ export default function App() {
     setBusy(true);
     setError(null);
     try {
-      setJob(await createJob(video.id));
+      setJob(await createJob(video.id, startSeconds, endSeconds));
     } catch (jobError) {
       setError(jobError instanceof Error ? jobError.message : "Could not start analysis");
     } finally {
@@ -81,6 +126,14 @@ export default function App() {
 
   const active = job && !terminalStates.has(job.state);
   const result = job?.prediction;
+  const rangeValid = startSeconds >= 0 && endSeconds > startSeconds && rangeDuration <= 30 && (duration === null || endSeconds <= duration);
+
+  function updateRange(nextStart: number, nextEnd: number) {
+    setStartSeconds(nextStart);
+    setEndSeconds(nextEnd);
+    setJob(null);
+    setError(null);
+  }
 
   return (
     <main className="shell">
@@ -128,18 +181,62 @@ export default function App() {
                 <div className="window-light" />
                 <div className="corridor-line left" /><div className="corridor-line right" />
                 <div className="figure"><span className="head" /><span className="body" /><span className="leg one" /><span className="leg two" /></div>
-                <span className="scene-label">SYNTHETIC CORRIDOR · 00:02</span>
+                <span className="scene-label">SYNTHETIC CORRIDOR · 00:06</span>
               </div>
             )}
-            {video?.source === "upload" && previewUrl && <video src={previewUrl} controls />}
+            {video?.source === "upload" && previewUrl && (
+              <video
+                src={previewUrl}
+                controls
+                onLoadedMetadata={(event) => {
+                  const nextDuration = event.currentTarget.duration;
+                  if (!Number.isFinite(nextDuration)) return;
+                  setDuration(nextDuration);
+                  setEndSeconds(Math.min(2, nextDuration));
+                }}
+              />
+            )}
           </div>
 
           {video && (
-            <div className="clip-controls">
-              <div><span className="control-label">Analysis window</span><strong>00:00.000 — 00:02.000</strong></div>
-              <div className="timeline"><span className="selection" /><i className="playhead" /></div>
-              <button className="text-button" onClick={() => { setVideo(null); setJob(null); setPreviewUrl(null); }}>Change source</button>
-            </div>
+            <>
+              <div className="clip-controls">
+                <div><span className="control-label">Analysis window</span><strong>{formatTime(startSeconds)} — {formatTime(endSeconds)}</strong></div>
+                <div className="range-fields">
+                  <label>Start <input type="number" min="0" max={Math.max(0, endSeconds - 0.1)} step="0.1" value={startSeconds} onChange={(event) => { if (Number.isFinite(event.currentTarget.valueAsNumber)) updateRange(event.currentTarget.valueAsNumber, endSeconds); }} /></label>
+                  <span>to</span>
+                  <label>End <input type="number" min={startSeconds + 0.1} max={duration ?? 30} step="0.1" value={endSeconds} onChange={(event) => { if (Number.isFinite(event.currentTarget.valueAsNumber)) updateRange(startSeconds, event.currentTarget.valueAsNumber); }} /></label>
+                </div>
+                <button className="text-button" onClick={() => { setVideo(null); setJob(null); setPreviewUrl(null); setDuration(null); }}>Change source</button>
+              </div>
+              {!rangeValid && <p className="range-error" role="alert">Choose a valid window of up to 30 seconds within the clip.</p>}
+
+              <section className="frame-preview" aria-labelledby="frame-preview-title">
+                <div className="frame-preview-heading">
+                  <div><span className="control-label">Sample preview</span><strong id="frame-preview-title">16 timestamped frames</strong></div>
+                  <span className="preview-disclaimer">Visual preview only · center crop</span>
+                </div>
+                {rangeValid && <div className="frame-strip">
+                  {previewTimestamps.map((timestamp, index) => (
+                    <figure className="sample-frame" key={`${timestamp}-${index}`}>
+                      <div className="frame-image">
+                        {video.source === "upload" && previewUrl ? (
+                          <UploadedFrame src={previewUrl} timestamp={timestamp} />
+                        ) : (
+                          <div className="synthetic-frame">
+                            <i className="mini-window" />
+                            <i className="mini-figure" style={{ transform: `rotate(${Math.min(78, (index / 15) * 88)}deg)` }} />
+                          </div>
+                        )}
+                        <span>{String(index + 1).padStart(2, "0")}</span>
+                      </div>
+                      <figcaption>{timestamp.toFixed(3)}s</figcaption>
+                    </figure>
+                  ))}
+                </div>}
+                <p className="preview-note">Preview timestamps match the planned sampler. The simulated backend does not yet decode these frames for inference.</p>
+              </section>
+            </>
           )}
         </div>
 
@@ -152,8 +249,9 @@ export default function App() {
           <div className="setting-row"><span>Model</span><strong>Qwen3-VL 8B</strong></div>
           <div className="setting-row"><span>Frames</span><strong>16 · center crop</strong></div>
           <div className="setting-row"><span>Preset</span><strong>Thesis baseline v1</strong></div>
+          <div className="setting-row"><span>Window</span><strong>{rangeDuration.toFixed(1)} s {!isBaselineWindow && <small className="experimental">Experimental</small>}</strong></div>
 
-          <button className="analyze-button" disabled={!video || busy || Boolean(active)} onClick={analyze}>
+          <button className="analyze-button" disabled={!video || !rangeValid || busy || Boolean(active)} onClick={analyze}>
             {active ? <><i className="spinner" /> {job?.state === "queued" ? "Queued" : "Analyzing"}</> : "Run analysis"}
           </button>
 

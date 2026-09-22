@@ -53,15 +53,18 @@ export function uploadVideo(file: File): Promise<VideoAsset> {
   return request("/videos", { method: "POST", body });
 }
 
-export function createJob(videoId: string): Promise<AnalysisJob> {
+export function createJob(videoId: string, startSeconds: number, endSeconds: number): Promise<AnalysisJob> {
   return request("/analysis-jobs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ video_id: videoId, start_seconds: 0, end_seconds: 2 }),
+    body: JSON.stringify({
+      video_id: videoId,
+      start_seconds: startSeconds,
+      end_seconds: endSeconds,
+    }),
   });
 }
 
 export function getJob(jobId: string): Promise<AnalysisJob> {
   return request(`/analysis-jobs/${jobId}`);
 }
-
