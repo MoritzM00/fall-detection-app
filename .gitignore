@@ -7,8 +7,8 @@
 __pycache__/
 *.py[cod]
 *.sqlite3
+data/omnifall/
 media/
 node_modules/
 dist/
 coverage/
-

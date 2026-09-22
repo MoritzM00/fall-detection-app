@@ -10,13 +10,21 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from fall_detection.config import Settings
-from fall_detection.models import AnalysisJob, AnalysisJobCreate, VideoAsset
+from fall_detection.media import list_dataset_video_paths, resolve_dataset_video
+from fall_detection.models import (
+    AnalysisJob,
+    AnalysisJobCreate,
+    DatasetVideoCreate,
+    DatasetVideoOption,
+    VideoAsset,
+)
 from fall_detection.prompts import PRESET_ID, THESIS_BASELINE_PROMPT
 from fall_detection.repository import Repository
 from fall_detection.taxonomy import ACTIVITY_LABELS
 
 settings = Settings.from_env()
 repository = Repository(settings.database_path)
+dataset_video_root = settings.data_dir / "omnifall" / "videos"
 
 
 @asynccontextmanager
@@ -59,6 +67,37 @@ def capabilities() -> dict[str, object]:
 def create_sample_video() -> VideoAsset:
     """Create or return the deterministic synthetic sample asset."""
     return repository.create_sample_video()
+
+
+@app.get("/dataset-videos", response_model=list[DatasetVideoOption])
+def list_dataset_videos() -> list[DatasetVideoOption]:
+    """List videos already prepared in the local OmniFall directory."""
+    options: list[DatasetVideoOption] = []
+    for relative_path in list_dataset_video_paths(dataset_video_root):
+        parts = Path(relative_path).parts
+        if len(parts) < 5:
+            continue
+        options.append(
+            DatasetVideoOption(
+                path=relative_path,
+                dataset=parts[0],
+                subject=parts[-3],
+                collection=parts[-2],
+                filename=parts[-1],
+            )
+        )
+    return options
+
+
+@app.post("/videos/dataset", response_model=VideoAsset)
+def create_dataset_video(request: DatasetVideoCreate) -> VideoAsset:
+    """Register one prepared dataset video without copying its bytes."""
+    try:
+        path = resolve_dataset_video(dataset_video_root, request.path)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    storage_key = path.relative_to(settings.data_dir.resolve()).as_posix()
+    return repository.create_dataset_video(path.name, storage_key)
 
 
 @app.post("/videos", response_model=VideoAsset, status_code=status.HTTP_201_CREATED)

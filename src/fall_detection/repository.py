@@ -3,7 +3,7 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from fall_detection.models import AnalysisJob, PredictionResult, VideoAsset
 from fall_detection.pipeline import PipelineResult
@@ -42,7 +42,7 @@ class Repository:
                 CREATE TABLE IF NOT EXISTS videos (
                     id TEXT PRIMARY KEY,
                     filename TEXT NOT NULL,
-                    source TEXT NOT NULL CHECK (source IN ('upload', 'synthetic')),
+                    source TEXT NOT NULL CHECK (source IN ('upload', 'synthetic', 'dataset')),
                     storage_key TEXT,
                     duration_seconds REAL,
                     created_at TEXT NOT NULL
@@ -87,6 +87,33 @@ class Repository:
                 );
                 """
             )
+            videos_schema = connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'videos'"
+            ).fetchone()["sql"]
+            if "'dataset'" not in videos_schema:
+                connection.executescript(
+                    """
+                    PRAGMA foreign_keys = OFF;
+                    BEGIN;
+                    CREATE TABLE videos_new (
+                        id TEXT PRIMARY KEY,
+                        filename TEXT NOT NULL,
+                        source TEXT NOT NULL
+                            CHECK (source IN ('upload', 'synthetic', 'dataset')),
+                        storage_key TEXT,
+                        duration_seconds REAL,
+                        created_at TEXT NOT NULL
+                    );
+                    INSERT INTO videos_new
+                        (id, filename, source, storage_key, duration_seconds, created_at)
+                    SELECT id, filename, source, storage_key, duration_seconds, created_at
+                    FROM videos;
+                    DROP TABLE videos;
+                    ALTER TABLE videos_new RENAME TO videos;
+                    COMMIT;
+                    PRAGMA foreign_keys = ON;
+                    """
+                )
 
     def create_sample_video(self) -> VideoAsset:
         """Create or return the deterministic built-in synthetic video record."""
@@ -118,6 +145,24 @@ class Repository:
                 (video_id, filename, storage_key, created_at),
             )
             row = connection.execute("SELECT * FROM videos WHERE id = ?", (video_id,)).fetchone()
+        return self._video_from_row(row)
+
+    def create_dataset_video(self, filename: str, storage_key: str) -> VideoAsset:
+        """Create or return a stable record for a prepared local dataset video."""
+        video_id = str(uuid5(NAMESPACE_URL, f"fall-detection-app:{storage_key}"))
+        with self._connect() as connection:
+            row = connection.execute("SELECT * FROM videos WHERE id = ?", (video_id,)).fetchone()
+            if row is None:
+                created_at = utc_now()
+                connection.execute(
+                    """INSERT INTO videos
+                    (id, filename, source, storage_key, duration_seconds, created_at)
+                    VALUES (?, ?, 'dataset', ?, NULL, ?)""",
+                    (video_id, filename, storage_key, created_at),
+                )
+                row = connection.execute(
+                    "SELECT * FROM videos WHERE id = ?", (video_id,)
+                ).fetchone()
         return self._video_from_row(row)
 
     def get_video(self, video_id: str) -> VideoAsset | None:

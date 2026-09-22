@@ -1,10 +1,18 @@
 export type VideoAsset = {
   id: string;
   filename: string;
-  source: "upload" | "synthetic";
+  source: "upload" | "synthetic" | "dataset";
   storage_key: string | null;
   duration_seconds: number | null;
   created_at: string;
+};
+
+export type DatasetVideoOption = {
+  path: string;
+  dataset: string;
+  subject: string;
+  collection: string;
+  filename: string;
 };
 
 export type Prediction = {
@@ -45,6 +53,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function createSample(): Promise<VideoAsset> {
   return request("/videos/sample", { method: "POST" });
+}
+
+export function listDatasetVideos(): Promise<DatasetVideoOption[]> {
+  return request("/dataset-videos");
+}
+
+export function createDatasetVideo(path: string): Promise<VideoAsset> {
+  return request("/videos/dataset", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path }),
+  });
 }
 
 export function uploadVideo(file: File): Promise<VideoAsset> {

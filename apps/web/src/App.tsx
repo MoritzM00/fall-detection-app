@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { createJob, createSample, getJob, uploadVideo } from "./api";
-import type { AnalysisJob, VideoAsset } from "./api";
+import { createDatasetVideo, createJob, createSample, getJob, listDatasetVideos, uploadVideo } from "./api";
+import type { AnalysisJob, DatasetVideoOption, VideoAsset } from "./api";
 
 const terminalStates = new Set(["succeeded", "failed", "cancelled", "skipped"]);
 
@@ -45,6 +45,9 @@ export default function App() {
   const [duration, setDuration] = useState<number | null>(null);
   const [startSeconds, setStartSeconds] = useState(0);
   const [endSeconds, setEndSeconds] = useState(2);
+  const [datasetVideos, setDatasetVideos] = useState<DatasetVideoOption[]>([]);
+  const [selectedDatasetPath, setSelectedDatasetPath] = useState("");
+  const [showDatasetBrowser, setShowDatasetBrowser] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
   const previewTimestamps = useMemo(
@@ -56,7 +59,7 @@ export default function App() {
 
   useEffect(() => {
     return () => {
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      if (previewUrl?.startsWith("blob:")) URL.revokeObjectURL(previewUrl);
     };
   }, [previewUrl]);
 
@@ -106,6 +109,43 @@ export default function App() {
       setEndSeconds(2);
     } catch (uploadError) {
       setError(uploadError instanceof Error ? uploadError.message : "Upload failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function browseDataset() {
+    setError(null);
+    setShowDatasetBrowser(true);
+    if (datasetVideos.length > 0) return;
+    setBusy(true);
+    try {
+      const options = await listDatasetVideos();
+      setDatasetVideos(options);
+      setSelectedDatasetPath(options[0]?.path ?? "");
+      if (options.length === 0) setError("No prepared dataset videos were found");
+    } catch (datasetError) {
+      setError(datasetError instanceof Error ? datasetError.message : "Could not read the dataset catalog");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function useDatasetVideo() {
+    if (!selectedDatasetPath) return;
+    setBusy(true);
+    setError(null);
+    setJob(null);
+    try {
+      const asset = await createDatasetVideo(selectedDatasetPath);
+      setVideo(asset);
+      setPreviewUrl(`/api/videos/${asset.id}/media`);
+      setDuration(null);
+      setStartSeconds(0);
+      setEndSeconds(2);
+      setShowDatasetBrowser(false);
+    } catch (datasetError) {
+      setError(datasetError instanceof Error ? datasetError.message : "Could not open the dataset video");
     } finally {
       setBusy(false);
     }
@@ -161,7 +201,7 @@ export default function App() {
         <div className="viewer-panel">
           <div className="panel-heading">
             <div><span>01</span><h2>Source</h2></div>
-            {video && <span className="asset-pill">{video.source === "synthetic" ? "Synthetic" : "Uploaded"}</span>}
+            {video && <span className="asset-pill">{video.source === "synthetic" ? "Synthetic" : video.source === "dataset" ? "OmniFall" : "Uploaded"}</span>}
           </div>
 
           <div className={`viewer ${video ? "loaded" : ""}`}>
@@ -172,8 +212,23 @@ export default function App() {
                 <p>Use the built-in scenario now, or bring an MP4, MOV, WebM, or MKV.</p>
                 <div className="source-actions">
                   <button className="button primary" onClick={useSample} disabled={busy}>Use sample clip</button>
+                  <button className="button secondary" onClick={browseDataset} disabled={busy}>Browse dataset</button>
                   <button className="button secondary" onClick={() => fileInput.current?.click()} disabled={busy}>Upload video</button>
                 </div>
+                {showDatasetBrowser && (
+                  <div className="dataset-browser">
+                    <label htmlFor="dataset-video">Prepared OmniFall video</label>
+                    <div>
+                      <select id="dataset-video" value={selectedDatasetPath} onChange={(event) => setSelectedDatasetPath(event.target.value)} disabled={busy || datasetVideos.length === 0}>
+                        {datasetVideos.map((option) => (
+                          <option value={option.path} key={option.path}>{option.collection} · {option.subject} · {option.filename}</option>
+                        ))}
+                      </select>
+                      <button className="button primary" onClick={useDatasetVideo} disabled={busy || !selectedDatasetPath}>Open clip</button>
+                    </div>
+                    <small>{datasetVideos.length > 0 ? `${datasetVideos.length} local GMDCSA24 videos · folder names are dataset groupings, not predictions` : "Reading local catalog…"}</small>
+                  </div>
+                )}
               </div>
             )}
             {video?.source === "synthetic" && (
@@ -184,7 +239,7 @@ export default function App() {
                 <span className="scene-label">SYNTHETIC CORRIDOR · 00:06</span>
               </div>
             )}
-            {video?.source === "upload" && previewUrl && (
+            {video && video.source !== "synthetic" && previewUrl && (
               <video
                 src={previewUrl}
                 controls
@@ -220,7 +275,7 @@ export default function App() {
                   {previewTimestamps.map((timestamp, index) => (
                     <figure className="sample-frame" key={`${timestamp}-${index}`}>
                       <div className="frame-image">
-                        {video.source === "upload" && previewUrl ? (
+                        {video.source !== "synthetic" && previewUrl ? (
                           <UploadedFrame src={previewUrl} timestamp={timestamp} />
                         ) : (
                           <div className="synthetic-frame">

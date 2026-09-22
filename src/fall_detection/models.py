@@ -12,7 +12,7 @@ class VideoAsset(BaseModel):
 
     id: str
     filename: str
-    source: Literal["upload", "synthetic"]
+    source: Literal["upload", "synthetic", "dataset"]
     storage_key: str | None = None
     duration_seconds: float | None = None
     created_at: str
@@ -24,6 +24,22 @@ class AnalysisJobCreate(BaseModel):
     video_id: str
     start_seconds: float = Field(default=0, ge=0)
     end_seconds: float = Field(default=2, gt=0)
+
+
+class DatasetVideoCreate(BaseModel):
+    """A selected video from the prepared local OmniFall tree."""
+
+    path: str = Field(min_length=1)
+
+
+class DatasetVideoOption(BaseModel):
+    """Safe browser-facing identity for a prepared dataset video."""
+
+    path: str
+    dataset: str
+    subject: str
+    collection: str
+    filename: str
 
 
 class PredictionResult(BaseModel):

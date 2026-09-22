@@ -42,7 +42,7 @@ make setup
 make dev
 ```
 
-Open <http://localhost:5173>, choose the synthetic sample, and run analysis. Four local processes start: the web UI, application API, worker, and mock inference service. Runtime state is written to the ignored `data/` directory.
+Open <http://localhost:5173>, choose the synthetic sample or a prepared local OmniFall video, and run analysis. Four local processes start: the web UI, application API, worker, and mock inference service. Runtime state is written to the ignored `data/` directory.
 
 ```bash
 make check
@@ -53,5 +53,6 @@ The mock returns `fall` after a short delay. Override its deterministic behavior
 ## Current MVP limits
 
 - The built-in corridor source is a synthetic animated preview, not committed video data.
+- Prepared videos under `data/omnifall/videos` are discovered locally and remain ignored by Git. Dataset folder names such as `Fall` and `ADL` are source groupings, not model predictions.
 - Uploaded clips are stored and transported to the inference boundary, but real frame decoding/cropping is the next milestone.
 - Monitoring, run comparison, retries/leases, and PostgreSQL migration remain planned.

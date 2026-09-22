@@ -1,3 +1,4 @@
+import sqlite3
 from pathlib import Path
 
 from fall_detection.pipeline import PipelineResult
@@ -37,3 +38,40 @@ def test_job_lifecycle_is_persisted(tmp_path: Path) -> None:
     assert completed.prediction is not None
     assert completed.prediction.label == "fall"
     assert completed.prediction.backend_kind == "mock"
+
+
+def test_dataset_video_identity_is_stable(tmp_path: Path) -> None:
+    repository = Repository(tmp_path / "app.sqlite3")
+    repository.initialize()
+
+    first = repository.create_dataset_video("01.mp4", "omnifall/videos/demo/01.mp4")
+    second = repository.create_dataset_video("01.mp4", "omnifall/videos/demo/01.mp4")
+
+    assert first == second
+    assert first.source == "dataset"
+    assert first.storage_key == "omnifall/videos/demo/01.mp4"
+
+
+def test_initialize_migrates_existing_video_source_constraint(tmp_path: Path) -> None:
+    database_path = tmp_path / "app.sqlite3"
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """CREATE TABLE videos (
+                id TEXT PRIMARY KEY,
+                filename TEXT NOT NULL,
+                source TEXT NOT NULL CHECK (source IN ('upload', 'synthetic')),
+                storage_key TEXT,
+                duration_seconds REAL,
+                created_at TEXT NOT NULL
+            )"""
+        )
+        connection.execute(
+            "INSERT INTO videos VALUES ('old', 'old.mp4', 'upload', 'media/old.mp4', NULL, 'now')"
+        )
+
+    repository = Repository(database_path)
+    repository.initialize()
+    created = repository.create_dataset_video("01.mp4", "omnifall/videos/demo/01.mp4")
+
+    assert created.source == "dataset"
+    assert repository.get_video("old") is not None
