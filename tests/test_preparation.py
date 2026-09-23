@@ -166,3 +166,60 @@ def test_tampered_frame_array_is_rejected(prepared_video):
     np.save(path, frames, allow_pickle=False)
     with pytest.raises(ValueError, match="integrity"):
         load_rgb_frames(data_dir, prepared)
+
+
+def test_identical_uploads_keep_their_own_prepared_identity(prepared_video):
+    data_dir, repository, video, request, first = prepared_video
+    second_video = repository.create_uploaded_video("copy.mp4", video.storage_key)
+    second_request = request.model_copy(update={"video_id": second_video.id})
+
+    second = prepare_video(second_video, second_request, data_dir)
+
+    assert second.video_id == second_video.id
+    assert second.id != first.id
+    assert second.bundle_sha256 == first.bundle_sha256
+    assert prepare_video(video, request, data_dir) == first
+    assert prepare_video(second_video, second_request, data_dir) == second
+
+
+@pytest.mark.parametrize("contents", [b"", b"invalid array"])
+def test_invalid_frame_array_fails_job_without_stopping_worker(prepared_video, contents):
+    data_dir, repository, video, _, prepared = prepared_video
+    settings = replace(
+        Settings.from_env(),
+        data_dir=data_dir,
+        database_path=data_dir / "app.sqlite3",
+        backend_kind="mock",
+    )
+    job = repository.create_job(video.id, 0, 1, prepared_input_id=prepared.id)
+    (preparation_path(data_dir, prepared.id) / "frames.npy").write_bytes(contents)
+
+    assert worker.process_next_job(settings, repository)
+
+    failed = repository.get_job(job.id)
+    assert failed.state == "failed"
+    assert failed.prediction is None
+    assert "frame array" in failed.error
+    assert not worker.process_next_job(settings, repository)
+
+
+def test_tampered_jpeg_fails_job_before_inference(prepared_video, monkeypatch):
+    data_dir, repository, video, _, prepared = prepared_video
+    settings = replace(
+        Settings.from_env(),
+        data_dir=data_dir,
+        database_path=data_dir / "app.sqlite3",
+        backend_kind="mock",
+    )
+    job = repository.create_job(video.id, 0, 1, prepared_input_id=prepared.id)
+    (preparation_path(data_dir, prepared.id) / "00.jpg").write_bytes(b"corrupted")
+
+    def unexpected_request(**kwargs):
+        raise AssertionError("Corrupted frames must not reach inference")
+
+    monkeypatch.setattr(worker, "run_pipeline", unexpected_request)
+    assert worker.process_next_job(settings, repository)
+    failed = repository.get_job(job.id)
+    assert failed.state == "failed"
+    assert failed.prediction is None
+    assert "JPEG frame failed integrity check" in failed.error

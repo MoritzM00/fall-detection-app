@@ -102,6 +102,7 @@ def prepare_video(video: VideoAsset, request: PreparationRequest, data_dir: Path
     source_sha256 = _sha256_file(media_path)
     identity = json.dumps(
         [
+            video.id,
             source_sha256,
             request.start_seconds,
             request.frame_count,
@@ -179,7 +180,10 @@ def prepare_video(video: VideoAsset, request: PreparationRequest, data_dir: Path
 def load_rgb_frames(data_dir: Path, prepared: PreparedInput) -> np.ndarray:
     """Verify the stored array before inference or transport."""
     path = preparation_path(data_dir, prepared.id) / "frames.npy"
-    frames = np.load(path, allow_pickle=False)
+    try:
+        frames = np.load(path, allow_pickle=False)
+    except (EOFError, ValueError) as exc:
+        raise ValueError("Prepared frame array could not be read") from exc
     expected = (prepared.frame_count, prepared.size, prepared.size, 3)
     if frames.shape != expected or frames.dtype != np.uint8:
         raise ValueError("Prepared frame array has an invalid shape or type")

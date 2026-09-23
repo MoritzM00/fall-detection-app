@@ -215,7 +215,7 @@ def get_prepared_input(prepared_id: str) -> PreparedInput:
 
 @app.get("/prepared-inputs/{prepared_id}/frames/{index}")
 def get_prepared_frame(prepared_id: str, index: int) -> FileResponse:
-    """Serve the lossless image generated from the stored RGB frame."""
+    """Serve the exact JPEG frame sent to inference."""
     try:
         prepared = load_prepared_input(settings.data_dir, prepared_id)
     except ValueError as exc:

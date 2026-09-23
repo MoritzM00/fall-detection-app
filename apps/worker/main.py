@@ -6,10 +6,9 @@ from fall_detection.config import Settings
 from fall_detection.inference import InferenceClient
 from fall_detection.media import to_video_data_url
 from fall_detection.pipeline import run_pipeline
-from fall_detection.preparation import load_prepared_input, load_rgb_frames, to_vllm_jpeg_data_url
+from fall_detection.preparation import load_prepared_input, to_vllm_jpeg_data_url
 from fall_detection.repository import Repository
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 stopping = False
 
@@ -43,7 +42,6 @@ def process_next_job(settings: Settings, repository: Repository) -> bool:
                 or abs(prepared.end_seconds - job.end_seconds) > 0.001
             ):
                 raise ValueError("Prepared input does not match this job")
-            load_rgb_frames(settings.data_dir, prepared)
             video_data_url = to_vllm_jpeg_data_url(settings.data_dir, prepared)
             sampled_timestamps = [frame.actual_seconds for frame in prepared.frames]
             video_metadata = {
@@ -90,6 +88,7 @@ def process_next_job(settings: Settings, repository: Repository) -> bool:
 
 def main() -> None:
     """Poll the durable queue and process jobs until signalled."""
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     settings = Settings.from_env()
     repository = Repository(settings.database_path)
     repository.initialize()
