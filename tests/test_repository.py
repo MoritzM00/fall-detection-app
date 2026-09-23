@@ -1,5 +1,9 @@
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
+
+import pytest
 
 from fall_detection.pipeline import PipelineResult
 from fall_detection.repository import Repository
@@ -75,3 +79,22 @@ def test_initialize_migrates_existing_video_source_constraint(tmp_path: Path) ->
 
     assert created.source == "dataset"
     assert repository.get_video("old") is not None
+
+
+@pytest.mark.parametrize("source", ["synthetic", "dataset"])
+def test_concurrent_video_creation_returns_one_stable_asset(tmp_path: Path, source: str):
+    repository = Repository(tmp_path / "app.sqlite3")
+    repository.initialize()
+    barrier = Barrier(8)
+
+    def create(_):
+        barrier.wait(timeout=10)
+        if source == "synthetic":
+            return repository.create_sample_video()
+        return repository.create_dataset_video("01.mp4", "omnifall/videos/demo/01.mp4")
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        videos = list(pool.map(create, range(8)))
+
+    assert all(video == videos[0] for video in videos)
+    assert repository.get_video(videos[0].id) == videos[0]

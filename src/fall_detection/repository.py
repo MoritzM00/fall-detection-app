@@ -123,18 +123,14 @@ class Repository:
         """Create or return the deterministic built-in synthetic video record."""
         sample_id = "sample-corridor-v1"
         with self._connect() as connection:
+            connection.execute(
+                """INSERT INTO videos
+                (id, filename, source, storage_key, duration_seconds, created_at)
+                VALUES (?, ?, 'synthetic', NULL, 6.0, ?)
+                ON CONFLICT(id) DO NOTHING""",
+                (sample_id, "Synthetic corridor clip", utc_now()),
+            )
             row = connection.execute("SELECT * FROM videos WHERE id = ?", (sample_id,)).fetchone()
-            if row is None:
-                created_at = utc_now()
-                connection.execute(
-                    """INSERT INTO videos
-                    (id, filename, source, storage_key, duration_seconds, created_at)
-                    VALUES (?, ?, 'synthetic', NULL, 6.0, ?)""",
-                    (sample_id, "Synthetic corridor clip", created_at),
-                )
-                row = connection.execute(
-                    "SELECT * FROM videos WHERE id = ?", (sample_id,)
-                ).fetchone()
         return self._video_from_row(row)
 
     def create_uploaded_video(self, filename: str, storage_key: str) -> VideoAsset:
@@ -155,18 +151,14 @@ class Repository:
         """Create or return a stable record for a prepared local dataset video."""
         video_id = str(uuid5(NAMESPACE_URL, f"fall-detection-app:{storage_key}"))
         with self._connect() as connection:
+            connection.execute(
+                """INSERT INTO videos
+                (id, filename, source, storage_key, duration_seconds, created_at)
+                VALUES (?, ?, 'dataset', ?, NULL, ?)
+                ON CONFLICT(id) DO NOTHING""",
+                (video_id, filename, storage_key, utc_now()),
+            )
             row = connection.execute("SELECT * FROM videos WHERE id = ?", (video_id,)).fetchone()
-            if row is None:
-                created_at = utc_now()
-                connection.execute(
-                    """INSERT INTO videos
-                    (id, filename, source, storage_key, duration_seconds, created_at)
-                    VALUES (?, ?, 'dataset', ?, NULL, ?)""",
-                    (video_id, filename, storage_key, created_at),
-                )
-                row = connection.execute(
-                    "SELECT * FROM videos WHERE id = ?", (video_id,)
-                ).fetchone()
         return self._video_from_row(row)
 
     def get_video(self, video_id: str) -> VideoAsset | None:
