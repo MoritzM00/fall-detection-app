@@ -60,8 +60,12 @@ export type Capabilities = { backend_kind: string; simulated: boolean };
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api${path}`, init);
   if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as { detail?: string } | null;
-    throw new Error(body?.detail ?? `Request failed (${response.status})`);
+    const body = (await response.json().catch(() => null)) as { detail?: unknown } | null;
+    const detail = body?.detail;
+    const message = typeof detail === "string" ? detail : Array.isArray(detail)
+      ? detail.map((item) => typeof item?.msg === "string" ? item.msg : "").filter(Boolean).join("; ")
+      : "";
+    throw new Error(message || `Request failed (${response.status})`);
   }
   return response.json() as Promise<T>;
 }
