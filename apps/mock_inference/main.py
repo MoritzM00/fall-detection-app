@@ -33,9 +33,18 @@ def validate_video_message(messages: list[dict[str, Any]]) -> None:
     content = messages[0].get("content")
     if not isinstance(content, list):
         raise HTTPException(status_code=400, detail="Message content must be a list")
-    content_types = {part.get("type") for part in content if isinstance(part, dict)}
+    if len(content) != 2 or any(
+        not isinstance(part, dict) or not isinstance(part.get("type"), str) for part in content
+    ):
+        raise HTTPException(
+            status_code=400, detail="Exactly one text and video_url part are required"
+        )
+    content_types = {part.get("type") for part in content}
     if content_types != {"text", "video_url"}:
         raise HTTPException(status_code=400, detail="Text and video_url content are required")
+    text_part = next(part for part in content if part["type"] == "text")
+    if not isinstance(text_part.get("text"), str) or not text_part["text"].strip():
+        raise HTTPException(status_code=400, detail="Non-empty text is required")
     video_parts = [part for part in content if part.get("type") == "video_url"]
     video_url = video_parts[0].get("video_url") if video_parts else None
     if not isinstance(video_url, dict) or not isinstance(video_url.get("url"), str):

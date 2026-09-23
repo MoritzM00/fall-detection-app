@@ -1,3 +1,4 @@
+import pytest
 from fastapi.testclient import TestClient
 
 import apps.mock_inference.main as mock_server
@@ -32,4 +33,14 @@ def test_mock_rejects_missing_video_payload(monkeypatch) -> None:
         },
     )
 
+    assert response.status_code == 400
+
+
+@pytest.mark.parametrize("extra", [None, "invalid", {"type": []}])
+def test_mock_rejects_malformed_content_parts(extra) -> None:
+    payload = build_inference_payload(
+        mock_server.SERVED_MODEL, "data:video/mp4;base64,bW9jaw==", "prompt"
+    )
+    payload["messages"][0]["content"].append(extra)
+    response = TestClient(mock_server.app).post("/v1/chat/completions", json=payload)
     assert response.status_code == 400

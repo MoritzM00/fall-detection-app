@@ -2,7 +2,7 @@
 
 Local MVP for a video activity-recognition application built on the master's thesis work in `fall-detection-mllm`.
 
-**Status:** clip analysis runs end to end against a clearly identified simulated inference backend. No GPU inference occurs yet.
+**Status:** clip analysis runs end to end against the default simulated inference backend. Uploaded and dataset videos are decoded into immutable frame bundles before analysis. The online vLLM path is implemented but has not been tested against the GPU server yet.
 
 ## Product modes
 
@@ -48,11 +48,14 @@ Open <http://localhost:5173>, choose the synthetic sample or a prepared local Om
 make check
 ```
 
-The mock returns `fall` after a short delay. Override its deterministic behavior with `MOCK_INFERENCE_LABEL` or `MOCK_INFERENCE_DELAY_MS`. Mock provenance remains attached to every result. Switching to real vLLM later uses `FALL_DETECTION_INFERENCE_BASE_URL` and `FALL_DETECTION_BACKEND_KIND=vllm`; it never silently falls back to mock inference.
+The mock returns `fall` after a short delay. Override its deterministic behavior with `MOCK_INFERENCE_LABEL` or `MOCK_INFERENCE_DELAY_MS`. Mock provenance remains attached to every result. Set `FALL_DETECTION_BACKEND_KIND=vllm` and `FALL_DETECTION_INFERENCE_BASE_URL` to use a compatible online vLLM server for prepared real videos. The worker never silently falls back to mock inference.
 
 ## Current MVP limits
 
 - The built-in corridor source is a synthetic animated preview, not committed video data.
 - Prepared videos under `data/omnifall/videos` are discovered locally and remain ignored by Git. Dataset folder names such as `Fall` and `ADL` are source groupings, not model predictions.
-- Uploaded clips are stored and transported to the inference boundary, but real frame decoding/cropping is the next milestone.
+- Uploaded and dataset clips are decoded with PyAV using the selected window, frame count, sampling FPS, and center-crop size. The UI shows the same JPEG frame files sent in the online request; jobs retain the prepared input ID.
+- Both mock and real vLLM backends use the online chat-completions `video_url` frame-sequence format. Real inference requires a configured vLLM server with a version that supports request-level video `media_io_kwargs`; it is not GPU-tested here.
 - Monitoring, run comparison, retries/leases, and PostgreSQL migration remain planned.
+
+See [prepared video input](docs/prepared-video.md) for the frame and vLLM payload contracts.

@@ -5,8 +5,11 @@ description = "Extensible MVP for video-based activity and fall detection"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "av>=14,<17",
     "fastapi>=0.115,<1",
     "httpx>=0.28,<1",
+    "numpy>=2,<3",
+    "pillow>=11,<13",
     "python-multipart>=0.0.20,<1",
     "uvicorn[standard]>=0.34,<1",
 ]

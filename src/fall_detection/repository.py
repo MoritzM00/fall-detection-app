@@ -63,6 +63,7 @@ class Repository:
                     id TEXT PRIMARY KEY,
                     video_id TEXT NOT NULL REFERENCES videos(id),
                     configuration_id TEXT NOT NULL REFERENCES configurations(id),
+                    prepared_input_id TEXT,
                     state TEXT NOT NULL,
                     start_seconds REAL NOT NULL,
                     end_seconds REAL NOT NULL,
@@ -114,6 +115,9 @@ class Repository:
                     PRAGMA foreign_keys = ON;
                     """
                 )
+            job_columns = {row["name"] for row in connection.execute("PRAGMA table_info(jobs)")}
+            if "prepared_input_id" not in job_columns:
+                connection.execute("ALTER TABLE jobs ADD COLUMN prepared_input_id TEXT")
 
     def create_sample_video(self) -> VideoAsset:
         """Create or return the deterministic built-in synthetic video record."""
@@ -171,7 +175,16 @@ class Repository:
             row = connection.execute("SELECT * FROM videos WHERE id = ?", (video_id,)).fetchone()
         return self._video_from_row(row) if row is not None else None
 
-    def create_job(self, video_id: str, start_seconds: float, end_seconds: float) -> AnalysisJob:
+    def create_job(
+        self,
+        video_id: str,
+        start_seconds: float,
+        end_seconds: float,
+        *,
+        model: str = "qwen3-vl-8b-instruct",
+        prepared_input_id: str | None = None,
+        preprocessing: dict[str, object] | None = None,
+    ) -> AnalysisJob:
         """Snapshot default configuration and enqueue one immutable analysis job."""
         job_id = str(uuid4())
         configuration_id = str(uuid4())
@@ -189,23 +202,24 @@ class Repository:
                 VALUES (?, 1, ?, ?, ?, ?, ?, ?)""",
                 (
                     configuration_id,
-                    "qwen3-vl-8b-instruct",
+                    model,
                     PRESET_ID,
                     THESIS_BASELINE_PROMPT,
-                    json.dumps({"frames": 16, "resize": 448, "crop": "center"}),
+                    json.dumps(preprocessing or {"frames": 16, "resize": 448, "crop": "center"}),
                     json.dumps({"temperature": 0, "max_tokens": 32}),
                     timestamp,
                 ),
             )
             connection.execute(
                 """INSERT INTO jobs
-                (id, video_id, configuration_id, state, start_seconds, end_seconds,
+                (id, video_id, configuration_id, prepared_input_id, state, start_seconds, end_seconds,
                  attempt_count, error, created_at, updated_at)
-                VALUES (?, ?, ?, 'queued', ?, ?, 0, NULL, ?, ?)""",
+                VALUES (?, ?, ?, ?, 'queued', ?, ?, 0, NULL, ?, ?)""",
                 (
                     job_id,
                     video_id,
                     configuration_id,
+                    prepared_input_id,
                     start_seconds,
                     end_seconds,
                     timestamp,
@@ -217,6 +231,17 @@ class Repository:
         if job is None:
             raise RuntimeError("created job could not be read back")
         return job
+
+    def get_inference_configuration(self, configuration_id: str) -> tuple[str, str]:
+        """Read the immutable model and prompt selected when a job was queued."""
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT model, prompt_text FROM configurations WHERE id = ?",
+                (configuration_id,),
+            ).fetchone()
+        if row is None:
+            raise ValueError("job configuration no longer exists")
+        return row["model"], row["prompt_text"]
 
     def get_job(self, job_id: str) -> AnalysisJob | None:
         """Read a job with its persisted result when completed."""
@@ -232,6 +257,7 @@ class Repository:
             id=row["id"],
             video_id=row["video_id"],
             configuration_id=row["configuration_id"],
+            prepared_input_id=row["prepared_input_id"],
             state=row["state"],
             start_seconds=row["start_seconds"],
             end_seconds=row["end_seconds"],

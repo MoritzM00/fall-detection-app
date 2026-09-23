@@ -2,15 +2,15 @@
 
 ## Purpose
 
-Develop clip analysis, configuration editing, result comparison, monitoring, queue behavior, and error handling entirely locally. A separate mock HTTP process substitutes for vLLM. The rest of the application follows its real execution path, including video preprocessing and output parsing.
+Develop clip analysis, configuration editing, result comparison, monitoring, queue behavior, and error handling entirely locally. A separate mock HTTP process substitutes for vLLM. Currently, clip analysis exercises persistence, media transport, and output parsing. Frame decoding, selected-window preprocessing, configuration editing, comparison, and monitoring remain planned.
 
 No model inference occurs. Mock labels and timings are simulated and cannot establish accuracy, GPU capacity, prompt quality, or video-processing parity.
 
 ## Switching endpoints
 
-Deployment configuration supplies backend kind (`mock` or `vllm`), base URL, served model name, request timeout, and any credentials. These are planned configuration concepts, not implemented environment variables.
+Implemented environment settings include `FALL_DETECTION_BACKEND_KIND`, `FALL_DETECTION_INFERENCE_BASE_URL`, `FALL_DETECTION_INFERENCE_MODEL`, and `FALL_DETECTION_REQUEST_TIMEOUT_SECONDS`. Credential handling remains planned. The worker rejects non-mock inference until selected-window preprocessing is implemented, so a full uploaded video cannot be reported as an analyzed selection.
 
-Local mode requires no SSH tunnel, CUDA runtime, model download, or GPU connection. Real mode uses the GPU endpoint. Use the same HTTP client and request serializer for both. Switching environments changes connection configuration; frontend and pipeline logic stay shared.
+Local mode requires no SSH tunnel, CUDA runtime, model download, or GPU connection. Planned real mode will use the GPU endpoint with a verified preprocessing and serving contract.
 
 Persist backend kind and mock scenario/fixture version in run provenance. Show a visible “Simulated predictions” indicator in mock sessions, comparisons, and exports. Keep model identity separate from backend kind. Never mix mock results into real-model quality reports or automatically substitute them after connection failures.
 

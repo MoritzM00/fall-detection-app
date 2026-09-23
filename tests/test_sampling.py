@@ -13,3 +13,9 @@ def test_sample_timestamps_preserve_window_edges() -> None:
 def test_sample_timestamps_reject_invalid_window() -> None:
     with pytest.raises(ValueError):
         sample_timestamps(2.0, 2.0)
+
+
+@pytest.mark.parametrize("start,end", [(-1, 2), (0, float("inf")), (float("nan"), 2)])
+def test_sample_timestamps_reject_invalid_numbers(start, end) -> None:
+    with pytest.raises(ValueError):
+        sample_timestamps(start, end)

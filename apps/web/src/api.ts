@@ -32,6 +32,7 @@ export type AnalysisJob = {
   id: string;
   video_id: string;
   configuration_id: string;
+  prepared_input_id: string | null;
   state: "queued" | "running" | "succeeded" | "failed" | "cancelled" | "skipped";
   start_seconds: number;
   end_seconds: number;
@@ -41,6 +42,20 @@ export type AnalysisJob = {
   updated_at: string;
   prediction: Prediction | null;
 };
+
+export type PreparedInput = {
+  id: string;
+  video_id: string;
+  start_seconds: number;
+  end_seconds: number;
+  frame_count: number;
+  fps: number;
+  size: number;
+  bundle_sha256: string;
+  frames: { index: number; requested_seconds: number; actual_seconds: number; sha256: string }[];
+};
+
+export type Capabilities = { backend_kind: string; simulated: boolean };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api${path}`, init);
@@ -53,6 +68,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function createSample(): Promise<VideoAsset> {
   return request("/videos/sample", { method: "POST" });
+}
+
+export function getCapabilities(): Promise<Capabilities> {
+  return request("/capabilities");
 }
 
 export function listDatasetVideos(): Promise<DatasetVideoOption[]> {
@@ -73,7 +92,15 @@ export function uploadVideo(file: File): Promise<VideoAsset> {
   return request("/videos", { method: "POST", body });
 }
 
-export function createJob(videoId: string, startSeconds: number, endSeconds: number): Promise<AnalysisJob> {
+export function createPreparedInput(videoId: string, startSeconds: number, frameCount: number, fps: number, size: number): Promise<PreparedInput> {
+  return request("/prepared-inputs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ video_id: videoId, start_seconds: startSeconds, frame_count: frameCount, fps, size }),
+  });
+}
+
+export function createJob(videoId: string, startSeconds: number, endSeconds: number, preparedInputId: string | null): Promise<AnalysisJob> {
   return request("/analysis-jobs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -81,6 +108,7 @@ export function createJob(videoId: string, startSeconds: number, endSeconds: num
       video_id: videoId,
       start_seconds: startSeconds,
       end_seconds: endSeconds,
+      prepared_input_id: preparedInputId,
     }),
   });
 }

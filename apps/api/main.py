@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Annotated
 from uuid import uuid4
 
+import av
 from fastapi import FastAPI, File, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -16,8 +17,11 @@ from fall_detection.models import (
     AnalysisJobCreate,
     DatasetVideoCreate,
     DatasetVideoOption,
+    PreparationRequest,
+    PreparedInput,
     VideoAsset,
 )
+from fall_detection.preparation import load_prepared_input, preparation_path, prepare_video
 from fall_detection.prompts import PRESET_ID, THESIS_BASELINE_PROMPT
 from fall_detection.repository import Repository
 from fall_detection.taxonomy import ACTIVITY_LABELS
@@ -143,10 +147,82 @@ def create_analysis_job(request: AnalysisJobCreate) -> AnalysisJob:
         raise HTTPException(status_code=422, detail="End time must be after start time")
     if request.end_seconds - request.start_seconds > 30:
         raise HTTPException(status_code=422, detail="MVP selections are limited to 30 seconds")
+    video = repository.get_video(request.video_id)
+    if video is None:
+        raise HTTPException(status_code=404, detail="Video not found")
+    prepared = None
+    if video.source != "synthetic":
+        if request.prepared_input_id is None:
+            raise HTTPException(status_code=422, detail="Prepare frames before analyzing")
+        try:
+            prepared = load_prepared_input(settings.data_dir, request.prepared_input_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        if (
+            prepared.video_id != video.id
+            or abs(prepared.start_seconds - request.start_seconds) > 0.001
+            or abs(prepared.end_seconds - request.end_seconds) > 0.001
+        ):
+            raise HTTPException(
+                status_code=422, detail="Prepared frames do not match the selected video window"
+            )
     try:
-        return repository.create_job(request.video_id, request.start_seconds, request.end_seconds)
+        return repository.create_job(
+            request.video_id,
+            request.start_seconds,
+            request.end_seconds,
+            model=settings.inference_model,
+            prepared_input_id=prepared.id if prepared else None,
+            preprocessing=(
+                {
+                    "frames": prepared.frame_count,
+                    "fps": prepared.fps,
+                    "resize": prepared.size,
+                    "crop": "center",
+                    "version": prepared.preprocessing_version,
+                    "bundle_sha256": prepared.bundle_sha256,
+                }
+                if prepared
+                else None
+            ),
+        )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Video not found") from exc
+
+
+@app.post("/prepared-inputs", response_model=PreparedInput)
+def create_prepared_input(request: PreparationRequest) -> PreparedInput:
+    """Decode and retain the exact selected frames before analysis."""
+    video = repository.get_video(request.video_id)
+    if video is None:
+        raise HTTPException(status_code=404, detail="Video not found")
+    if video.source == "synthetic":
+        raise HTTPException(status_code=422, detail="Synthetic sample has no decodable frames")
+    try:
+        return prepare_video(video, request, settings.data_dir)
+    except (ValueError, OSError, av.error.FFmpegError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/prepared-inputs/{prepared_id}", response_model=PreparedInput)
+def get_prepared_input(prepared_id: str) -> PreparedInput:
+    """Read a prepared frame manifest."""
+    try:
+        return load_prepared_input(settings.data_dir, prepared_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/prepared-inputs/{prepared_id}/frames/{index}")
+def get_prepared_frame(prepared_id: str, index: int) -> FileResponse:
+    """Serve the lossless image generated from the stored RGB frame."""
+    try:
+        prepared = load_prepared_input(settings.data_dir, prepared_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if not 0 <= index < prepared.frame_count:
+        raise HTTPException(status_code=404, detail="Frame not found")
+    return FileResponse(preparation_path(settings.data_dir, prepared_id) / f"{index:02d}.jpg")
 
 
 @app.get("/analysis-jobs/{job_id}", response_model=AnalysisJob)

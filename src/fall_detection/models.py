@@ -22,8 +22,46 @@ class AnalysisJobCreate(BaseModel):
     """User-selected source and media time range."""
 
     video_id: str
-    start_seconds: float = Field(default=0, ge=0)
-    end_seconds: float = Field(default=2, gt=0)
+    start_seconds: float = Field(default=0, ge=0, allow_inf_nan=False)
+    end_seconds: float = Field(default=2, gt=0, allow_inf_nan=False)
+    prepared_input_id: str | None = None
+
+
+class PreparationRequest(BaseModel):
+    """Editable sampling settings for an exact frame preview."""
+
+    video_id: str
+    start_seconds: float = Field(ge=0, allow_inf_nan=False)
+    frame_count: int = Field(ge=2, le=32)
+    fps: float = Field(gt=0, le=30, allow_inf_nan=False)
+    size: int = Field(ge=224, le=672)
+
+
+class PreparedFrame(BaseModel):
+    """One selected frame and its real media timestamp."""
+
+    index: int
+    requested_seconds: float
+    actual_seconds: float
+    source_pts: int
+    sha256: str
+    jpeg_sha256: str
+
+
+class PreparedInput(BaseModel):
+    """Immutable reference to the frames shown and sent for inference."""
+
+    id: str
+    video_id: str
+    source_sha256: str
+    start_seconds: float
+    end_seconds: float
+    frame_count: int
+    fps: float
+    size: int
+    preprocessing_version: str
+    bundle_sha256: str
+    frames: list[PreparedFrame]
 
 
 class DatasetVideoCreate(BaseModel):
@@ -63,6 +101,7 @@ class AnalysisJob(BaseModel):
     id: str
     video_id: str
     configuration_id: str
+    prepared_input_id: str | None = None
     state: JobState
     start_seconds: float
     end_seconds: float
