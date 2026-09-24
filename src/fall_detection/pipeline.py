@@ -25,6 +25,7 @@ def build_inference_payload(
     video_data_url: str,
     prompt: str,
     video_metadata: dict[str, Any] | None = None,
+    generation: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the online video request shared by mock and vLLM serving."""
     payload = {
@@ -38,8 +39,8 @@ def build_inference_payload(
                 ],
             }
         ],
-        "temperature": 0,
-        "max_tokens": 32,
+        "temperature": (generation or {}).get("temperature", 0),
+        "max_tokens": (generation or {}).get("max_tokens", 32),
         "stream": False,
     }
     if video_metadata is not None:
@@ -57,11 +58,17 @@ def run_pipeline(
     prompt: str = THESIS_BASELINE_PROMPT,
     sampled_timestamps: list[float] | None = None,
     video_metadata: dict[str, Any] | None = None,
+    generation: dict[str, Any] | None = None,
+    frame_count: int = 16,
 ) -> PipelineResult:
     """Execute one traceable prediction from selected input to validated label."""
     total_started = perf_counter()
-    timestamps = sampled_timestamps or sample_timestamps(start_seconds, end_seconds)
-    payload = build_inference_payload(model, video_data_url, prompt, video_metadata)
+    timestamps = (
+        sampled_timestamps
+        if sampled_timestamps is not None
+        else sample_timestamps(start_seconds, end_seconds, frame_count)
+    )
+    payload = build_inference_payload(model, video_data_url, prompt, video_metadata, generation)
     request_started = perf_counter()
     response = client.complete(payload)
     request_duration_ms = (perf_counter() - request_started) * 1000

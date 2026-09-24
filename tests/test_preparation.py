@@ -112,6 +112,9 @@ def test_job_references_prepared_input_and_worker_sends_selected_frames(
                 "start_seconds": 0.2,
                 "end_seconds": 1.2,
                 "prepared_input_id": prepared.id,
+                "frame_count": 6,
+                "fps": 5,
+                "size": 224,
             },
         )
         assert mismatched.status_code == 422
@@ -128,6 +131,9 @@ def test_job_references_prepared_input_and_worker_sends_selected_frames(
                 "start_seconds": 0,
                 "end_seconds": 1,
                 "prepared_input_id": prepared.id,
+                "frame_count": 6,
+                "fps": 5,
+                "size": 224,
             },
         )
         assert job_response.status_code == 202
@@ -152,7 +158,13 @@ def test_job_references_prepared_input_and_worker_sends_selected_frames(
     ]
 
     real_job = repository.create_job(
-        video.id, 0, 1, prepared_input_id=prepared.id, model="qwen3-vl-8b-instruct"
+        video.id,
+        0,
+        1,
+        prepared_input_id=prepared.id,
+        model="qwen3-vl-8b-instruct",
+        backend_kind="vllm",
+        preprocessing={"frames": 6, "fps": 5, "resize": 224, "crop": "center"},
     )
     assert worker.process_next_job(replace(settings, backend_kind="vllm"), repository)
     assert repository.get_job(real_job.id).state == "succeeded"

@@ -14,6 +14,10 @@ class Settings:
     backend_kind: str
     mock_fixture_version: str
     request_timeout_seconds: float
+    upload_max_bytes: int = 512 * 1024 * 1024
+    preparation_slots: int = 2
+    preparation_wait_seconds: float = 10
+    inspection_pngs: bool = False
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -34,4 +38,12 @@ class Settings:
             request_timeout_seconds=float(
                 os.getenv("FALL_DETECTION_REQUEST_TIMEOUT_SECONDS", "30")
             ),
+            upload_max_bytes=int(
+                os.getenv("FALL_DETECTION_UPLOAD_MAX_BYTES", str(512 * 1024 * 1024))
+            ),
+            preparation_slots=int(os.getenv("FALL_DETECTION_PREPARATION_SLOTS", "2")),
+            preparation_wait_seconds=float(
+                os.getenv("FALL_DETECTION_PREPARATION_WAIT_SECONDS", "10")
+            ),
+            inspection_pngs=os.getenv("FALL_DETECTION_INSPECTION_PNGS", "0") == "1",
         )
