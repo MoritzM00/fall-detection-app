@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { createDatasetVideo, createJob, createPreparedInput, createSample, getCapabilities, getJob, listDatasetVideos, uploadVideo } from "./api";
-import type { AnalysisJob, DatasetVideoOption, PreparedInput, VideoAsset } from "./api";
-
-const terminalStates = new Set(["succeeded", "failed", "cancelled", "skipped"]);
+import { createDatasetVideo, createJob, createSample, getCapabilities, getVideo, listDatasetVideos, retryJob, uploadVideo } from "./api";
+import type { DatasetVideoOption, VideoAsset } from "./api";
+import { fpsForEnd, submittedEnd } from "./runState";
+import { usePreparation } from "./usePreparation";
+import { useRunHistory } from "./useRunHistory";
+import { FramePreview } from "./FramePreview";
 
 function formatLabel(label: string): string {
   return label.replaceAll("_", " ");
@@ -22,23 +24,34 @@ function sampleTimestamps(startSeconds: number, endSeconds: number, count = 16):
 export default function App() {
   const [video, setVideo] = useState<VideoAsset | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [job, setJob] = useState<AnalysisJob | null>(null);
+  const { jobs, selectedJob: job, selectedJobId, activeJob, pollError, ready: historyReady, setSelectedJobId, refresh, record } = useRunHistory();
+  const [jobVideo, setJobVideo] = useState<VideoAsset | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [duration, setDuration] = useState<number | null>(null);
   const [startSeconds, setStartSeconds] = useState(0);
-  const [endSeconds, setEndSeconds] = useState(2);
   const [frameCount, setFrameCount] = useState(16);
   const [fps, setFps] = useState(7.5);
+  const endSeconds = submittedEnd(startSeconds, frameCount, fps);
   const [size, setSize] = useState(448);
-  const [prepared, setPrepared] = useState<PreparedInput | null>(null);
-  const [preparing, setPreparing] = useState(false);
-  const [preparationError, setPreparationError] = useState<string | null>(null);
-  const [simulated, setSimulated] = useState(true);
+  const [capabilities, setCapabilities] = useState<{ simulated: boolean; models: string[]; backend_kind: string } | null>(null);
+  const [capabilityError, setCapabilityError] = useState<string | null>(null);
+  const simulated = capabilities?.simulated === true;
   const [datasetVideos, setDatasetVideos] = useState<DatasetVideoOption[]>([]);
   const [selectedDatasetPath, setSelectedDatasetPath] = useState("");
   const [showDatasetBrowser, setShowDatasetBrowser] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+
+  function selectSource(nextVideo: VideoAsset | null, url: string | null) {
+    setVideo(nextVideo);
+    setPreviewUrl(url);
+    setDuration(nextVideo?.duration_seconds ?? null);
+    setStartSeconds(0);
+    setFrameCount(16);
+    setFps(7.5);
+    setSize(448);
+    if (!nextVideo && fileInput.current) fileInput.current.value = "";
+  }
 
   const previewTimestamps = useMemo(
     () => endSeconds > startSeconds ? sampleTimestamps(startSeconds, endSeconds, frameCount) : [],
@@ -47,37 +60,20 @@ export default function App() {
   const rangeDuration = endSeconds - startSeconds;
   const isBaselineWindow = Math.abs(rangeDuration - 2) < 0.001;
   const rangeValid = startSeconds >= 0 && endSeconds > startSeconds && rangeDuration <= 30 && fps > 0 && fps <= 30 && frameCount >= 2 && frameCount <= 32 && (duration === null || endSeconds <= duration + 0.01);
-  const preparedMatches = Boolean(prepared && video && prepared.video_id === video.id &&
-    Math.abs(prepared.start_seconds - startSeconds) < 0.001 &&
-    Math.abs(prepared.end_seconds - endSeconds) < 0.001 &&
-    prepared.frame_count === frameCount && Math.abs(prepared.fps - fps) < 0.000001 && prepared.size === size);
-  const visiblePrepared = preparedMatches ? prepared : null;
+  const { visiblePrepared, preparing, preparationError } = usePreparation(video, startSeconds, frameCount, fps, size, rangeValid);
 
   useEffect(() => {
-    getCapabilities().then((capabilities) => setSimulated(capabilities.simulated)).catch(() => undefined);
+    getCapabilities().then(setCapabilities).catch((cause) => setCapabilityError(cause instanceof Error ? cause.message : "Could not load capabilities"));
   }, []);
 
   useEffect(() => {
-    setPrepared(null);
-    setPreparationError(null);
-    if (!video || video.source === "synthetic" || !rangeValid) {
-      setPreparing(false);
-      return;
-    }
+    if (!job) { setJobVideo(null); return; }
+    setJobVideo(null);
     let cancelled = false;
-    setPreparing(true);
-    const timer = window.setTimeout(async () => {
-      try {
-        const next = await createPreparedInput(video.id, startSeconds, frameCount, fps, size);
-        if (!cancelled) setPrepared(next);
-      } catch (prepareError) {
-        if (!cancelled) setPreparationError(prepareError instanceof Error ? prepareError.message : "Frame preparation failed");
-      } finally {
-        if (!cancelled) setPreparing(false);
-      }
-    }, 350);
-    return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [video, startSeconds, endSeconds, frameCount, fps, size, rangeValid]);
+    getVideo(job.video_id).then((asset) => { if (!cancelled) setJobVideo(asset); })
+      .catch(() => { if (!cancelled) setJobVideo(null); });
+    return () => { cancelled = true; };
+  }, [job?.video_id]);
 
   useEffect(() => {
     return () => {
@@ -85,37 +81,12 @@ export default function App() {
     };
   }, [previewUrl]);
 
-  useEffect(() => {
-    if (!job || terminalStates.has(job.state)) return;
-    let cancelled = false;
-    let pending = false;
-    const timer = window.setInterval(async () => {
-      if (pending) return;
-      pending = true;
-      try {
-        const next = await getJob(job.id);
-        if (!cancelled) setJob((current) => current?.id === next.id ? next : current);
-      } catch (pollError) {
-        if (!cancelled) setError(pollError instanceof Error ? pollError.message : "Could not read job status");
-      } finally {
-        pending = false;
-      }
-    }, 500);
-    return () => { cancelled = true; window.clearInterval(timer); };
-  }, [job]);
-
   async function useSample() {
     setBusy(true);
     setError(null);
-    setJob(null);
     try {
       const sample = await createSample();
-      setVideo(sample);
-      setPreviewUrl(null);
-      setDuration(sample.duration_seconds ?? 2);
-      setStartSeconds(0);
-      setEndSeconds(2);
-      setFrameCount(16); setFps(7.5); setSize(448);
+      selectSource(sample, null);
     } catch (sampleError) {
       setError(sampleError instanceof Error ? sampleError.message : "Could not create sample");
     } finally {
@@ -128,15 +99,9 @@ export default function App() {
     if (!file) return;
     setBusy(true);
     setError(null);
-    setJob(null);
     try {
       const uploaded = await uploadVideo(file);
-      setVideo(uploaded);
-      setPreviewUrl(URL.createObjectURL(file));
-      setDuration(null);
-      setStartSeconds(0);
-      setEndSeconds(2);
-      setFrameCount(16); setFps(7.5); setSize(448);
+      selectSource(uploaded, URL.createObjectURL(file));
     } catch (uploadError) {
       setError(uploadError instanceof Error ? uploadError.message : "Upload failed");
     } finally {
@@ -165,15 +130,9 @@ export default function App() {
     if (!selectedDatasetPath) return;
     setBusy(true);
     setError(null);
-    setJob(null);
     try {
       const asset = await createDatasetVideo(selectedDatasetPath);
-      setVideo(asset);
-      setPreviewUrl(`/api/videos/${asset.id}/media`);
-      setDuration(null);
-      setStartSeconds(0);
-      setEndSeconds(2);
-      setFrameCount(16); setFps(7.5); setSize(448);
+      selectSource(asset, `/api/videos/${asset.id}/media`);
       setShowDatasetBrowser(false);
     } catch (datasetError) {
       setError(datasetError instanceof Error ? datasetError.message : "Could not open the dataset video");
@@ -183,11 +142,12 @@ export default function App() {
   }
 
   async function analyze() {
-    if (!video) return;
+    if (!video || activeJob || !historyReady) return;
     setBusy(true);
     setError(null);
     try {
-      setJob(await createJob(video.id, startSeconds, endSeconds, visiblePrepared?.id ?? null));
+      const created = await createJob(video.id, startSeconds, endSeconds, visiblePrepared?.id ?? null, frameCount, fps, size);
+      record(created);
     } catch (jobError) {
       setError(jobError instanceof Error ? jobError.message : "Could not start analysis");
     } finally {
@@ -195,14 +155,13 @@ export default function App() {
     }
   }
 
-  const active = job && !terminalStates.has(job.state);
+  const active = Boolean(activeJob);
   const result = job?.prediction;
   function updateRange(nextStart: number, nextEnd: number) {
     if (busy) return;
     setStartSeconds(nextStart);
-    setEndSeconds(nextEnd);
-    if (nextEnd > nextStart) setFps((frameCount - 1) / (nextEnd - nextStart));
-    setJob(null);
+    const nextFps = fpsForEnd(nextStart, nextEnd, frameCount);
+    if (nextFps !== null) setFps(nextFps);
     setError(null);
   }
 
@@ -217,7 +176,7 @@ export default function App() {
           <button className="active">Clip analysis</button>
           <button disabled>Monitoring <small>soon</small></button>
         </div>
-        <span className="system-state"><i /> {simulated ? "Local simulation" : "Online vLLM"}</span>
+        <span className="system-state"><i /> {capabilities ? simulated ? "Local simulation" : "Online vLLM" : "Backend unavailable"}</span>
       </header>
 
       <section className="intro" id="top">
@@ -281,7 +240,6 @@ export default function App() {
                   if (!Number.isFinite(nextDuration)) return;
                   setDuration(nextDuration);
                   if (nextDuration < endSeconds && nextDuration > startSeconds) {
-                    setEndSeconds(nextDuration);
                     setFps((frameCount - 1) / (nextDuration - startSeconds));
                   }
                 }}
@@ -298,37 +256,11 @@ export default function App() {
                   <span>to</span>
                   <label>End (s) <input disabled={busy} aria-invalid={!rangeValid} type="number" min={startSeconds + 0.1} max={duration ?? 30} step="0.1" value={endSeconds} onChange={(event) => { if (Number.isFinite(event.currentTarget.valueAsNumber)) updateRange(startSeconds, event.currentTarget.valueAsNumber); }} /></label>
                 </div>
-                <button className="text-button" disabled={busy} onClick={() => { setVideo(null); setJob(null); setPreviewUrl(null); setDuration(null); if (fileInput.current) fileInput.current.value = ""; }}>Change source</button>
+                <button className="text-button" disabled={busy} onClick={() => selectSource(null, null)}>Change source</button>
               </div>
               {!rangeValid && <p className="range-error" role="alert">Choose a valid window of up to 30 seconds within the clip.</p>}
 
-              <section className="frame-preview" aria-labelledby="frame-preview-title">
-                <div className="frame-preview-heading">
-                  <div><span className="control-label">Frames for analysis</span><strong id="frame-preview-title">{frameCount} timestamped frames</strong></div>
-                  <span className="preview-disclaimer">{video.source === "synthetic" ? "Synthetic preview" : visiblePrepared ? "Frames sent to vLLM" : "Preparing frames…"}</span>
-                </div>
-                {preparing && <p className="preview-note" role="status">Decoding the selected video window…</p>}
-                {preparationError && <p className="range-error" role="alert">{preparationError}</p>}
-                {rangeValid && (video.source === "synthetic" || visiblePrepared) && <div className="frame-strip">
-                  {(visiblePrepared ? visiblePrepared.frames.map((frame) => frame.actual_seconds) : previewTimestamps).map((timestamp, index) => (
-                    <figure className="sample-frame" key={`${timestamp}-${index}`}>
-                      <div className="frame-image">
-                        {visiblePrepared ? (
-                          <img src={`/api/prepared-inputs/${visiblePrepared.id}/frames/${index}`} alt={`Prepared frame ${index + 1}`} />
-                        ) : (
-                          <div className="synthetic-frame">
-                            <i className="mini-window" />
-                            <i className="mini-figure" style={{ transform: `rotate(${Math.min(78, (index / 15) * 88)}deg)` }} />
-                          </div>
-                        )}
-                        <span>{String(index + 1).padStart(2, "0")}</span>
-                      </div>
-                      <figcaption>{timestamp.toFixed(3)}s</figcaption>
-                    </figure>
-                  ))}
-                </div>}
-                <p className="preview-note">{visiblePrepared ? "These JPEG previews are the encoded frames in the online video request. The activity label is simulated when using the mock backend." : "Change the window or settings to prepare a new frame bundle."}</p>
-              </section>
+              <FramePreview video={video} frameCount={frameCount} timestamps={previewTimestamps} prepared={visiblePrepared} preparing={preparing} error={preparationError} valid={rangeValid} />
             </>
           )}
         </div>
@@ -336,27 +268,38 @@ export default function App() {
         <aside className="analysis-panel">
           <div className="panel-heading">
             <div><span>02</span><h2>Analysis</h2></div>
-            <span className="mock-badge">{simulated ? "Simulated" : "Online vLLM"}</span>
+            <span className="mock-badge">{capabilities ? simulated ? "Simulated" : "Online vLLM" : "Unavailable"}</span>
           </div>
 
-          <div className="setting-row"><span>Model</span><strong>Qwen3-VL 8B</strong></div>
-          <div className="setting-row"><label htmlFor="frame-count">Frames</label><input id="frame-count" type="number" min="2" max="32" step="1" value={frameCount} disabled={busy} onChange={(event) => { const next = event.currentTarget.valueAsNumber; if (Number.isInteger(next) && next >= 2 && next <= 32) { setFrameCount(next); setEndSeconds(startSeconds + (next - 1) / fps); setJob(null); } }} /></div>
-          <div className="setting-row"><label htmlFor="target-fps">Sampling FPS</label><input id="target-fps" type="number" min="0.1" max="30" step="0.1" value={fps} disabled={busy} onChange={(event) => { const next = event.currentTarget.valueAsNumber; if (Number.isFinite(next) && next > 0 && next <= 30) { setFps(next); setEndSeconds(startSeconds + (frameCount - 1) / next); setJob(null); } }} /></div>
-          <div className="setting-row"><label htmlFor="frame-size">Crop size</label><select id="frame-size" value={size} disabled={busy} onChange={(event) => { setSize(Number(event.currentTarget.value)); setJob(null); }}><option value={224}>224 × 224</option><option value={336}>336 × 336</option><option value={448}>448 × 448</option><option value={672}>672 × 672</option></select></div>
+          <div className="setting-row"><span>Model</span><strong>{capabilities?.models[0] ?? "Unavailable"}</strong></div>
+          <div className="setting-row"><label htmlFor="frame-count">Frames</label><input id="frame-count" type="number" min="2" max="32" step="1" value={frameCount} disabled={busy} onChange={(event) => { const next = event.currentTarget.valueAsNumber; if (Number.isInteger(next) && next >= 2 && next <= 32) setFrameCount(next); }} /></div>
+          <div className="setting-row"><label htmlFor="target-fps">Sampling FPS</label><input id="target-fps" type="number" min="0.1" max="30" step="0.1" value={fps} disabled={busy} onChange={(event) => { const next = event.currentTarget.valueAsNumber; if (Number.isFinite(next) && next > 0 && next <= 30) setFps(next); }} /></div>
+          <div className="setting-row"><label htmlFor="frame-size">Crop size</label><select id="frame-size" value={size} disabled={busy} onChange={(event) => setSize(Number(event.currentTarget.value))}><option value={224}>224 × 224</option><option value={336}>336 × 336</option><option value={448}>448 × 448</option><option value={672}>672 × 672</option></select></div>
           <div className="setting-row"><span>Preset</span><strong>Thesis baseline v1</strong></div>
           <div className="setting-row"><span>Window</span><strong>{rangeDuration.toFixed(2)} s {(!isBaselineWindow || fps !== 7.5 || frameCount !== 16 || size !== 448) && <small className="experimental">Experimental</small>}</strong></div>
           <p className="preview-note">Frame count and FPS set the window length. Editing the end time recalculates FPS.</p>
 
-          <button className="analyze-button" disabled={!video || !rangeValid || busy || Boolean(active) || (video.source !== "synthetic" && (!visiblePrepared || preparing)) || (video.source === "synthetic" && !simulated)} onClick={analyze}>
-            {active ? <><i className="spinner" /> {job?.state === "queued" ? "Queued" : "Analyzing"}</> : busy ? "Please wait…" : result ? "Run again" : "Run analysis"}
+          <button className="analyze-button" disabled={!historyReady || !capabilities || !video || !rangeValid || busy || active || (video.source !== "synthetic" && (!visiblePrepared || preparing)) || (video.source === "synthetic" && !simulated)} onClick={analyze}>
+            {active ? <><i className="spinner" /> {activeJob?.state === "queued" ? "Queued" : "Analyzing"}</> : busy ? "Please wait…" : result ? "Run again" : "Run analysis"}
           </button>
 
           {error && <p className="error-message" role="alert">{error}</p>}
+          {capabilityError && <p className="error-message" role="alert">Backend settings unavailable: {capabilityError}</p>}
+          {!historyReady && !pollError && <p className="job-status" role="status">Recovering recent runs…</p>}
+          {pollError && <p className="error-message" role="alert">Run status unavailable: {pollError} <button onClick={() => void refresh()}>Retry</button></p>}
+
+          {jobs.length > 0 && <section className="recent-runs" aria-label="Recent runs">
+            <label htmlFor="recent-run">Recent runs</label>
+            <select id="recent-run" value={selectedJobId ?? ""} onChange={(event) => setSelectedJobId(event.target.value)}>
+              {jobs.map((item) => <option key={item.id} value={item.id}>{item.created_at.slice(0, 19)} · {item.state} · {item.video_id}</option>)}
+            </select>
+          </section>}
+          {job && <p className="preview-note">Submitted source: {jobVideo?.id === job.video_id ? jobVideo.filename : job.video_id} · {job.start_seconds.toFixed(3)}–{job.end_seconds.toFixed(3)} s · {job.configuration?.model ?? "Saved model unavailable"}</p>}
 
           {!job && <div className="result-placeholder"><span>{video ? "Ready when you are" : "Start with a clip"}</span><p>{video?.source === "synthetic" && !simulated ? "Choose a real video for online vLLM analysis." : video ? simulated ? "Check your window, then run a simulated analysis." : "Check your prepared frames, then run analysis." : "Choose a sample, browse the dataset, or upload a video to get started."}</p></div>}
-          {active && <p className="job-status" role="status">{job.state === "queued" ? "Your clip is queued for analysis." : simulated ? "Generating a simulated result…" : "Analyzing prepared frames…"}</p>}
+          {activeJob && <p className="job-status" role="status">{activeJob.state === "queued" ? "A submitted clip is queued for analysis." : activeJob.configuration?.backend_kind === "mock" ? "Generating a simulated result…" : "Analyzing prepared frames…"}</p>}
 
-          {job?.state === "failed" && <div className="result-card failure" role="alert"><span>Processing failed</span><p>{job.error}</p></div>}
+          {job?.state === "failed" && <div className="result-card failure" role="alert"><span>Processing failed</span><p>{job.error}</p><button className="button secondary" onClick={() => retryJob(job.id).then(record).catch((cause) => setError(String(cause)))} disabled={Boolean(activeJob)}>Retry run</button></div>}
 
           {result && (
             <div className="result-card" aria-live="polite">
@@ -384,7 +327,7 @@ export default function App() {
         </aside>
       </section>
 
-      <footer><span>{simulated ? "Local MVP · no model inference is occurring" : "Online vLLM analysis"}</span><span>Every result keeps its input and configuration identity</span></footer>
+      <footer><span>{capabilities ? simulated ? "Local MVP · no model inference is occurring" : "Online vLLM analysis" : "Backend settings unavailable"}</span><span>Every result keeps its input and configuration identity</span></footer>
       <input ref={fileInput} type="file" accept="video/mp4,video/quicktime,video/webm,video/x-matroska" hidden onChange={onFileChange} />
     </main>
   );

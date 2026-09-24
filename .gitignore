@@ -12,4 +12,5 @@ data/
 media/
 node_modules/
 dist/
+.cache/
 coverage/

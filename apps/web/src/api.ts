@@ -40,6 +40,7 @@ export type AnalysisJob = {
   error: string | null;
   created_at: string;
   updated_at: string;
+  configuration: { model: string; backend_kind: string; fixture_version: string | null; preprocessing: { frames: number; fps: number; resize: number }; generation: { temperature: number; max_tokens: number } } | null;
   prediction: Prediction | null;
 };
 
@@ -55,7 +56,7 @@ export type PreparedInput = {
   frames: { index: number; requested_seconds: number; actual_seconds: number; sha256: string }[];
 };
 
-export type Capabilities = { backend_kind: string; simulated: boolean };
+export type Capabilities = { backend_kind: string; simulated: boolean; models: string[] };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api${path}`, init);
@@ -104,7 +105,7 @@ export function createPreparedInput(videoId: string, startSeconds: number, frame
   });
 }
 
-export function createJob(videoId: string, startSeconds: number, endSeconds: number, preparedInputId: string | null): Promise<AnalysisJob> {
+export function createJob(videoId: string, startSeconds: number, endSeconds: number, preparedInputId: string | null, frameCount = 16, fps = 7.5, size = 448): Promise<AnalysisJob> {
   return request("/analysis-jobs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -113,10 +114,25 @@ export function createJob(videoId: string, startSeconds: number, endSeconds: num
       start_seconds: startSeconds,
       end_seconds: endSeconds,
       prepared_input_id: preparedInputId,
+      frame_count: frameCount,
+      fps,
+      size,
     }),
   });
 }
 
 export function getJob(jobId: string): Promise<AnalysisJob> {
   return request(`/analysis-jobs/${jobId}`);
+}
+
+export function listJobs(): Promise<AnalysisJob[]> {
+  return request("/analysis-jobs?limit=50");
+}
+
+export function retryJob(jobId: string): Promise<AnalysisJob> {
+  return request(`/analysis-jobs/${jobId}/retry`, { method: "POST" });
+}
+
+export function getVideo(videoId: string): Promise<VideoAsset> {
+  return request(`/videos/${videoId}`);
 }
