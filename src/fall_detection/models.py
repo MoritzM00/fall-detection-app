@@ -25,6 +25,9 @@ class AnalysisJobCreate(BaseModel):
     start_seconds: float = Field(default=0, ge=0, allow_inf_nan=False)
     end_seconds: float = Field(default=2, gt=0, allow_inf_nan=False)
     prepared_input_id: str | None = None
+    frame_count: int = Field(default=16, ge=2, le=32)
+    fps: float = Field(default=7.5, gt=0, le=30, allow_inf_nan=False)
+    size: int = Field(default=448, ge=224, le=672)
 
 
 class PreparationRequest(BaseModel):
@@ -95,6 +98,36 @@ class PredictionResult(BaseModel):
     completed_at: str
 
 
+class SamplingConfiguration(BaseModel):
+    """Validated sampling parameters saved with one run."""
+
+    frames: int = Field(ge=2, le=32)
+    fps: float = Field(gt=0, le=30, allow_inf_nan=False)
+    resize: int = Field(ge=224, le=672)
+    crop: Literal["center"] = "center"
+    version: str | None = None
+    bundle_sha256: str | None = None
+
+
+class GenerationConfiguration(BaseModel):
+    """Validated generation parameters saved with one run."""
+
+    temperature: float = Field(ge=0, le=2, allow_inf_nan=False)
+    max_tokens: int = Field(ge=1, le=4096)
+
+
+class RunConfiguration(BaseModel):
+    """Immutable model, backend, prompt, and input settings for a run."""
+
+    model: str = Field(min_length=1)
+    prompt_preset: str
+    prompt_text: str
+    preprocessing: SamplingConfiguration
+    generation: GenerationConfiguration
+    backend_kind: Literal["mock", "vllm", "unknown"]
+    fixture_version: str | None = None
+
+
 class AnalysisJob(BaseModel):
     """Durable job lifecycle view returned to clients."""
 
@@ -109,6 +142,9 @@ class AnalysisJob(BaseModel):
     error: str | None
     created_at: str
     updated_at: str
+    claim_token: str | None = None
+    lease_expires_at: str | None = None
+    configuration: RunConfiguration | None = None
     prediction: PredictionResult | None = None
 
 

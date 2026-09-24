@@ -5,6 +5,7 @@ import pytest
 
 import apps.worker.main as worker
 from fall_detection.config import Settings
+from fall_detection.inference import InferenceResponse
 from fall_detection.pipeline import PipelineResult
 from fall_detection.repository import Repository
 
@@ -65,4 +66,36 @@ def test_worker_rejects_synthetic_video_for_real_inference(queued_job, monkeypat
     failed = repository.get_job(job.id)
     assert failed.state == "failed"
     assert failed.prediction is None
-    assert "Synthetic sample" in failed.error
+    assert "Queued backend mock" in failed.error
+
+
+def test_saved_synthetic_sampling_and_generation_drive_request(tmp_path: Path, monkeypatch):
+    settings = replace(
+        Settings.from_env(), data_dir=tmp_path, database_path=tmp_path / "app.sqlite3"
+    )
+    repository = Repository(settings.database_path)
+    repository.initialize()
+    video = repository.create_sample_video()
+    job = repository.create_job(
+        video.id,
+        0,
+        1,
+        model="saved-model",
+        preprocessing={"frames": 6, "fps": 5, "resize": 224, "crop": "center"},
+        generation={"temperature": 0.4, "max_tokens": 19},
+    )
+    sent = {}
+
+    def complete(_client, payload):
+        sent.update(payload)
+        return InferenceResponse("The best answer is: fall", "completion")
+
+    monkeypatch.setattr(worker.InferenceClient, "complete", complete)
+    assert worker.process_next_job(replace(settings, inference_model="changed-default"), repository)
+    result = repository.get_job(job.id)
+    assert result is not None and result.prediction is not None
+    assert result.prediction.sampled_timestamps == [0, 0.2, 0.4, 0.6, 0.8, 1]
+    assert result.prediction.model == "saved-model"
+    assert sent["model"] == "saved-model"
+    assert sent["temperature"] == 0.4
+    assert sent["max_tokens"] == 19

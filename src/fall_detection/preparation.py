@@ -89,8 +89,13 @@ def load_prepared_input(data_dir: Path, prepared_id: str) -> PreparedInput:
         raise ValueError("Prepared input not found") from exc
 
 
-def prepare_video(video: VideoAsset, request: PreparationRequest, data_dir: Path) -> PreparedInput:
-    """Store a lossless RGB array and matching PNGs for the selected settings."""
+def prepare_video(
+    video: VideoAsset,
+    request: PreparationRequest,
+    data_dir: Path,
+    inspection_pngs: bool = True,
+) -> PreparedInput:
+    """Store verified RGB arrays and JPEG transport frames; PNGs are optional."""
     if video.id != request.video_id or video.storage_key is None:
         raise ValueError("A stored video is required for frame preparation")
     media_path = (data_dir / video.storage_key).resolve()
@@ -135,7 +140,8 @@ def prepare_video(video: VideoAsset, request: PreparationRequest, data_dir: Path
             rgb = _crop_rgb(source_frame, request.size)
             arrays.append(rgb)
             image = Image.fromarray(rgb)
-            image.save(temporary / f"{index:02d}.png")
+            if inspection_pngs:
+                image.save(temporary / f"{index:02d}.png")
             jpeg_path = temporary / f"{index:02d}.jpg"
             image.save(jpeg_path, format="JPEG", quality=95)
             frames.append(
@@ -169,8 +175,10 @@ def prepare_video(video: VideoAsset, request: PreparationRequest, data_dir: Path
             return load_prepared_input(data_dir, prepared_id)
         try:
             temporary.rename(target)
-        except FileExistsError:
-            return load_prepared_input(data_dir, prepared_id)
+        except OSError:
+            if (target / "manifest.json").is_file():
+                return load_prepared_input(data_dir, prepared_id)
+            raise
         return prepared
     finally:
         if temporary.exists():
