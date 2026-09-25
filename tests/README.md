@@ -1,6 +1,6 @@
 # Validation plan
 
-The first automated tests cover the complete taxonomy parser, timestamp sampling, durable job lifecycle, mock completion contract, and malformed mock inputs. `make check` also runs linting, type checking, formatting verification, and the frontend production build.
+The automated tests cover the complete taxonomy parser, timestamp sampling, durable job lifecycle, mock completion contract, and malformed mock inputs. `make check` also runs linting, type checking, formatting verification, and the frontend production build. `make browser-test` runs the rendered clip-analysis flow against disposable local services and a generated video fixture.
 
 Future meaningful checks:
 
@@ -10,7 +10,6 @@ Future meaningful checks:
 - Valid labels, malformed/ambiguous output, and separation of errors from `other`.
 - Online versus in-process inference on fixed reference inputs.
 - Job reclaim/retry behavior and idempotent result persistence.
-- Upload-to-result flow and reconnect recovery.
 - Monitoring backlog, skipped coverage, seek/restart generations, and out-of-order results.
 - Sustained processing measurements and continuous-video evaluation described in the roadmap.
 
