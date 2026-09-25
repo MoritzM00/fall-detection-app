@@ -11,6 +11,7 @@ import numpy as np
 from PIL import Image
 
 from fall_detection.models import PreparationRequest, PreparedFrame, PreparedInput, VideoAsset
+from fall_detection.storage_lock import storage_lock
 
 PREPROCESSING_VERSION = "pyav-pillow-online-jpeg-v2"
 
@@ -94,6 +95,17 @@ def prepare_video(
     request: PreparationRequest,
     data_dir: Path,
     inspection_pngs: bool = True,
+) -> PreparedInput:
+    """Prepare a bundle while maintenance cannot remove its source or output."""
+    with storage_lock(data_dir, exclusive=False):
+        return _prepare_video_unlocked(video, request, data_dir, inspection_pngs)
+
+
+def _prepare_video_unlocked(
+    video: VideoAsset,
+    request: PreparationRequest,
+    data_dir: Path,
+    inspection_pngs: bool,
 ) -> PreparedInput:
     """Store verified RGB arrays and JPEG transport frames; PNGs are optional."""
     if video.id != request.video_id or video.storage_key is None:

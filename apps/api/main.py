@@ -24,6 +24,7 @@ from fall_detection.preparation import load_prepared_input, preparation_path, pr
 from fall_detection.preparation_queue import PreparationBusyError, PreparationCoordinator
 from fall_detection.prompts import PRESET_ID, THESIS_BASELINE_PROMPT
 from fall_detection.repository import Repository
+from fall_detection.storage_lock import storage_lock
 from fall_detection.taxonomy import ACTIVITY_LABELS
 from fall_detection.upload_limit import UploadBodyLimitMiddleware
 
@@ -116,24 +117,25 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
             raise HTTPException(status_code=415, detail="Supported formats: MP4, MOV, WebM, MKV")
         media_dir = settings.data_dir / "media"
         media_dir.mkdir(parents=True, exist_ok=True)
-        if not media_dir.resolve().is_relative_to(settings.data_dir.resolve()):
-            raise HTTPException(status_code=400, detail="Upload storage path is unsafe")
-        storage_key = f"media/{uuid4()}{suffix}"
-        target = settings.data_dir / storage_key
-        copied = 0
-        try:
-            with target.open("xb") as destination:
-                while chunk := file.file.read(1024 * 1024):
-                    copied += len(chunk)
-                    if copied > settings.upload_max_bytes:
-                        raise HTTPException(
-                            status_code=413, detail="Upload exceeds the configured byte limit"
-                        )
-                    destination.write(chunk)
-            return repository.create_uploaded_video(file.filename or target.name, storage_key)
-        except Exception:
-            target.unlink(missing_ok=True)
-            raise
+        with storage_lock(settings.data_dir, exclusive=False):
+            if not media_dir.resolve().is_relative_to(settings.data_dir.resolve()):
+                raise HTTPException(status_code=400, detail="Upload storage path is unsafe")
+            storage_key = f"media/{uuid4()}{suffix}"
+            target = settings.data_dir / storage_key
+            copied = 0
+            try:
+                with target.open("xb") as destination:
+                    while chunk := file.file.read(1024 * 1024):
+                        copied += len(chunk)
+                        if copied > settings.upload_max_bytes:
+                            raise HTTPException(
+                                status_code=413, detail="Upload exceeds the configured byte limit"
+                            )
+                        destination.write(chunk)
+                return repository.create_uploaded_video(file.filename or target.name, storage_key)
+            except Exception:
+                target.unlink(missing_ok=True)
+                raise
 
     @app.get("/videos/{video_id}", response_model=VideoAsset)
     def get_video(video_id: str) -> VideoAsset:
@@ -157,72 +159,80 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
     @app.post("/analysis-jobs", response_model=AnalysisJob, status_code=status.HTTP_202_ACCEPTED)
     def create_analysis_job(request: AnalysisJobCreate) -> AnalysisJob:
         """Validate a selected range and persist a queued analysis job."""
-        if request.end_seconds <= request.start_seconds:
-            raise HTTPException(status_code=422, detail="End time must be after start time")
-        if request.end_seconds - request.start_seconds > 30:
-            raise HTTPException(status_code=422, detail="MVP selections are limited to 30 seconds")
-        video = repository.get_video(request.video_id)
-        if video is None:
-            raise HTTPException(status_code=404, detail="Video not found")
-        if video.source == "synthetic":
-            expected_end = request.start_seconds + (request.frame_count - 1) / request.fps
-            if abs(expected_end - request.end_seconds) > 0.001:
+        settings.data_dir.mkdir(parents=True, exist_ok=True)
+        with storage_lock(settings.data_dir, exclusive=False):
+            if request.end_seconds <= request.start_seconds:
+                raise HTTPException(status_code=422, detail="End time must be after start time")
+            if request.end_seconds - request.start_seconds > 30:
                 raise HTTPException(
-                    status_code=422,
-                    detail="Synthetic sampling settings do not match the selected window",
+                    status_code=422, detail="MVP selections are limited to 30 seconds"
                 )
-            if video.duration_seconds is not None and request.end_seconds > video.duration_seconds:
-                raise HTTPException(
-                    status_code=422, detail="Selected window exceeds the synthetic clip"
-                )
-        prepared = None
-        if video.source != "synthetic":
-            if request.prepared_input_id is None:
-                raise HTTPException(status_code=422, detail="Prepare frames before analyzing")
+            video = repository.get_video(request.video_id)
+            if video is None:
+                raise HTTPException(status_code=404, detail="Video not found")
+            if video.source == "synthetic":
+                expected_end = request.start_seconds + (request.frame_count - 1) / request.fps
+                if abs(expected_end - request.end_seconds) > 0.001:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="Synthetic sampling settings do not match the selected window",
+                    )
+                if (
+                    video.duration_seconds is not None
+                    and request.end_seconds > video.duration_seconds
+                ):
+                    raise HTTPException(
+                        status_code=422, detail="Selected window exceeds the synthetic clip"
+                    )
+            prepared = None
+            if video.source != "synthetic":
+                if request.prepared_input_id is None:
+                    raise HTTPException(status_code=422, detail="Prepare frames before analyzing")
+                try:
+                    prepared = load_prepared_input(settings.data_dir, request.prepared_input_id)
+                except ValueError as exc:
+                    raise HTTPException(status_code=404, detail=str(exc)) from exc
+                if (
+                    prepared.video_id != video.id
+                    or abs(prepared.start_seconds - request.start_seconds) > 0.001
+                    or abs(prepared.end_seconds - request.end_seconds) > 0.001
+                    or prepared.frame_count != request.frame_count
+                    or abs(prepared.fps - request.fps) > 0.000001
+                    or prepared.size != request.size
+                ):
+                    raise HTTPException(
+                        status_code=422,
+                        detail="Prepared frames do not match the selected video window",
+                    )
             try:
-                prepared = load_prepared_input(settings.data_dir, request.prepared_input_id)
-            except ValueError as exc:
-                raise HTTPException(status_code=404, detail=str(exc)) from exc
-            if (
-                prepared.video_id != video.id
-                or abs(prepared.start_seconds - request.start_seconds) > 0.001
-                or abs(prepared.end_seconds - request.end_seconds) > 0.001
-                or prepared.frame_count != request.frame_count
-                or abs(prepared.fps - request.fps) > 0.000001
-                or prepared.size != request.size
-            ):
-                raise HTTPException(
-                    status_code=422, detail="Prepared frames do not match the selected video window"
+                return repository.create_job(
+                    request.video_id,
+                    request.start_seconds,
+                    request.end_seconds,
+                    model=settings.inference_model,
+                    backend_kind=settings.backend_kind,
+                    fixture_version=settings.mock_fixture_version,
+                    prepared_input_id=prepared.id if prepared else None,
+                    preprocessing=(
+                        {
+                            "frames": prepared.frame_count,
+                            "fps": prepared.fps,
+                            "resize": prepared.size,
+                            "crop": "center",
+                            "version": prepared.preprocessing_version,
+                            "bundle_sha256": prepared.bundle_sha256,
+                        }
+                        if prepared
+                        else {
+                            "frames": request.frame_count,
+                            "fps": request.fps,
+                            "resize": request.size,
+                            "crop": "center",
+                        }
+                    ),
                 )
-        try:
-            return repository.create_job(
-                request.video_id,
-                request.start_seconds,
-                request.end_seconds,
-                model=settings.inference_model,
-                backend_kind=settings.backend_kind,
-                fixture_version=settings.mock_fixture_version,
-                prepared_input_id=prepared.id if prepared else None,
-                preprocessing=(
-                    {
-                        "frames": prepared.frame_count,
-                        "fps": prepared.fps,
-                        "resize": prepared.size,
-                        "crop": "center",
-                        "version": prepared.preprocessing_version,
-                        "bundle_sha256": prepared.bundle_sha256,
-                    }
-                    if prepared
-                    else {
-                        "frames": request.frame_count,
-                        "fps": request.fps,
-                        "resize": request.size,
-                        "crop": "center",
-                    }
-                ),
-            )
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail="Video not found") from exc
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail="Video not found") from exc
 
     @app.post("/prepared-inputs", response_model=PreparedInput)
     def create_prepared_input(request: PreparationRequest) -> PreparedInput:
