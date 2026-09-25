@@ -25,6 +25,7 @@ from fall_detection.preparation_queue import PreparationBusyError, PreparationCo
 from fall_detection.prompts import PRESET_ID, THESIS_BASELINE_PROMPT
 from fall_detection.repository import Repository
 from fall_detection.taxonomy import ACTIVITY_LABELS
+from fall_detection.upload_limit import UploadBodyLimitMiddleware
 
 settings = Settings.from_env()
 repository = Repository(settings.database_path)
@@ -42,6 +43,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="Fall Detection API", version="0.1.0", lifespan=lifespan)
+app.add_middleware(UploadBodyLimitMiddleware, upload_max_bytes=lambda: settings.upload_max_bytes)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
