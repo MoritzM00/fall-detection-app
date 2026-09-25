@@ -16,6 +16,10 @@ function formatTime(seconds: number): string {
   return `${String(minutes).padStart(2, "0")}:${remainder.toFixed(3).padStart(6, "0")}`;
 }
 
+function trackPosition(seconds: number, duration: number): string {
+  return `${Math.min(100, Math.max(0, (seconds / duration) * 100))}%`;
+}
+
 export function WindowControls({
   startSeconds, endSeconds, frameCount, fps, duration, valid, busy,
   onRangeChange, onChangeSource,
@@ -36,6 +40,13 @@ export function WindowControls({
       </div>
       <button className="text-button" disabled={busy} onClick={onChangeSource}>Change source</button>
     </div>
+    {duration !== null && duration > 0 && <div className="window-track" aria-hidden="true">
+      <div className="window-track-bar">
+        <span className="window-range" style={{ left: trackPosition(startSeconds, duration), width: trackPosition(endSeconds - startSeconds, duration) }} />
+        {Array.from({ length: frameCount }, (_, index) => <i key={index} style={{ left: trackPosition(startSeconds + index / fps, duration) }} />)}
+      </div>
+      <div className="window-track-scale"><span>0 s</span><span>{duration.toFixed(1)} s</span></div>
+    </div>}
     {!valid && <p className="range-error" role="alert">Choose a valid window of up to 30 seconds within the clip.</p>}
   </>;
 }

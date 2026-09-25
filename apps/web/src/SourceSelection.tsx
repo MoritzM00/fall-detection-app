@@ -36,7 +36,7 @@ export function SourceSelection({
       {!video && <div className="empty-state">
         <span className="upload-glyph">↗</span>
         <h3>Choose a clip</h3>
-        <p>Use the built-in scenario now, or bring an MP4, MOV, WebM, or MKV.</p>
+        <p>Start with the synthetic sample, open a prepared OmniFall video, or upload an MP4, MOV, WebM, or MKV file.</p>
         <div className="source-actions">
           <button className="button primary" onClick={onSample} disabled={busy}>Use sample clip</button>
           <button className="button secondary" onClick={onBrowseDataset} disabled={busy}>Browse dataset</button>
@@ -62,7 +62,7 @@ export function SourceSelection({
         <div className="window-light" />
         <div className="corridor-line left" /><div className="corridor-line right" />
         <div className="figure"><span className="head" /><span className="body" /><span className="leg one" /><span className="leg two" /></div>
-        <span className="scene-label">SYNTHETIC CORRIDOR · 00:06</span>
+        <span className="scene-label">Synthetic corridor · 0:06</span>
       </div>}
       {video && video.source !== "synthetic" && previewUrl && <video
         src={previewUrl}
