@@ -41,15 +41,18 @@ jobs:
         working-directory: apps/web
     steps:
       - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: apps/web/package.json
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: apps/web/package-lock.json
-      - run: npm ci --ignore-scripts
-      - run: npm run build
-      - run: npm run typecheck:e2e
-      - run: npm test
+          cache: pnpm
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm typecheck:e2e
+      - run: pnpm test
 
   e2e:
     name: Browser end-to-end
@@ -62,13 +65,16 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --locked
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: apps/web/package.json
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: apps/web/package-lock.json
-      - run: npm ci --ignore-scripts --prefix apps/web
-      - run: npx --prefix apps/web playwright install --with-deps chromium
+          cache: pnpm
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+      - run: pnpm --dir apps/web install --frozen-lockfile
+      - run: pnpm --dir apps/web exec playwright install --with-deps chromium
       - run: .venv/bin/python scripts/run_browser_tests.py
       - if: failure()
         uses: actions/upload-artifact@v7

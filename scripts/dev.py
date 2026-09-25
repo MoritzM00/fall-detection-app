@@ -64,7 +64,9 @@ def main() -> None:
             [sys.executable, "-m", "uvicorn", "apps.api.main:app", "--port", "8000", "--reload"],
         ),
         ("worker", [sys.executable, "-m", "apps.worker.main"]),
-        ("web", ["npm", "run", "dev", "--prefix", "apps/web"]),
+        # Start Vite directly: pnpm runs scripts in a separate process group, which
+        # survives the group kill Playwright uses to stop its web server.
+        ("web", ["apps/web/node_modules/.bin/vite", "apps/web"]),
     ]
     processes: list[tuple[str, subprocess.Popen[bytes]]] = []
     previous_handlers: dict[

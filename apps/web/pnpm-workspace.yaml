@@ -1,0 +1,7 @@
+# Supply-chain hardening: skip versions published less than a day ago and
+# run no dependency install scripts. esbuild and fsevents declare scripts
+# but ship prebuilt binaries, so the build works without them.
+minimumReleaseAge: 1440
+allowBuilds:
+  esbuild: false
+  fsevents: false

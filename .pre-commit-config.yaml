@@ -4,6 +4,8 @@ repos:
     hooks:
       - id: check-toml
       - id: check-yaml
+        # pnpm writes its lockfile as a multi-document YAML stream.
+        exclude: ^apps/web/pnpm-lock\.yaml$
       - id: end-of-file-fixer
       - id: trailing-whitespace
   - repo: local

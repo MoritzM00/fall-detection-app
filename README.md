@@ -35,7 +35,7 @@ Both modes use the same prediction pipeline and preserve the 16-class taxonomy. 
 
 ## Run locally
 
-Requirements: Python 3.12+, `uv`, Node.js, and npm.
+Requirements: Python 3.12+, `uv`, Node.js, and pnpm.
 
 ```bash
 make setup

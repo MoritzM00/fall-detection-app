@@ -2,7 +2,7 @@
 
 setup:
 	UV_CACHE_DIR=.uv-cache uv sync
-	npm install --prefix apps/web
+	pnpm --dir apps/web install --frozen-lockfile
 
 dev:
 	UV_CACHE_DIR=.uv-cache uv run python scripts/dev.py
@@ -12,9 +12,9 @@ check:
 	UV_CACHE_DIR=.uv-cache uv run ruff format --check .
 	UV_CACHE_DIR=.uv-cache uv run ty check
 	UV_CACHE_DIR=.uv-cache uv run pytest
-	npm run build --prefix apps/web
-	npm run typecheck:e2e --prefix apps/web
-	npm test --prefix apps/web
+	pnpm --dir apps/web build
+	pnpm --dir apps/web typecheck:e2e
+	pnpm --dir apps/web test
 
 
 browser-test:
