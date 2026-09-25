@@ -6,6 +6,8 @@ Next areas: sampled-frame previews, monitoring-session controls, server-sent eve
 
 Persist jobs before returning acceptance. Keep decoding and inference in the worker. Database-backed records remain authoritative across client reconnects.
 
+For isolated tests or embedded use, call `create_app(settings, repository)`. Each instance owns its configuration and preparation coordinator, and initializes its repository on startup. `apps.api.main:app` remains the Uvicorn entry point.
+
 ## Upload limits
 
 `FALL_DETECTION_UPLOAD_MAX_BYTES` defaults to 512 MiB. `POST /videos` counts actual request bytes before multipart parsing and returns HTTP 413 once the body exceeds the file limit plus 64 KiB for multipart boundaries and headers. The limit works with missing or incorrect `Content-Length`. A file exactly at the configured limit is accepted when its multipart overhead fits within that allowance; larger headers can cause an earlier 413. The upload handler separately enforces the exact file-byte limit while copying to managed storage and removes partial persistent files on failure.

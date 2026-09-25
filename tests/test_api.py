@@ -5,31 +5,71 @@ import pytest
 from fastapi.testclient import TestClient
 
 import apps.api.main as api
+from fall_detection.config import Settings
 from fall_detection.repository import Repository
 from fall_detection.upload_limit import MULTIPART_OVERHEAD_BYTES
 
 
 @pytest.fixture
-def client(tmp_path, monkeypatch):
-    settings = replace(
-        api.settings,
-        data_dir=tmp_path,
-        database_path=tmp_path / "app.sqlite3",
-        inference_model="custom-model",
-    )
-    repository = Repository(settings.database_path)
-    monkeypatch.setattr(api, "settings", settings)
-    monkeypatch.setattr(api, "repository", repository)
-    with TestClient(api.app) as client:
-        yield client
+def make_api(tmp_path):
+    def build(name="default", **overrides):
+        data_dir = tmp_path / name
+        settings = replace(
+            Settings.from_env(),
+            data_dir=data_dir,
+            database_path=data_dir / "app.sqlite3",
+            inference_model="custom-model",
+        )
+        settings = replace(settings, **overrides)
+        repository = Repository(settings.database_path)
+        return api.create_app(settings, repository), repository, data_dir
+
+    return build
 
 
-def test_api_snapshots_configured_model(client):
+@pytest.fixture
+def api_instance(make_api):
+    return make_api()
+
+
+@pytest.fixture
+def client(api_instance):
+    app, _, _ = api_instance
+    with TestClient(app) as test_client:
+        yield test_client
+
+
+def test_api_snapshots_configured_model(client, api_instance):
+    _, repository, _ = api_instance
     video = client.post("/videos/sample").json()
     response = client.post("/analysis-jobs", json={"video_id": video["id"]})
     assert response.status_code == 202
-    model, _ = api.repository.get_inference_configuration(response.json()["configuration_id"])
+    model, _ = repository.get_inference_configuration(response.json()["configuration_id"])
     assert model == "custom-model"
+
+
+def test_app_instances_keep_settings_and_storage_isolated(make_api):
+    first_app, first_repository, first_data_dir = make_api("first", inference_model="model-a")
+    second_app, second_repository, second_data_dir = make_api("second", inference_model="model-b")
+    assert not first_data_dir.exists()
+    assert not second_data_dir.exists()
+
+    with TestClient(first_app) as first_client, TestClient(second_app) as second_client:
+        assert first_client.get("/capabilities").json()["models"] == ["model-a"]
+        assert second_client.get("/capabilities").json()["models"] == ["model-b"]
+        uploaded = first_client.post("/videos", files={"file": ("clip.mp4", b"video", "video/mp4")})
+        assert uploaded.status_code == 201
+        video_id = uploaded.json()["id"]
+        assert first_client.get(f"/videos/{video_id}").status_code == 200
+        assert second_client.get(f"/videos/{video_id}").status_code == 404
+        assert second_client.post("/videos/sample").status_code == 200
+
+    assert first_repository.get_video(video_id) is not None
+    assert second_repository.get_video(video_id) is None
+    assert len(list((first_data_dir / "media").iterdir())) == 1
+    assert not (second_data_dir / "media").exists()
+    assert first_data_dir.joinpath("app.sqlite3").exists()
+    assert second_data_dir.joinpath("app.sqlite3").exists()
 
 
 @pytest.mark.parametrize("value", ["Infinity", "NaN", "-Infinity"])
@@ -38,21 +78,22 @@ def test_api_rejects_non_finite_timestamps(client, value):
     assert response.status_code == 422
 
 
-def test_upload_limit_and_failed_metadata_leave_no_orphans(client, tmp_path, monkeypatch):
-    monkeypatch.setattr(api, "settings", replace(api.settings, upload_max_bytes=3))
-    oversized = client.post("/videos", files={"file": ("clip.mp4", b"1234", "video/mp4")})
+def test_upload_limit_and_failed_metadata_leave_no_orphans(make_api, monkeypatch):
+    small_app, _, small_data_dir = make_api("small", upload_max_bytes=3)
+    with TestClient(small_app) as client:
+        oversized = client.post("/videos", files={"file": ("clip.mp4", b"1234", "video/mp4")})
     assert oversized.status_code == 413
-    assert list((tmp_path / "media").iterdir()) == []
+    assert list((small_data_dir / "media").iterdir()) == []
 
-    monkeypatch.setattr(api, "settings", replace(api.settings, upload_max_bytes=100))
+    app, repository, data_dir = make_api("metadata", upload_max_bytes=100)
 
     def fail_metadata(*_args):
         raise RuntimeError("database unavailable")
 
-    monkeypatch.setattr(api.repository, "create_uploaded_video", fail_metadata)
-    with pytest.raises(RuntimeError, match="database unavailable"):
+    monkeypatch.setattr(repository, "create_uploaded_video", fail_metadata)
+    with TestClient(app) as client, pytest.raises(RuntimeError, match="database unavailable"):
         client.post("/videos", files={"file": ("clip.mp4", b"123", "video/mp4")})
-    assert list((tmp_path / "media").iterdir()) == []
+    assert list((data_dir / "media").iterdir()) == []
 
 
 def _multipart_body(data: bytes) -> bytes:
@@ -64,7 +105,7 @@ def _multipart_body(data: bytes) -> bytes:
 
 
 def _stream_upload(
-    chunks: list[bytes], headers: list[tuple[bytes, bytes]], *, disconnect: bool = False
+    app, chunks: list[bytes], headers: list[tuple[bytes, bytes]], *, disconnect=False
 ):
     pending = iter(chunks)
     received = 0
@@ -100,40 +141,41 @@ def _stream_upload(
     async def send(message):
         sent.append(message)
 
-    asyncio.run(api.app(scope, receive, send))
+    asyncio.run(app(scope, receive, send))
     return sent, received
 
 
 @pytest.mark.parametrize("headers", [[], [(b"content-length", b"1")]])
-def test_upload_ingress_limit_counts_streamed_bytes_without_trusting_length(
-    client, tmp_path, monkeypatch, headers
-):
-    monkeypatch.setattr(api, "settings", replace(api.settings, upload_max_bytes=8))
+def test_upload_ingress_limit_counts_streamed_bytes_without_trusting_length(make_api, headers):
+    app, _, data_dir = make_api(upload_max_bytes=8)
     body = _multipart_body(b"x" * MULTIPART_OVERHEAD_BYTES)
-    messages, received = _stream_upload([body[:1024], body[1024:], b"unread"], headers)
+    with TestClient(app):
+        messages, received = _stream_upload(app, [body[:1024], body[1024:], b"unread"], headers)
 
     assert messages[0]["status"] == 413
     assert received == 2
-    assert not (tmp_path / "media").exists()
+    assert not (data_dir / "media").exists()
 
 
-def test_upload_ingress_limit_allows_valid_file_despite_high_length_header(
-    client, tmp_path, monkeypatch
-):
-    monkeypatch.setattr(api, "settings", replace(api.settings, upload_max_bytes=4))
+def test_upload_ingress_limit_allows_valid_file_despite_high_length_header(make_api):
+    app, _, data_dir = make_api(upload_max_bytes=4)
     body = _multipart_body(b"1234")
-    messages, received = _stream_upload([body[:80], body[80:]], [(b"content-length", b"999999")])
+    with TestClient(app):
+        messages, received = _stream_upload(
+            app, [body[:80], body[80:]], [(b"content-length", b"999999")]
+        )
 
     assert messages[0]["status"] == 201
     assert received == 2
-    assert len(list((tmp_path / "media").iterdir())) == 1
+    assert len(list((data_dir / "media").iterdir())) == 1
 
 
-def test_interrupted_upload_leaves_no_persistent_media(client, tmp_path):
+def test_interrupted_upload_leaves_no_persistent_media(make_api):
+    app, _, data_dir = make_api()
     body = _multipart_body(b"partial video")
-
-    messages, received = _stream_upload([body[:80]], [], disconnect=True)
+    with TestClient(app):
+        messages, received = _stream_upload(app, [body[:80]], [], disconnect=True)
 
     assert messages[0]["status"] == 400
     assert received == 1
-    assert not (tmp_path / "media").exists()
+    assert not (data_dir / "media").exists()
