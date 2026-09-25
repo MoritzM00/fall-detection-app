@@ -44,3 +44,34 @@ def test_mock_rejects_malformed_content_parts(extra) -> None:
     payload["messages"][0]["content"].append(extra)
     response = TestClient(mock_server.app).post("/v1/chat/completions", json=payload)
     assert response.status_code == 400
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "expected_status"),
+    [
+        ("model", "unserved-model", 404),
+        ("temperature", {"invalid": True}, 422),
+        ("max_tokens", 0, 422),
+        ("stream", True, 400),
+    ],
+)
+def test_mock_validates_completion_settings(field, value, expected_status) -> None:
+    payload = build_inference_payload(
+        mock_server.SERVED_MODEL, "data:video/mp4;base64,bW9jaw==", "prompt"
+    )
+    payload[field] = value
+
+    response = TestClient(mock_server.app).post("/v1/chat/completions", json=payload)
+
+    assert response.status_code == expected_status
+
+
+def test_mock_rejects_video_without_url() -> None:
+    payload = build_inference_payload(
+        mock_server.SERVED_MODEL, "data:video/mp4;base64,bW9jaw==", "prompt"
+    )
+    payload["messages"][0]["content"][1]["video_url"] = {}
+
+    response = TestClient(mock_server.app).post("/v1/chat/completions", json=payload)
+
+    assert response.status_code == 400

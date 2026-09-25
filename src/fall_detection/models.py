@@ -1,4 +1,4 @@
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -146,13 +146,3 @@ class AnalysisJob(BaseModel):
     lease_expires_at: str | None = None
     configuration: RunConfiguration | None = None
     prediction: PredictionResult | None = None
-
-
-class InferenceRequest(BaseModel):
-    """OpenAI-compatible subset shared with the mock boundary."""
-
-    model: str
-    messages: list[dict[str, Any]]
-    temperature: float = 0
-    max_tokens: int = 32
-    stream: bool = False
