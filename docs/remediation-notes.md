@@ -10,4 +10,6 @@ New bundles save verified RGB arrays and JPEG transport frames. Inspection PNGs 
 
 On a disposable generated MPEG-4 clip (40 seconds, 10 fps, 96×64), 16-frame 224-pixel preparations measured 0.027 s for an early window, 0.013 s for a late window, and less than 0.001 s for a late-window cache hit on this machine. These small generated-media figures do not predict real high-resolution performance. The implementation retains exact nearest-PTS selection and full source hashing; no seek or stat-only shortcut was introduced.
 
+A later [representative preparation benchmark](preparation-benchmark.md) measures generated 720p and 1080p clips through 120 seconds, reports phase timings and peak memory, and records the decision to retain full-scan decoding for the measured envelope.
+
 Validation includes backend lifecycle, migration, ownership and preparation tests; four Node tests for extracted frontend state rules; three mounted React hook tests for history recovery, historical selection, and polling failure; and a production frontend build. Full browser interaction testing, live GPU/vLLM compatibility, and model accuracy were not tested. The separate maintenance suggestions in the review (API application factory and development-launcher cleanup) remain deferred.
