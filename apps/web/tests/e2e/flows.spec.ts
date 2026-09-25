@@ -39,6 +39,33 @@ test("uploaded frames and submitted result survive source and sampling changes",
 });
 
 
+
+test("sample, upload, and dataset sources reset editable sampling through one path", async ({ page, request }) => {
+  await waitForApi(request);
+  await page.goto("/");
+  await page.locator('input[type="file"]').setInputFiles(clip);
+  await expect(page.locator(".source-caption")).toContainText("clip.mp4");
+  await page.getByLabel("Frames", { exact: true }).fill("8");
+  await page.getByLabel("Sampling FPS").fill("4");
+  await page.getByLabel("Crop size").selectOption("224");
+  await page.getByRole("button", { name: "Change source" }).click();
+  await page.getByRole("button", { name: "Use sample clip" }).click();
+  await expect(page.getByLabel("Frames", { exact: true })).toHaveValue("16");
+  await expect(page.getByLabel("Sampling FPS")).toHaveValue("7.5");
+  await expect(page.getByLabel("Crop size")).toHaveValue("448");
+  await page.getByRole("button", { name: "Change source" }).click();
+  await page.getByRole("button", { name: "Browse dataset" }).click();
+  await expect(page.locator("#dataset-video option")).toHaveCount(1);
+  await page.getByRole("button", { name: "Open clip" }).click();
+  await expect(page.locator(".asset-pill")).toHaveText("OmniFall");
+  await expect(page.getByLabel("Frames", { exact: true })).toHaveValue("16");
+  await page.getByLabel("Frames", { exact: true }).fill("8");
+  await page.getByRole("button", { name: "Change source" }).click();
+  await page.locator('input[type="file"]').setInputFiles(clip);
+  await expect(page.locator(".asset-pill")).toHaveText("Uploaded");
+  await expect(page.getByLabel("Frames", { exact: true })).toHaveValue("16");
+});
+
 test("recovers history and protects an active run after reload", async ({ page, request }) => {
   await waitForApi(request);
   await page.goto("/");

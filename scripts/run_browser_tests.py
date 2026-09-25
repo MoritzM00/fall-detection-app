@@ -1,6 +1,7 @@
 """Run disposable browser tests against the local mock-backed application."""
 
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -34,6 +35,19 @@ def main() -> int:
             ],
             check=True,
         )
+        dataset_clip = (
+            temporary_path
+            / "data"
+            / "omnifall"
+            / "videos"
+            / "Generated"
+            / "Development"
+            / "Subject-1"
+            / "Session-1"
+            / "clip.mp4"
+        )
+        dataset_clip.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(clip, dataset_clip)
         environment = os.environ.copy()
         environment.update(
             FALL_DETECTION_E2E_DATA_DIR=str(temporary_path / "data"),
