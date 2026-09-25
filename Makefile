@@ -14,6 +14,7 @@ check:
 	UV_CACHE_DIR=.uv-cache uv run pytest
 	npm run build --prefix apps/web
 	npm run typecheck:e2e --prefix apps/web
+	npm test --prefix apps/web
 
 
 browser-test:
