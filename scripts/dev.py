@@ -64,7 +64,7 @@ def main() -> None:
             [sys.executable, "-m", "uvicorn", "apps.api.main:app", "--port", "8000", "--reload"],
         ),
         ("worker", [sys.executable, "-m", "apps.worker.main"]),
-        ("web", ["npm", "run", "dev", "--prefix", "apps/web"]),
+        ("web", ["pnpm", "--dir", "apps/web", "dev"]),
     ]
     processes: list[tuple[str, subprocess.Popen[bytes]]] = []
     previous_handlers: dict[

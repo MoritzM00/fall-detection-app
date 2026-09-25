@@ -54,7 +54,7 @@ def main() -> int:
             FALL_DETECTION_E2E_CLIP=str(clip),
         )
         return subprocess.run(
-            ["npm", "run", "test:e2e", "--prefix", "apps/web", "--", *sys.argv[1:]],
+            ["pnpm", "--dir", "apps/web", "test:e2e", *sys.argv[1:]],
             cwd=root,
             env=environment,
             check=False,
