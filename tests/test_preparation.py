@@ -86,9 +86,7 @@ def test_job_references_prepared_input_and_worker_sends_selected_frames(
     settings = replace(
         Settings.from_env(), data_dir=data_dir, database_path=data_dir / "app.sqlite3"
     )
-    monkeypatch.setattr(api, "settings", settings)
-    monkeypatch.setattr(api, "repository", repository)
-    with TestClient(api.app) as client:
+    with TestClient(api.create_app(settings, repository)) as client:
         prepared_response = client.post(
             "/prepared-inputs",
             json={
