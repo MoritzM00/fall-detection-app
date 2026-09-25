@@ -54,9 +54,9 @@ export function SubmittedResult({
     {job?.state === "failed" && <div className="result-card failure" role="alert"><span>Processing failed</span><p>{job.error}</p><button className="button secondary" onClick={() => retryJob(job.id).then(onRecord).catch((cause) => onError(String(cause)))} disabled={Boolean(activeJob)}>Retry run</button></div>}
 
     {result && <div className="result-card" aria-live="polite">
-      <div className="result-overline"><span>Activity result</span><span>{result.backend_kind === "mock" ? "SIMULATED" : result.backend_kind}</span></div>
+      <div className="result-overline"><span>Activity result</span><span>{result.backend_kind === "mock" ? "Simulated" : result.backend_kind}</span></div>
       <div className={`result-label ${result.label === "fall" || result.label === "fallen" ? "alert" : ""}`}>{formatLabel(result.label)}</div>
-      {result.backend_kind === "mock" && <p className="simulation-note">Demo output · this label is simulated, not inferred from your clip.</p>}
+      {result.backend_kind === "mock" && <p className="simulation-note">Simulated label from the mock backend, not inferred from this clip.</p>}
       <dl>
         <div><dt>Input window</dt><dd>{job.start_seconds.toFixed(3)}–{job.end_seconds.toFixed(3)} s</dd></div>
         <div><dt>Request time</dt><dd>{result.request_duration_ms.toFixed(0)} ms</dd></div>

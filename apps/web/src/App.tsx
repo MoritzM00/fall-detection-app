@@ -63,15 +63,14 @@ export default function App() {
         <button className="active">Clip analysis</button>
         <button disabled>Monitoring <small>soon</small></button>
       </div>
-      <span className="system-state"><i /> {capabilities ? simulated ? "Local simulation" : "Online vLLM" : "Backend unavailable"}</span>
+      <span className={`system-state ${capabilities ? "" : "offline"}`}><i /> {capabilities ? simulated ? "Local simulation" : "Online vLLM" : "Backend unavailable"}</span>
     </header>
 
     <section className="intro" id="top">
       <div>
-        <span className="eyebrow">Activity intelligence · prototype 01</span>
-        <h1>See the moment.<br /><em>Understand the motion.</em></h1>
+        <h1>Clip analysis</h1>
+        <p>Pick a clip and a time window, check the frames the model will see, then classify the activity.</p>
       </div>
-      <p>Choose a clip, set a time window, inspect the frames, and run activity analysis.</p>
     </section>
 
     <section className="workspace">
@@ -134,7 +133,7 @@ export default function App() {
         />
 
         <button className="analyze-button" disabled={!historyReady || !capabilities || !source.video || !rangeValid || busy || Boolean(activeJob) || (source.video.source !== "synthetic" && (!visiblePrepared || preparing)) || (source.video.source === "synthetic" && !simulated)} onClick={analyze}>
-          {activeJob ? <><i className="spinner" /> {activeJob.state === "queued" ? "Queued" : "Analyzing"}</> : busy ? "Please wait…" : job?.prediction ? "Run again" : "Run analysis"}
+          {activeJob ? <><i className="spinner" /> {activeJob.state === "queued" ? "Queued" : "Analyzing"}</> : busy ? "Please wait…" : job?.prediction && job.video_id === source.video?.id ? "Run again" : "Run analysis"}
         </button>
 
         {(source.error ?? error) && <p className="error-message" role="alert">{source.error ?? error}</p>}
@@ -156,6 +155,6 @@ export default function App() {
       </aside>
     </section>
 
-    <footer><span>{capabilities ? simulated ? "Local MVP · no model inference is occurring" : "Online vLLM analysis" : "Backend settings unavailable"}</span><span>Every result keeps its input and configuration identity</span></footer>
+    <footer><span>{capabilities ? simulated ? "Results are simulated by a mock backend, not produced by a model." : "Results come from the online vLLM backend." : "Backend settings unavailable."}</span><span>Every result keeps its input window and configuration.</span></footer>
   </main>;
 }
