@@ -26,7 +26,7 @@ export default function App() {
   const rangeValid = sampling.isValid(source.duration);
   const experimentValid = experiment !== null && Boolean(experiment.prompt_text.trim()) && experiment.prompt_text.length <= 16000
     && Number.isFinite(experiment.generation.temperature) && experiment.generation.temperature >= 0 && experiment.generation.temperature <= 2
-    && Number.isInteger(experiment.generation.max_tokens) && experiment.generation.max_tokens >= 1 && experiment.generation.max_tokens <= 4096;
+    && Number.isInteger(experiment.generation.max_tokens) && experiment.generation.max_tokens >= (capabilities?.generation_limits.min_max_tokens ?? 16) && experiment.generation.max_tokens <= (capabilities?.generation_limits.max_max_tokens ?? 4096);
   const { visiblePrepared, preparing, preparationError } = usePreparation(
     source.video, sampling.startSeconds, sampling.frameCount, sampling.fps,
     sampling.size, rangeValid,
@@ -144,7 +144,7 @@ export default function App() {
         />
 
         {capabilities && experiment && <ExperimentControls capabilities={capabilities} settings={experiment} busy={busy} onChange={setExperiment} />}
-        {experiment && !experimentValid && <p className="error-message" role="alert">Enter a nonblank prompt, temperature from 0 to 2, and an integer token limit from 1 to 4096.</p>}
+        {experiment && !experimentValid && <p className="error-message" role="alert">Enter a nonblank prompt, temperature from 0 to 2, and an integer token limit from {capabilities?.generation_limits.min_max_tokens ?? 16} to {capabilities?.generation_limits.max_max_tokens ?? 4096}.</p>}
 
         <button className="analyze-button" disabled={!historyReady || !capabilities || !experimentValid || !source.video || !rangeValid || busy || Boolean(activeJob) || (source.video.source !== "synthetic" && (!visiblePrepared || preparing)) || (source.video.source === "synthetic" && !simulated)} onClick={analyze}>
           {activeJob ? <><i className="spinner" /> {activeJob.state === "queued" ? "Queued" : "Analyzing"}</> : busy ? "Please wait…" : job?.prediction && job.video_id === source.video?.id ? "Run again" : "Run analysis"}
@@ -169,7 +169,7 @@ export default function App() {
       </aside>
     </section>
 
-    <RunComparison jobs={jobs} selectedJob={job} />
+    <RunComparison key={job?.id ?? "no-run"} jobs={jobs} selectedJob={job} />
 
     <footer><span>{capabilities ? simulated ? "Results are simulated by a mock backend, not produced by a model." : "Results come from the online vLLM backend." : "Backend settings unavailable."}</span><span>Every result keeps its input window and configuration.</span></footer>
   </main>;
