@@ -3,11 +3,75 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Barrier, Event
+from unittest.mock import Mock
 
 import pytest
 
 from fall_detection.pipeline import PipelineResult
 from fall_detection.repository import Repository
+
+
+@pytest.fixture
+def wal_setup_faults(tmp_path, monkeypatch):
+    """Inject SQLite boundary errors while using a real disposable database."""
+    import fall_detection.repository as module
+
+    connect = sqlite3.connect
+    failures = []
+    connections = []
+    attempts = []
+
+    def open_connection(*args, **kwargs):
+        actual = connect(*args, **kwargs)
+        actual.row_factory = sqlite3.Row
+        proxy = Mock(spec=sqlite3.Connection, wraps=actual)
+
+        def execute(statement, *parameters):
+            if statement == "PRAGMA journal_mode = WAL":
+                attempts.append(statement)
+                if failures:
+                    raise failures.pop(0)
+            return actual.execute(statement, *parameters)
+
+        proxy.execute.side_effect = execute
+        connections.append(actual)
+        return proxy
+
+    monkeypatch.setattr(module.sqlite3, "connect", open_connection)
+    monkeypatch.setattr(module, "sleep", lambda _seconds: None)
+    return Repository(tmp_path / "faults.sqlite3"), failures, connections, attempts
+
+
+def sqlite_setup_error(code):
+    error = sqlite3.OperationalError("injected WAL setup error")
+    error.sqlite_errorcode = code
+    return error
+
+
+def test_wal_setup_retries_busy_then_creates_usable_database(wal_setup_faults):
+    repository, failures, connections, attempts = wal_setup_faults
+    failures.extend([sqlite_setup_error(sqlite3.SQLITE_BUSY)] * 2)
+    repository.initialize()
+    assert len(attempts) == 3
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        connections[0].execute("SELECT 1")
+    video = repository.create_sample_video()
+    assert repository.get_video(video.id) == video
+
+
+@pytest.mark.parametrize("code", [sqlite3.SQLITE_BUSY, sqlite3.SQLITE_ERROR])
+def test_wal_setup_failure_is_bounded_and_closes_connection(wal_setup_faults, monkeypatch, code):
+    import fall_detection.repository as module
+
+    repository, failures, connections, attempts = wal_setup_faults
+    failures.extend([sqlite_setup_error(code)] * 3)
+    clock = iter([0, 0.1, 10])
+    monkeypatch.setattr(module, "monotonic", lambda: next(clock))
+    with pytest.raises(sqlite3.OperationalError, match="injected WAL setup error"):
+        repository.initialize()
+    assert len(attempts) == (2 if code == sqlite3.SQLITE_BUSY else 1)
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        connections[0].execute("SELECT 1")
 
 
 def test_job_lifecycle_is_persisted(tmp_path: Path) -> None:
