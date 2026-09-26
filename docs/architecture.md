@@ -1,5 +1,11 @@
 # Proposed architecture
 
+## Implemented local MVP
+
+The current application uses FastAPI, SQLite, filesystem media storage, one API process, a separate worker, and HTTP polling. Frame preparation is synchronous through a bounded API coordinator; the worker consumes the saved immutable bundle and calls either mock HTTP or vLLM according to the saved backend. Every submitted run saves its prompt, generation, sampling, model, and input identity. Worker leases/heartbeats and explicit retries recover interrupted work without automatically repeating a model request. Prompt/generation editing and saved-run comparison are implemented. Real GPU compatibility remains unverified.
+
+The sections and diagram below describe the proposed later architecture, including PostgreSQL, events, and monitoring. They do not represent current deployment. Any future automatic retry policy needs a separate decision; the implemented policy requires explicit retry.
+
 ## Components
 
 ```mermaid

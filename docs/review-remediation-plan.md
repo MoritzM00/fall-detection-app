@@ -1,5 +1,7 @@
 # Review remediation implementation plan
 
+Historical plan for the September remediation PR. Its delivery instructions and pending items are retained as history, not current work instructions. See [remediation-notes.md](remediation-notes.md) and [roadmap.md](roadmap.md) for current status.
+
 Implement the five broader findings from the 23 September review in a single PR, in coherent commits. Preserve the current visual design and the simple FastAPI/SQLite/worker architecture, all 16 labels, actual frame timestamps, mock provenance, and existing prepared inputs. Do not modify research sources or real runtime data. Do not merge the PR.
 
 ## 1. Submitted runs and editable selections
