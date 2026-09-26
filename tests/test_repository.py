@@ -171,7 +171,8 @@ def test_recent_jobs_keep_active_runs_beyond_terminal_limit(tmp_path: Path) -> N
         repository.list_jobs(101)
 
 
-def test_concurrent_initialization_preserves_legacy_running_job(tmp_path: Path) -> None:
+@pytest.mark.parametrize("startup", range(10))
+def test_concurrent_initialization_preserves_legacy_running_job(tmp_path: Path, startup) -> None:
     database = tmp_path / "legacy.sqlite3"
     with sqlite3.connect(database) as connection:
         connection.executescript("""
@@ -196,9 +197,15 @@ def test_concurrent_initialization_preserves_legacy_running_job(tmp_path: Path) 
               '{"temperature":0,"max_tokens":32}', 'now');
             INSERT INTO jobs VALUES ('j', 'v', 'c', 'running', 0, 2, 1, NULL, 'now', 'now');
         """)
+    barrier = Barrier(8)
+
+    def initialize(_):
+        barrier.wait(timeout=10)
+        Repository(database).initialize()
+
     repository = Repository(database)
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        list(pool.map(lambda _: repository.initialize(), range(4)))
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(initialize, range(8)))
     job = repository.get_job("j")
     assert job is not None and job.state == "failed"
     assert job.configuration is not None
@@ -206,6 +213,25 @@ def test_concurrent_initialization_preserves_legacy_running_job(tmp_path: Path) 
     assert job.configuration.model == "old-model"
     assert job.configuration.generation.max_tokens == 32
     assert repository.create_dataset_video("new.mp4", "omnifall/new.mp4").source == "dataset"
+
+
+@pytest.mark.parametrize("startup", range(10))
+def test_concurrent_first_start_creates_usable_wal_database(tmp_path: Path, startup) -> None:
+    database = tmp_path / "new.sqlite3"
+    barrier = Barrier(8)
+
+    def initialize(_):
+        barrier.wait(timeout=10)
+        repository = Repository(database)
+        repository.initialize()
+        return repository.create_sample_video()
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        videos = list(pool.map(initialize, range(8)))
+    assert all(video == videos[0] for video in videos)
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+        assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
 
 
 @pytest.mark.parametrize("operation", ["complete", "fail", "renew"])
