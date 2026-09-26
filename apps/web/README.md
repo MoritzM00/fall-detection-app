@@ -4,7 +4,7 @@ Implemented as a minimal React/TypeScript/Vite application. It supports the synt
 
 The frame strip displays the saved JPEGs from the prepared input, and submitted runs retain that input identity and its actual frame timestamps. The local mock returns a simulated label; the online vLLM frame contract still needs validation against the GPU service.
 
-The prompt/generation panel shows the exact resolved prompt, the served model, temperature, and maximum output tokens. Reset restores the named baseline prompt and generation defaults. Edited settings are experiments; they still parse into the same 16 activity labels. Each submission saves its own configuration.
+The prompt/generation panel shows the exact resolved prompt, the served model, temperature, and maximum output tokens. Reset restores the named baseline prompt and generation defaults. Edited settings are experiments; they still parse into the same 16 activity labels. Custom runs may return one bare label or the fixed answer format, while the baseline remains strict. Token limits follow capabilities (currently 16–4096). Changing the selected run clears comparison selection, so an old comparison cannot silently return. Each submission saves its own configuration.
 
 Compare runs selects another saved run for the same source and time window, highlights differences, and identifies whether both use the same prepared frames. Failed runs show processing errors with no activity prediction. Comparison uses the recent history (up to 50 terminal runs), and mock results/timings remain explicitly simulated.
 

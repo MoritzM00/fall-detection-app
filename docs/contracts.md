@@ -39,7 +39,7 @@ Implemented transitions are queued → running → succeeded/failed, with explic
 | Read/update session | GET/PATCH /monitoring-sessions/{id} | Proposed |
 | Receive status/result updates | GET /events | Proposed; UI currently polls |
 
-Analysis creation optionally accepts `model`, `prompt_text`, and `generation: {temperature, max_tokens}`. Omitted values preserve the configured model, baseline prompt, temperature 0, and max tokens 32. The model must be advertised by capabilities. Prompt text must be nonblank and at most 16000 characters; it is saved exactly. The server derives the baseline preset ID for an exact baseline prompt, otherwise `custom`. Temperature is finite in [0, 2]; max tokens is an integer in [1, 4096]. Sampling, prompt, generation, model, and backend identity are snapshotted before queueing. No new schema migration is required: these use existing configuration columns.
+Analysis creation optionally accepts `model`, `prompt_text`, and `generation: {temperature, max_tokens}`. Omitted values preserve the configured model, baseline prompt, temperature 0, and max tokens 32. The model must be advertised by capabilities. Prompt text must be nonblank and at most 16000 characters; it is saved exactly. The server derives the baseline preset ID for an exact baseline prompt, otherwise `custom`. Temperature is finite in [0, 2]; max tokens is an integer in [16, 4096]. Sampling, prompt, generation, model, and backend identity are snapshotted before queueing. The minimum applies to new requests; historical lower-budget configurations remain readable and unchanged. It avoids predictably undersized requests but does not guarantee against model truncation. No new schema migration is required: these use existing configuration columns.
 
 The browser compares saved jobs with the same source ID and time window. It checks prepared input identity separately, so equal windows with different sampling are not presented as identical frames. Failed runs retain an error and no valid prediction. Comparison does not rerun jobs or overwrite their configuration.
 
@@ -47,7 +47,7 @@ Preview generation may itself become asynchronous. Media playback should support
 
 ## Model boundary
 
-Worker sends selected served-model name, prompt, supported video payload, and generation settings to vLLM. The response envelope is JSON, but the model's generated content initially remains the thesis text format: `The best answer is: <class_label>`.
+Worker sends selected served-model name, prompt, supported video payload, and generation settings to vLLM. The response envelope is JSON. Baseline runs require generated content in the thesis text format: `The best answer is: <class_label>`. Custom-prompt runs also accept exactly one bare canonical activity label, with surrounding whitespace allowed. JSON-shaped model text, extra prose, multiple labels, and unknown labels remain explicit parse failures. This is proposed application experiment behavior implemented in this repository, not a change to or validation of research behavior.
 
 Parse against the exact taxonomy. Reject invalid or ambiguous output explicitly; do not silently substitute `other`. Raw output stays available for debugging.
 

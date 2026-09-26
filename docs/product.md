@@ -3,10 +3,10 @@
 ## Clip analysis — implemented local MVP
 
 - Upload a supported video and inspect duration.
-- Select a sampled analysis window of up to 30 seconds within the clip; longer selections require changed FPS/frame count and remain experiments.
+- Select a sampled analysis window of up to 30 seconds within the clip; changing FPS or frame count remains an experiment within this hard limit.
 - Preview sampled frames and timestamps, including the center crop.
 - Choose the advertised served model, edit temperature/max tokens and prompt text, reset to the baseline prompt/generation settings, and edit sampling settings. The current deployment advertises one model.
-- Show the fully resolved prompt before running.
+- Show the fully resolved prompt before running. Baseline runs require the fixed answer format; custom prompts also support a single canonical label. Other formats or ambiguous answers fail explicitly. New runs require at least 16 output tokens, a conservative budget rather than a guarantee against truncation.
 - Display label, raw response, processing time, status, and configuration snapshot.
 - Rerun with changed settings without overwriting the previous run.
 - Compare saved runs for the same source and time window; highlight configuration differences and report whether prepared-frame identity matches. Recent terminal history is limited to 50 runs.

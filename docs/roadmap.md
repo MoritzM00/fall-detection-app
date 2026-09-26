@@ -16,9 +16,9 @@ Done when requests and response/error handling work locally without GPU dependen
 
 ## 2. Complete clip analysis flow — local MVP implemented
 
-Introduce media storage, configuration snapshots, persisted jobs, worker processing, API status events, and a minimal upload/result interface. Include sampled-frame preview and raw response.
+Introduce media storage, configuration snapshots, persisted jobs, worker processing, API status queries with frontend polling, and a minimal upload/result interface. Include sampled-frame preview and raw response.
 
-Done when an uploaded clip can be analyzed and every result can be traced to its input/configuration, including after a page reload or transient disconnect.
+Uploaded clips can be analyzed and results traced to saved input/configuration after reloads or transient disconnects. Status is read by polling persisted jobs; server-sent events remain a later proposal.
 
 ## 3. Add debugging and comparison — local MVP implemented
 
