@@ -94,6 +94,7 @@ def process_next_job(settings: Settings, repository: Repository) -> bool:
             video_metadata=video_metadata,
             generation=config.generation.model_dump(),
             frame_count=config.preprocessing.frames,
+            allow_bare_label=config.prompt_preset == "custom",
         )
         accepted = repository.complete_job(
             job.id,

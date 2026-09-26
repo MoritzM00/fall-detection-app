@@ -6,6 +6,8 @@ from fastapi.testclient import TestClient
 
 import apps.api.main as api
 from fall_detection.config import Settings
+from fall_detection.inference import InferenceResponse
+from fall_detection.prompts import PRESET_ID, THESIS_BASELINE_PROMPT
 from fall_detection.repository import Repository
 from fall_detection.upload_limit import MULTIPART_OVERHEAD_BYTES
 
@@ -46,6 +48,117 @@ def test_api_snapshots_configured_model(client, api_instance):
     assert response.status_code == 202
     model, _ = repository.get_inference_configuration(response.json()["configuration_id"])
     assert model == "custom-model"
+
+
+@pytest.mark.parametrize("custom_response", ["The best answer is: walk", "walk"])
+def test_api_experiments_preserve_old_runs_and_drive_worker_payload(
+    client, api_instance, monkeypatch, custom_response
+):
+    from apps.worker.main import process_next_job
+    from fall_detection.inference import InferenceClient
+
+    _, repository, data_dir = api_instance
+    video = client.post("/videos/sample").json()
+    baseline = client.post("/analysis-jobs", json={"video_id": video["id"]}).json()
+    prompt = (
+        "Reply with only the activity label."
+        if custom_response == "walk"
+        else "  Classify the primary action. Respond only: The best answer is: <class_label>\n"
+    )
+    edited = client.post(
+        "/analysis-jobs",
+        json={
+            "video_id": video["id"],
+            "model": "custom-model",
+            "prompt_text": prompt,
+            "generation": {"temperature": 0.6, "max_tokens": 80},
+        },
+    )
+    assert edited.status_code == 202
+    edited = edited.json()
+    assert edited["configuration_id"] != baseline["configuration_id"]
+    assert edited["configuration"]["prompt_preset"] == "custom"
+    assert edited["configuration"]["prompt_text"] == prompt
+    original = client.get(f"/analysis-jobs/{baseline['id']}").json()
+    assert original["configuration"]["prompt_text"] == THESIS_BASELINE_PROMPT
+    assert original["configuration"]["prompt_preset"] == PRESET_ID
+    assert original["configuration"]["generation"] == {"temperature": 0, "max_tokens": 32}
+
+    sent = []
+
+    def complete(_client, payload):
+        sent.append(payload)
+        return InferenceResponse(
+            "The best answer is: walk" if len(sent) == 1 else custom_response, "completion"
+        )
+
+    monkeypatch.setattr(InferenceClient, "complete", complete)
+    settings = replace(
+        Settings.from_env(),
+        data_dir=data_dir,
+        database_path=data_dir / "app.sqlite3",
+        inference_model="changed-runtime-model",
+        backend_kind="mock",
+    )
+    assert process_next_job(settings, repository)
+    assert process_next_job(settings, repository)
+    assert sent[1]["model"] == "custom-model"
+    assert sent[1]["messages"][0]["content"][0]["text"] == prompt
+    assert sent[1]["temperature"] == 0.6 and sent[1]["max_tokens"] == 80
+    completed = client.get(f"/analysis-jobs/{edited['id']}").json()
+    assert completed["prediction"]["label"] == "walk"
+    baseline_result = client.get(f"/analysis-jobs/{baseline['id']}").json()
+    assert (
+        completed["prediction"]["sampled_timestamps"]
+        == baseline_result["prediction"]["sampled_timestamps"]
+    )
+    assert completed["configuration"] == edited["configuration"]
+
+
+@pytest.mark.parametrize(
+    "experiment",
+    [
+        {"model": "not-served"},
+        {"prompt_text": ""},
+        {"prompt_text": " \n "},
+        {"prompt_text": "x" * 16001},
+        {"generation": {"temperature": "NaN", "max_tokens": 32}},
+        {"generation": {"temperature": -0.1, "max_tokens": 32}},
+        {"generation": {"temperature": 2.1, "max_tokens": 32}},
+        {"generation": {"temperature": 0, "max_tokens": 0}},
+        {"generation": {"temperature": 0, "max_tokens": 1}},
+        {"generation": {"temperature": 0, "max_tokens": 15}},
+        {"generation": {"temperature": 0, "max_tokens": 4097}},
+        {"generation": {"temperature": 0, "max_tokens": 1.5}},
+    ],
+)
+def test_api_rejects_invalid_experiments_without_queuing(client, api_instance, experiment):
+    _, repository, _ = api_instance
+    video = client.post("/videos/sample").json()
+    response = client.post("/analysis-jobs", json={"video_id": video["id"], **experiment})
+    assert response.status_code == 422
+    assert repository.list_jobs() == []
+
+
+def test_new_minimum_token_budget_preserves_historical_configuration(client, api_instance):
+    _, repository, _ = api_instance
+    video = client.post("/videos/sample").json()
+    historical = repository.create_job(
+        video["id"], 0, 2, generation={"temperature": 0, "max_tokens": 1}
+    )
+    assert (
+        client.get(f"/analysis-jobs/{historical.id}").json()["configuration"]["generation"][
+            "max_tokens"
+        ]
+        == 1
+    )
+    response = client.post(
+        "/analysis-jobs",
+        json={"video_id": video["id"], "generation": {"temperature": 0, "max_tokens": 16}},
+    )
+    assert response.status_code == 202
+    assert response.json()["configuration"]["generation"]["max_tokens"] == 16
+    assert client.get("/capabilities").json()["generation_limits"]["min_max_tokens"] == 16
 
 
 def test_app_instances_keep_settings_and_storage_isolated(make_api):

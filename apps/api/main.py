@@ -72,6 +72,8 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
             "backend_kind": settings.backend_kind,
             "simulated": settings.backend_kind == "mock",
             "prompt_preset": {"id": PRESET_ID, "prompt": THESIS_BASELINE_PROMPT},
+            "generation": {"temperature": 0, "max_tokens": 32},
+            "generation_limits": {"min_max_tokens": 16, "max_max_tokens": 4096},
             "preprocessing": {"frame_count": 16, "size": 448, "crop": "center"},
         }
 
@@ -167,6 +169,10 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
                 raise HTTPException(
                     status_code=422, detail="MVP selections are limited to 30 seconds"
                 )
+            if request.model is not None and request.model != settings.inference_model:
+                raise HTTPException(
+                    status_code=422, detail="Choose a model advertised by capabilities"
+                )
             video = repository.get_video(request.video_id)
             if video is None:
                 raise HTTPException(status_code=404, detail="Video not found")
@@ -210,6 +216,12 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
                     request.start_seconds,
                     request.end_seconds,
                     model=settings.inference_model,
+                    prompt_text=(
+                        request.prompt_text
+                        if request.prompt_text is not None
+                        else THESIS_BASELINE_PROMPT
+                    ),
+                    generation=request.generation.model_dump() if request.generation else None,
                     backend_kind=settings.backend_kind,
                     fixture_version=settings.mock_fixture_version,
                     prepared_input_id=prepared.id if prepared else None,
