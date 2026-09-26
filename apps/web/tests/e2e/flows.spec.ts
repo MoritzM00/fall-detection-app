@@ -184,6 +184,9 @@ test("edited prompt and generation survive submission and reload and compare sav
   const prompt = "Classify the primary activity using the 16 supported labels. Respond only: The best answer is: <class_label>";
   await page.getByLabel("Resolved prompt").fill(prompt);
   await page.getByLabel("Temperature", { exact: true }).fill("0.6");
+  await page.getByLabel("Max tokens", { exact: true }).fill("1");
+  await expect(page.locator(".analyze-button")).toBeDisabled();
+  await expect(page.getByRole("alert")).toContainText("token limit from 16 to 4096");
   await page.getByLabel("Max tokens", { exact: true }).fill("80");
   const secondResponse = submit();
   await page.locator(".analyze-button").click();
@@ -205,6 +208,13 @@ test("edited prompt and generation survive submission and reload and compare sav
   const original = await (await request.get(`http://127.0.0.1:8000/analysis-jobs/${baseline.id}`)).json();
   expect(original.configuration).toEqual(baseline.configuration);
   expect(original.configuration_id).not.toBe(edited.configuration_id);
+  await page.locator("#recent-run").selectOption(baseline.id);
+  await expect(page.locator("#compare-run")).toHaveValue("");
+  await expect(comparison.locator("table")).toHaveCount(0);
+  await page.locator("#recent-run").selectOption(edited.id);
+  await expect(page.locator("#compare-run")).toHaveValue("");
+  await expect(comparison.locator("table")).toHaveCount(0);
+  await page.getByLabel("Compare with", { exact: true }).selectOption(baseline.id);
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });

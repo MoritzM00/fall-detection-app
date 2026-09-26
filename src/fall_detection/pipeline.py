@@ -60,6 +60,7 @@ def run_pipeline(
     video_metadata: dict[str, Any] | None = None,
     generation: dict[str, Any] | None = None,
     frame_count: int = 16,
+    allow_bare_label: bool = False,
 ) -> PipelineResult:
     """Execute one traceable prediction from selected input to validated label."""
     total_started = perf_counter()
@@ -72,7 +73,7 @@ def run_pipeline(
     request_started = perf_counter()
     response = client.complete(payload)
     request_duration_ms = (perf_counter() - request_started) * 1000
-    label = parse_activity_label(response.content)
+    label = parse_activity_label(response.content, allow_bare_label=allow_bare_label)
     total_duration_ms = (perf_counter() - total_started) * 1000
     return PipelineResult(
         label=label,

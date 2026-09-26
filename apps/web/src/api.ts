@@ -58,7 +58,7 @@ export type PreparedInput = {
 
 export type GenerationSettings = { temperature: number; max_tokens: number };
 export type ExperimentSettings = { model: string; prompt_text: string; generation: GenerationSettings };
-export type Capabilities = { backend_kind: string; simulated: boolean; models: string[]; prompt_preset: { id: string; prompt: string }; generation: GenerationSettings };
+export type Capabilities = { backend_kind: string; simulated: boolean; models: string[]; prompt_preset: { id: string; prompt: string }; generation: GenerationSettings; generation_limits: { min_max_tokens: number; max_max_tokens: number } };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api${path}`, init);
