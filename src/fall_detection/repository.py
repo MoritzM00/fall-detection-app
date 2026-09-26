@@ -218,10 +218,11 @@ class Repository:
         prepared_input_id: str | None = None,
         preprocessing: dict[str, object] | None = None,
         generation: dict[str, object] | None = None,
+        prompt_text: str = THESIS_BASELINE_PROMPT,
         backend_kind: str = "mock",
         fixture_version: str | None = "sample-v1",
     ) -> AnalysisJob:
-        """Snapshot default configuration and enqueue one immutable analysis job."""
+        """Snapshot selected configuration and enqueue one immutable analysis job."""
         job_id = str(uuid4())
         configuration_id = str(uuid4())
         timestamp = utc_now()
@@ -233,6 +234,8 @@ class Repository:
         )
         if backend_kind not in {"mock", "vllm"}:
             raise ValueError("Unsupported backend kind")
+        if not prompt_text.strip() or len(prompt_text) > 16000:
+            raise ValueError("Prompt must contain 1–16000 characters")
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             video = connection.execute("SELECT id FROM videos WHERE id = ?", (video_id,)).fetchone()
@@ -247,8 +250,8 @@ class Repository:
                 (
                     configuration_id,
                     model,
-                    PRESET_ID,
-                    THESIS_BASELINE_PROMPT,
+                    PRESET_ID if prompt_text == THESIS_BASELINE_PROMPT else "custom",
+                    prompt_text,
                     sampling.model_dump_json(),
                     generation_settings.model_dump_json(),
                     timestamp,

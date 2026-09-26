@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from fall_detection.taxonomy import ActivityLabel
 
@@ -18,6 +18,13 @@ class VideoAsset(BaseModel):
     created_at: str
 
 
+class GenerationConfiguration(BaseModel):
+    """Validated generation parameters saved with one run."""
+
+    temperature: float = Field(ge=0, le=2, allow_inf_nan=False)
+    max_tokens: int = Field(ge=1, le=4096)
+
+
 class AnalysisJobCreate(BaseModel):
     """User-selected source and media time range."""
 
@@ -28,6 +35,17 @@ class AnalysisJobCreate(BaseModel):
     frame_count: int = Field(default=16, ge=2, le=32)
     fps: float = Field(default=7.5, gt=0, le=30, allow_inf_nan=False)
     size: int = Field(default=448, ge=224, le=672)
+    model: str | None = Field(default=None, min_length=1)
+    prompt_text: str | None = Field(default=None, min_length=1, max_length=16000)
+    generation: GenerationConfiguration | None = None
+
+    @field_validator("prompt_text")
+    @classmethod
+    def validate_prompt(cls, value: str | None) -> str | None:
+        """Reject blank prompts while preserving the exact submitted text."""
+        if value is not None and not value.strip():
+            raise ValueError("Prompt must contain text")
+        return value
 
 
 class PreparationRequest(BaseModel):
@@ -107,13 +125,6 @@ class SamplingConfiguration(BaseModel):
     crop: Literal["center"] = "center"
     version: str | None = None
     bundle_sha256: str | None = None
-
-
-class GenerationConfiguration(BaseModel):
-    """Validated generation parameters saved with one run."""
-
-    temperature: float = Field(ge=0, le=2, allow_inf_nan=False)
-    max_tokens: int = Field(ge=1, le=4096)
 
 
 class RunConfiguration(BaseModel):
