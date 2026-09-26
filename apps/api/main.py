@@ -73,6 +73,7 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
             "simulated": settings.backend_kind == "mock",
             "prompt_preset": {"id": PRESET_ID, "prompt": THESIS_BASELINE_PROMPT},
             "generation": {"temperature": 0, "max_tokens": 32},
+            "generation_limits": {"min_max_tokens": 16, "max_max_tokens": 4096},
             "preprocessing": {"frame_count": 16, "size": 448, "crop": "center"},
         }
 

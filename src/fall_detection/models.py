@@ -47,6 +47,16 @@ class AnalysisJobCreate(BaseModel):
             raise ValueError("Prompt must contain text")
         return value
 
+    @field_validator("generation")
+    @classmethod
+    def validate_new_token_budget(
+        cls, value: GenerationConfiguration | None
+    ) -> GenerationConfiguration | None:
+        """Keep new runs above a conservative answer budget without changing history."""
+        if value is not None and value.max_tokens < 16:
+            raise ValueError("New analyses require at least 16 output tokens")
+        return value
+
 
 class PreparationRequest(BaseModel):
     """Editable sampling settings for an exact frame preview."""
