@@ -4,6 +4,7 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from time import monotonic, sleep
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from fall_detection.models import (
@@ -38,9 +39,22 @@ class Repository:
     def _connect(self, *, foreign_keys: bool = True):
         connection = sqlite3.connect(self._database_path, timeout=10, isolation_level=None)
         connection.row_factory = sqlite3.Row
-        connection.execute(f"PRAGMA foreign_keys = {'ON' if foreign_keys else 'OFF'}")
-        connection.execute("PRAGMA journal_mode = WAL")
         try:
+            connection.execute(f"PRAGMA foreign_keys = {'ON' if foreign_keys else 'OFF'}")
+            # Changing journal mode can return SQLITE_BUSY immediately, even with
+            # busy_timeout configured, when another startup connection holds a lock.
+            deadline = monotonic() + 10
+            while True:
+                try:
+                    connection.execute("PRAGMA journal_mode = WAL")
+                    break
+                except sqlite3.OperationalError as exc:
+                    if (
+                        getattr(exc, "sqlite_errorcode", 0) & 0xFF != sqlite3.SQLITE_BUSY
+                        or monotonic() >= deadline
+                    ):
+                        raise
+                    sleep(0.01)
             yield connection
         finally:
             connection.close()

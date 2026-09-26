@@ -3,11 +3,75 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Barrier, Event
+from unittest.mock import Mock
 
 import pytest
 
 from fall_detection.pipeline import PipelineResult
 from fall_detection.repository import Repository
+
+
+@pytest.fixture
+def wal_setup_faults(tmp_path, monkeypatch):
+    """Inject SQLite boundary errors while using a real disposable database."""
+    import fall_detection.repository as module
+
+    connect = sqlite3.connect
+    failures = []
+    connections = []
+    attempts = []
+
+    def open_connection(*args, **kwargs):
+        actual = connect(*args, **kwargs)
+        actual.row_factory = sqlite3.Row
+        proxy = Mock(spec=sqlite3.Connection, wraps=actual)
+
+        def execute(statement, *parameters):
+            if statement == "PRAGMA journal_mode = WAL":
+                attempts.append(statement)
+                if failures:
+                    raise failures.pop(0)
+            return actual.execute(statement, *parameters)
+
+        proxy.execute.side_effect = execute
+        connections.append(actual)
+        return proxy
+
+    monkeypatch.setattr(module.sqlite3, "connect", open_connection)
+    monkeypatch.setattr(module, "sleep", lambda _seconds: None)
+    return Repository(tmp_path / "faults.sqlite3"), failures, connections, attempts
+
+
+def sqlite_setup_error(code):
+    error = sqlite3.OperationalError("injected WAL setup error")
+    error.sqlite_errorcode = code
+    return error
+
+
+def test_wal_setup_retries_busy_then_creates_usable_database(wal_setup_faults):
+    repository, failures, connections, attempts = wal_setup_faults
+    failures.extend([sqlite_setup_error(sqlite3.SQLITE_BUSY)] * 2)
+    repository.initialize()
+    assert len(attempts) == 3
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        connections[0].execute("SELECT 1")
+    video = repository.create_sample_video()
+    assert repository.get_video(video.id) == video
+
+
+@pytest.mark.parametrize("code", [sqlite3.SQLITE_BUSY, sqlite3.SQLITE_ERROR])
+def test_wal_setup_failure_is_bounded_and_closes_connection(wal_setup_faults, monkeypatch, code):
+    import fall_detection.repository as module
+
+    repository, failures, connections, attempts = wal_setup_faults
+    failures.extend([sqlite_setup_error(code)] * 3)
+    clock = iter([0, 0.1, 10])
+    monkeypatch.setattr(module, "monotonic", lambda: next(clock))
+    with pytest.raises(sqlite3.OperationalError, match="injected WAL setup error"):
+        repository.initialize()
+    assert len(attempts) == (2 if code == sqlite3.SQLITE_BUSY else 1)
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        connections[0].execute("SELECT 1")
 
 
 def test_job_lifecycle_is_persisted(tmp_path: Path) -> None:
@@ -171,7 +235,8 @@ def test_recent_jobs_keep_active_runs_beyond_terminal_limit(tmp_path: Path) -> N
         repository.list_jobs(101)
 
 
-def test_concurrent_initialization_preserves_legacy_running_job(tmp_path: Path) -> None:
+@pytest.mark.parametrize("startup", range(10))
+def test_concurrent_initialization_preserves_legacy_running_job(tmp_path: Path, startup) -> None:
     database = tmp_path / "legacy.sqlite3"
     with sqlite3.connect(database) as connection:
         connection.executescript("""
@@ -196,9 +261,15 @@ def test_concurrent_initialization_preserves_legacy_running_job(tmp_path: Path) 
               '{"temperature":0,"max_tokens":32}', 'now');
             INSERT INTO jobs VALUES ('j', 'v', 'c', 'running', 0, 2, 1, NULL, 'now', 'now');
         """)
+    barrier = Barrier(8)
+
+    def initialize(_):
+        barrier.wait(timeout=10)
+        Repository(database).initialize()
+
     repository = Repository(database)
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        list(pool.map(lambda _: repository.initialize(), range(4)))
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(initialize, range(8)))
     job = repository.get_job("j")
     assert job is not None and job.state == "failed"
     assert job.configuration is not None
@@ -206,6 +277,25 @@ def test_concurrent_initialization_preserves_legacy_running_job(tmp_path: Path) 
     assert job.configuration.model == "old-model"
     assert job.configuration.generation.max_tokens == 32
     assert repository.create_dataset_video("new.mp4", "omnifall/new.mp4").source == "dataset"
+
+
+@pytest.mark.parametrize("startup", range(10))
+def test_concurrent_first_start_creates_usable_wal_database(tmp_path: Path, startup) -> None:
+    database = tmp_path / "new.sqlite3"
+    barrier = Barrier(8)
+
+    def initialize(_):
+        barrier.wait(timeout=10)
+        repository = Repository(database)
+        repository.initialize()
+        return repository.create_sample_video()
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        videos = list(pool.map(initialize, range(8)))
+    assert all(video == videos[0] for video in videos)
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+        assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
 
 
 @pytest.mark.parametrize("operation", ["complete", "fail", "renew"])
