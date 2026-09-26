@@ -68,10 +68,13 @@ export function SubmittedResult({
           <div><dt>Model</dt><dd>{result.model}</dd></div>
           <div><dt>Fixture</dt><dd>{result.fixture_version}</dd></div>
           <div><dt>Configuration</dt><dd title={job.configuration_id}>{job.configuration_id}</dd></div>
+          <div><dt>Prompt preset</dt><dd>{job.configuration?.prompt_preset ?? "Unavailable"}</dd></div>
+          <div><dt>Generation</dt><dd>{job.configuration ? `Temperature ${job.configuration.generation.temperature}, max tokens ${job.configuration.generation.max_tokens}` : "Unavailable"}</dd></div>
           {job.prepared_input_id && <div><dt>Prepared input</dt><dd title={job.prepared_input_id}>{job.prepared_input_id}</dd></div>}
           <div><dt>Sample times</dt><dd title={result.sampled_timestamps.join(", ")}>{result.sampled_timestamps.map((timestamp) => timestamp.toFixed(3)).join(", ")} s</dd></div>
           <div><dt>Frames</dt><dd>{result.sampled_timestamps.length}</dd></div>
         </dl>
+        {job.configuration && <><h3>Saved prompt</h3><pre className="saved-prompt">{job.configuration.prompt_text}</pre></>}
       </details>
     </div>}
   </>;

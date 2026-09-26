@@ -77,7 +77,7 @@ export function SamplingSettings({
       if (Number.isFinite(next) && next > 0 && next <= 30) onFpsChange(next);
     }} /></div>
     <div className="setting-row"><label htmlFor="frame-size">Crop size</label><select id="frame-size" value={size} disabled={busy} onChange={(event) => onSizeChange(Number(event.currentTarget.value))}><option value={224}>224 × 224</option><option value={336}>336 × 336</option><option value={448}>448 × 448</option><option value={672}>672 × 672</option></select></div>
-    <div className="setting-row"><span>Preset</span><strong>Thesis baseline v1</strong></div>
+    <div className="setting-row"><span>Sampling preset</span><strong>{isBaselineWindow && fps === 7.5 && frameCount === 16 && size === 448 ? "Thesis baseline v1" : "Experimental"}</strong></div>
     <div className="setting-row"><span>Window</span><strong>{rangeDuration.toFixed(2)} s {(!isBaselineWindow || fps !== 7.5 || frameCount !== 16 || size !== 448) && <small className="experimental">Experimental</small>}</strong></div>
     <p className="preview-note">Frame count and FPS set the window length. Editing the end time recalculates FPS.</p>
   </>;
