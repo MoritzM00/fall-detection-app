@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import { createJob, getCapabilities } from "./api";
 import { FramePreview } from "./FramePreview";
+import { ExperimentControls } from "./ExperimentControls";
+import { RunComparison } from "./RunComparison";
+import type { Capabilities, ExperimentSettings } from "./api";
 import { SamplingSettings, WindowControls } from "./SamplingControls";
 import { SourceSelection } from "./SourceSelection";
 import { SubmittedResult } from "./SubmittedResult";
@@ -15,28 +18,36 @@ export default function App() {
   const { jobs, selectedJob: job, selectedJobId, activeJob, pollError, ready: historyReady, setSelectedJobId, refresh, record } = useRunHistory();
   const [analysisBusy, setAnalysisBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [capabilities, setCapabilities] = useState<{ simulated: boolean; models: string[]; backend_kind: string } | null>(null);
+  const [capabilities, setCapabilities] = useState<Capabilities | null>(null);
+  const [experiment, setExperiment] = useState<ExperimentSettings | null>(null);
   const [capabilityError, setCapabilityError] = useState<string | null>(null);
   const busy = source.busy || analysisBusy;
   const simulated = capabilities?.simulated === true;
   const rangeValid = sampling.isValid(source.duration);
+  const experimentValid = experiment !== null && Boolean(experiment.prompt_text.trim()) && experiment.prompt_text.length <= 16000
+    && Number.isFinite(experiment.generation.temperature) && experiment.generation.temperature >= 0 && experiment.generation.temperature <= 2
+    && Number.isInteger(experiment.generation.max_tokens) && experiment.generation.max_tokens >= 1 && experiment.generation.max_tokens <= 4096;
   const { visiblePrepared, preparing, preparationError } = usePreparation(
     source.video, sampling.startSeconds, sampling.frameCount, sampling.fps,
     sampling.size, rangeValid,
   );
 
   useEffect(() => {
-    getCapabilities().then(setCapabilities).catch((cause) => setCapabilityError(cause instanceof Error ? cause.message : "Could not load capabilities"));
+    getCapabilities().then((loaded) => {
+      setCapabilities(loaded);
+      setExperiment({ model: loaded.models[0], prompt_text: loaded.prompt_preset.prompt, generation: { ...loaded.generation } });
+    }).catch((cause) => setCapabilityError(cause instanceof Error ? cause.message : "Could not load capabilities"));
   }, []);
 
   async function analyze() {
-    if (!source.video || activeJob || !historyReady) return;
+    if (!source.video || activeJob || !historyReady || !experiment || !experimentValid) return;
     setAnalysisBusy(true);
     setError(null);
     try {
       const created = await createJob(
         source.video.id, sampling.startSeconds, sampling.endSeconds,
         visiblePrepared?.id ?? null, sampling.frameCount, sampling.fps, sampling.size,
+        experiment,
       );
       record(created);
     } catch (cause) {
@@ -132,7 +143,10 @@ export default function App() {
           onSizeChange={sampling.setSize}
         />
 
-        <button className="analyze-button" disabled={!historyReady || !capabilities || !source.video || !rangeValid || busy || Boolean(activeJob) || (source.video.source !== "synthetic" && (!visiblePrepared || preparing)) || (source.video.source === "synthetic" && !simulated)} onClick={analyze}>
+        {capabilities && experiment && <ExperimentControls capabilities={capabilities} settings={experiment} busy={busy} onChange={setExperiment} />}
+        {experiment && !experimentValid && <p className="error-message" role="alert">Enter a nonblank prompt, temperature from 0 to 2, and an integer token limit from 1 to 4096.</p>}
+
+        <button className="analyze-button" disabled={!historyReady || !capabilities || !experimentValid || !source.video || !rangeValid || busy || Boolean(activeJob) || (source.video.source !== "synthetic" && (!visiblePrepared || preparing)) || (source.video.source === "synthetic" && !simulated)} onClick={analyze}>
           {activeJob ? <><i className="spinner" /> {activeJob.state === "queued" ? "Queued" : "Analyzing"}</> : busy ? "Please wait…" : job?.prediction && job.video_id === source.video?.id ? "Run again" : "Run analysis"}
         </button>
 
@@ -154,6 +168,8 @@ export default function App() {
         />
       </aside>
     </section>
+
+    <RunComparison jobs={jobs} selectedJob={job} />
 
     <footer><span>{capabilities ? simulated ? "Results are simulated by a mock backend, not produced by a model." : "Results come from the online vLLM backend." : "Backend settings unavailable."}</span><span>Every result keeps its input window and configuration.</span></footer>
   </main>;

@@ -40,7 +40,7 @@ export type AnalysisJob = {
   error: string | null;
   created_at: string;
   updated_at: string;
-  configuration: { model: string; backend_kind: string; fixture_version: string | null; preprocessing: { frames: number; fps: number; resize: number }; generation: { temperature: number; max_tokens: number } } | null;
+  configuration: { model: string; prompt_preset: string; prompt_text: string; backend_kind: string; fixture_version: string | null; preprocessing: { frames: number; fps: number; resize: number; crop: string; bundle_sha256?: string | null }; generation: GenerationSettings } | null;
   prediction: Prediction | null;
 };
 
@@ -56,7 +56,9 @@ export type PreparedInput = {
   frames: { index: number; requested_seconds: number; actual_seconds: number; sha256: string }[];
 };
 
-export type Capabilities = { backend_kind: string; simulated: boolean; models: string[] };
+export type GenerationSettings = { temperature: number; max_tokens: number };
+export type ExperimentSettings = { model: string; prompt_text: string; generation: GenerationSettings };
+export type Capabilities = { backend_kind: string; simulated: boolean; models: string[]; prompt_preset: { id: string; prompt: string }; generation: GenerationSettings };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api${path}`, init);
@@ -105,7 +107,7 @@ export function createPreparedInput(videoId: string, startSeconds: number, frame
   });
 }
 
-export function createJob(videoId: string, startSeconds: number, endSeconds: number, preparedInputId: string | null, frameCount = 16, fps = 7.5, size = 448): Promise<AnalysisJob> {
+export function createJob(videoId: string, startSeconds: number, endSeconds: number, preparedInputId: string | null, frameCount = 16, fps = 7.5, size = 448, experiment?: ExperimentSettings): Promise<AnalysisJob> {
   return request("/analysis-jobs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -117,6 +119,7 @@ export function createJob(videoId: string, startSeconds: number, endSeconds: num
       frame_count: frameCount,
       fps,
       size,
+      ...experiment,
     }),
   });
 }
