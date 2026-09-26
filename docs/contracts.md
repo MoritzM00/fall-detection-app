@@ -1,6 +1,6 @@
-# Draft contracts
+# Current and proposed contracts
 
-These remain evolving draft contracts. The MVP implements the video, capability, analysis-job, result, and vLLM-compatible mock portions; monitoring and event delivery are still proposals.
+The MVP implements video assets, prepared inputs, capabilities, persisted analysis jobs/results, immutable configuration, explicit retries, and the vLLM-compatible mock boundary. Monitoring and event delivery remain proposals. The record table also contains future fields, not a claim that every field is currently exposed.
 
 ## Records
 
@@ -20,23 +20,28 @@ Also persist backend kind (`mock` or `vllm`) and mock fixture/scenario version w
 
 ## Job lifecycle
 
-Proposed states: queued, running, succeeded, failed, cancelled, skipped. Skipped denotes intentionally unprocessed monitoring coverage. Retries reuse logical job identity with distinct attempt metadata. A failed parse produces no valid activity label.
+Implemented transitions are queued → running → succeeded/failed, with explicit failed → queued retry. Worker claims use owner tokens, 90-second leases, and 20-second heartbeats; expired work becomes failed and requires an explicit retry. Startup handles concurrent WAL setup before serializing migrations. Cancelled/skipped are reserved states; no cancellation or monitoring scheduler is implemented. Skipped is intended to denote intentionally unprocessed monitoring coverage. Retries reuse logical job identity and its saved configuration/input. A failed parse produces no valid activity label.
 
 ## API surface
 
-| Operation | Proposed route |
-| --- | --- |
-| Upload video | POST /videos |
-| Read video metadata | GET /videos/{id} |
-| Play stored video | GET /videos/{id}/media |
-| Request sampled-frame preview | POST /previews |
-| Create analysis job | POST /analysis-jobs |
-| Read job/result | GET /analysis-jobs/{id} |
-| List runs for comparison | GET /videos/{id}/runs |
-| Read available presets and served models | GET /capabilities |
-| Create monitoring session | POST /monitoring-sessions |
-| Read/update session | GET/PATCH /monitoring-sessions/{id} |
-| Receive status/result updates | GET /events |
+| Operation | Route | Status |
+| --- | --- | --- |
+| Upload video | POST /videos | Implemented |
+| Read video metadata | GET /videos/{id} | Implemented |
+| Play stored video | GET /videos/{id}/media | Implemented |
+| Prepare sampled frames | POST /prepared-inputs | Implemented, synchronous and bounded |
+| Create analysis job | POST /analysis-jobs | Implemented |
+| Read job/result | GET /analysis-jobs/{id} | Implemented |
+| Retry failed job | POST /analysis-jobs/{id}/retry | Implemented |
+| Recent runs for recovery/comparison | GET /analysis-jobs?limit=50 | Implemented; active jobs plus bounded terminal history |
+| Read baseline prompt, generation defaults and served model | GET /capabilities | Implemented |
+| Create monitoring session | POST /monitoring-sessions | Proposed |
+| Read/update session | GET/PATCH /monitoring-sessions/{id} | Proposed |
+| Receive status/result updates | GET /events | Proposed; UI currently polls |
+
+Analysis creation optionally accepts `model`, `prompt_text`, and `generation: {temperature, max_tokens}`. Omitted values preserve the configured model, baseline prompt, temperature 0, and max tokens 32. The model must be advertised by capabilities. Prompt text must be nonblank and at most 16000 characters; it is saved exactly. The server derives the baseline preset ID for an exact baseline prompt, otherwise `custom`. Temperature is finite in [0, 2]; max tokens is an integer in [1, 4096]. Sampling, prompt, generation, model, and backend identity are snapshotted before queueing. No new schema migration is required: these use existing configuration columns.
+
+The browser compares saved jobs with the same source ID and time window. It checks prepared input identity separately, so equal windows with different sampling are not presented as identical frames. Failed runs retain an error and no valid prediction. Comparison does not rerun jobs or overwrite their configuration.
 
 Preview generation may itself become asynchronous. Media playback should support range requests. Event delivery must support recovery through persisted queries. Authentication and ownership apply consistently once introduced.
 

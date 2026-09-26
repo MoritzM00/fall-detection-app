@@ -14,17 +14,19 @@ Connect the planned inference client to a local mock service with the selected s
 
 Done when requests and response/error handling work locally without GPU dependencies, and every mock result carries simulated provenance.
 
-## 2. Complete clip analysis flow — in progress
+## 2. Complete clip analysis flow — local MVP implemented
 
 Introduce media storage, configuration snapshots, persisted jobs, worker processing, API status events, and a minimal upload/result interface. Include sampled-frame preview and raw response.
 
 Done when an uploaded clip can be analyzed and every result can be traced to its input/configuration, including after a page reload or transient disconnect.
 
-## 3. Add debugging and comparison
+## 3. Add debugging and comparison — local MVP implemented
 
 Expose prompt presets/editing and supported inference/preprocessing settings. Preserve independent runs and compare the same input under different configurations.
 
-Done when configuration changes are visible and previous results remain reproducible and unchanged.
+The UI exposes the exact prompt, its baseline/reset option, supported model, temperature, max tokens, and sampling settings. Every run saves an independent configuration. Same-source/window comparisons highlight saved differences and report differing or unknown frame identity. Recent history is bounded to 50 terminal runs; this is not a full experiment archive.
+
+Done when configuration changes are visible and previous results remain reproducible and unchanged. These application properties are tested locally; model quality and parity with research inference remain unverified.
 
 ## 4. Add monitoring replay
 
@@ -32,7 +34,7 @@ Create session scheduling, overlapping windows, playback alignment, bounded pend
 
 Done when sustained replay has measured processing lag and handles seek, stop/restart, slow inference, and out-of-order completion correctly.
 
-Milestones 2–4 can run entirely against mock serving. Their timings are simulated, not hardware performance measurements.
+Milestones 2–3 are implemented and tested against mock serving; milestone 4 remains planned and can also run entirely against mock serving. Their timings are simulated, not hardware performance measurements.
 
 ## 4a. Validate real GPU integration
 

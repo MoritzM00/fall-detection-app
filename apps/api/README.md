@@ -2,9 +2,11 @@
 
 Implemented with FastAPI in `main.py`. The MVP supports capability discovery, synthetic and uploaded video assets, media playback, queued analysis jobs, and persisted results.
 
-Next areas: sampled-frame previews, monitoring-session controls, server-sent events, and authentication.
+Sampled-frame previews use `POST /prepared-inputs`. `POST /analysis-jobs` optionally accepts `model`, `prompt_text`, and `generation` (`temperature`, `max_tokens`). Omitted settings retain baseline behavior; model overrides must match the advertised served model. Prompts must contain 1–16000 characters, temperature must be finite and from 0 to 2, and max tokens must be an integer from 1 to 4096. Custom prompt text is saved exactly and marked `custom`; the baseline prompt keeps its preset ID.
 
-Persist jobs before returning acceptance. Keep decoding and inference in the worker. Database-backed records remain authoritative across client reconnects.
+Next areas: monitoring-session controls, server-sent events, and authentication.
+
+Persist jobs before returning acceptance. Preparation decodes frames synchronously through a bounded application coordinator; the worker consumes those immutable frames and performs inference. Database-backed records remain authoritative across client reconnects.
 
 For isolated tests or embedded use, call `create_app(settings, repository)`. Each instance owns its configuration and preparation coordinator, and initializes its repository on startup. `apps.api.main:app` remains the Uvicorn entry point.
 

@@ -6,7 +6,7 @@ Local MVP for a video activity-recognition application built on the master's the
 
 ## Product modes
 
-- **Clip analysis:** upload a clip, select its time range, inspect sampled frames, configure the prompt and inference settings, run inference, and compare runs.
+- **Clip analysis:** upload a clip, select its time range, inspect sampled frames, edit the resolved prompt, temperature, token limit, and sampling settings, run inference, and compare saved runs.
 - **Monitoring:** replay a recording as live, process successive windows, and show timestamped activity predictions. Real camera ingestion follows later.
 
 Both modes use the same prediction pipeline and preserve the 16-class taxonomy. Start with Qwen3-VL-8B-Instruct without an adapter on the existing GPU server. Adapter support is a later configuration option.
@@ -56,6 +56,8 @@ The mock returns `fall` after a short delay. Override its deterministic behavior
 - Prepared videos under `data/omnifall/videos` are discovered locally and remain ignored by Git. Dataset folder names such as `Fall` and `ADL` are source groupings, not model predictions.
 - Uploaded and dataset clips are decoded with PyAV using the selected window, frame count, sampling FPS, and center-crop size. The UI shows the same JPEG frame files sent in the online request; jobs retain the prepared input ID.
 - Both mock and real vLLM backends use the online chat-completions `video_url` frame-sequence format. Real inference requires a configured vLLM server with a version that supports request-level video `media_io_kwargs`; it is not GPU-tested here.
-- Monitoring, run comparison, retries/leases, and PostgreSQL migration remain planned.
+- Submitted runs survive reloads and selection changes. Worker leases and explicit retries preserve input and configuration identity.
+- Run comparison shows saved settings, responses, timestamps, and timings for the same source/window; differing or unknown frame identities are identified explicitly.
+- Monitoring, server-sent events, and PostgreSQL migration remain planned.
 
 See [prepared video input](docs/prepared-video.md) for the frame and vLLM payload contracts.

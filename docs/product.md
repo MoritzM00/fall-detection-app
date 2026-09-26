@@ -1,19 +1,19 @@
 # Product behavior
 
-## Clip analysis
+## Clip analysis — implemented local MVP
 
-- Upload a supported video and inspect duration and dimensions.
-- Select an analysis time range; exact treatment of ranges longer than the baseline window remains to be decided.
+- Upload a supported video and inspect duration.
+- Select a sampled analysis window of up to 30 seconds within the clip; longer selections require changed FPS/frame count and remain experiments.
 - Preview sampled frames and timestamps, including the center crop.
-- Choose a served model, generation settings, prompt preset/editable prompt, and preprocessing settings.
+- Choose the advertised served model, edit temperature/max tokens and prompt text, reset to the baseline prompt/generation settings, and edit sampling settings. The current deployment advertises one model.
 - Show the fully resolved prompt before running.
 - Display label, raw response, processing time, status, and configuration snapshot.
 - Rerun with changed settings without overwriting the previous run.
-- Compare runs on the same selected input; highlight configuration differences.
+- Compare saved runs for the same source and time window; highlight configuration differences and report whether prepared-frame identity matches. Recent terminal history is limited to 50 runs.
 
 Editable experiments are allowed, but thesis defaults form a named reproducible preset. Do not present edited prompts or preprocessing as equivalent to the validated baseline.
 
-## Monitoring
+## Monitoring — proposed, not implemented
 
 - Start/stop a recorded video replay; real cameras follow later.
 - Show playback, latest timestamped prediction, prediction history, and processing lag.
