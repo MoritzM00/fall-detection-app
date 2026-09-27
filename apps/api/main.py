@@ -21,6 +21,12 @@ from fall_detection.models import (
     PreparedInput,
     VideoAsset,
 )
+from fall_detection.monitoring import (
+    Monitoring,
+    SessionCommand,
+    SessionConfiguration,
+    SessionCreate,
+)
 from fall_detection.preparation import load_prepared_input, preparation_path, prepare_video
 from fall_detection.preparation_queue import PreparationBusyError, PreparationCoordinator
 from fall_detection.prompts import PRESET_ID, THESIS_BASELINE_PROMPT
@@ -45,6 +51,7 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         """Initialize this application's durable state at startup."""
         repository.initialize()
+        Monitoring(repository).recover()
         yield
 
     app = FastAPI(title="Fall Detection API", version="0.1.0", lifespan=lifespan)
@@ -331,6 +338,84 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
             return repository.retry_job(job_id)
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    def monitoring_configuration(request: SessionConfiguration):
+        if request.model is not None and request.model != settings.inference_model:
+            raise ValueError("Choose a model advertised by capabilities")
+        fixture = None
+        if settings.backend_kind == "mock":
+            fixture = InferenceClient(
+                settings.inference_base_url, timeout_seconds=settings.request_timeout_seconds
+            ).discover_mock_identity()
+        return Monitoring.configuration(
+            request, settings.inference_model, settings.backend_kind, fixture
+        )
+
+    @app.post("/monitoring-sessions", status_code=201)
+    def create_monitoring_session(request: SessionCreate) -> dict:
+        """Persist replay policy without decoding in the API request."""
+        try:
+            config = monitoring_configuration(request)
+            with storage_lock(settings.data_dir, exclusive=False):
+                return Monitoring(repository).create(request, config)
+        except KeyError as exc:
+            raise HTTPException(404, "Video not found") from exc
+        except InferenceServiceError as exc:
+            raise HTTPException(503, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @app.get("/monitoring-sessions")
+    def list_monitoring_sessions() -> list[dict]:
+        """List retained sessions for refresh recovery."""
+        with repository._connect() as connection:
+            ids = [
+                row[0]
+                for row in connection.execute(
+                    "SELECT id FROM monitoring_sessions ORDER BY created_at DESC LIMIT 100"
+                )
+            ]
+        monitor = Monitoring(repository)
+        return [monitor.get(identity) for identity in ids]
+
+    @app.get("/monitoring-sessions/{session_id}")
+    def get_monitoring_session(session_id: str) -> dict:
+        """Read session lifecycle and latest eligible job identity."""
+        try:
+            return Monitoring(repository).get(session_id)
+        except KeyError as exc:
+            raise HTTPException(404, "Session not found") from exc
+
+    @app.get("/monitoring-sessions/{session_id}/windows")
+    def monitoring_history(
+        session_id: str, limit: int = 100, before: int | None = None
+    ) -> list[dict]:
+        """Page history and explicit coverage records."""
+        try:
+            return Monitoring(repository).history(session_id, limit, before)
+        except KeyError as exc:
+            raise HTTPException(404, "Session not found") from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @app.post("/monitoring-sessions/{session_id}/commands")
+    def monitoring_command(session_id: str, request: SessionCommand) -> dict:
+        """Apply explicit playback updates and lifecycle commands."""
+        import sqlite3
+
+        try:
+            config = (
+                monitoring_configuration(request.configuration)
+                if request.action == "configure" and request.configuration
+                else None
+            )
+            return Monitoring(repository).command(session_id, request, config)
+        except KeyError as exc:
+            raise HTTPException(404, "Session not found") from exc
+        except InferenceServiceError as exc:
+            raise HTTPException(503, str(exc)) from exc
+        except (ValueError, sqlite3.IntegrityError) as exc:
+            raise HTTPException(409, str(exc)) from exc
 
     return app
 

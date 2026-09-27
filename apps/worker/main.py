@@ -6,6 +6,7 @@ from threading import Event, Thread
 from fall_detection.config import Settings
 from fall_detection.inference import InferenceClient
 from fall_detection.media import to_video_data_url
+from fall_detection.monitoring import Monitoring
 from fall_detection.pipeline import run_pipeline
 from fall_detection.preparation import load_prepared_input, to_vllm_jpeg_data_url
 from fall_detection.repository import Repository
@@ -22,6 +23,7 @@ def request_stop(_signal_number: int, _frame: object) -> None:
 
 def process_next_job(settings: Settings, repository: Repository) -> bool:
     """Claim and process at most one job, returning whether work was found."""
+    Monitoring(repository).prepare_next(settings)
     job = repository.claim_next_job()
     if job is None:
         return False
