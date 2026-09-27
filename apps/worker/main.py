@@ -46,11 +46,6 @@ def process_next_job(settings: Settings, repository: Repository) -> bool:
             )
         if settings.backend_kind != config.backend_kind:
             raise ValueError(f"Queued backend {config.backend_kind} is unavailable on this worker")
-        if (
-            config.backend_kind == "mock"
-            and config.fixture_version != settings.mock_fixture_version
-        ):
-            raise ValueError("Queued mock fixture version is unavailable on this worker")
         model, prompt = config.model, config.prompt_text
         video = repository.get_video(job.video_id)
         if video is None:
@@ -81,8 +76,15 @@ def process_next_job(settings: Settings, repository: Repository) -> bool:
         else:
             raise ValueError("Real videos require a prepared frame bundle")
         client = InferenceClient(
-            settings.inference_base_url, timeout_seconds=settings.request_timeout_seconds
+            settings.inference_base_url,
+            timeout_seconds=settings.request_timeout_seconds,
+            mock_fixture_identity=config.fixture_version if config.backend_kind == "mock" else None,
         )
+        if (
+            config.backend_kind == "mock"
+            and client.discover_mock_identity() != config.fixture_version
+        ):
+            raise ValueError("Queued mock fixture identity is unavailable on the serving process")
         result = run_pipeline(
             client=client,
             model=model,

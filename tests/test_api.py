@@ -12,6 +12,13 @@ from fall_detection.repository import Repository
 from fall_detection.upload_limit import MULTIPART_OVERHEAD_BYTES
 
 
+@pytest.fixture(autouse=True)
+def mock_discovery(monkeypatch):
+    from fall_detection.inference import InferenceClient
+
+    monkeypatch.setattr(InferenceClient, "discover_mock_identity", lambda self: "sample-v1")
+
+
 @pytest.fixture
 def make_api(tmp_path):
     def build(name="default", **overrides):
