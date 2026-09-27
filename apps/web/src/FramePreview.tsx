@@ -8,17 +8,21 @@ type Props = {
   preparing: boolean;
   error: string | null;
   valid: boolean;
+  onRetry: () => void;
 };
 
-export function FramePreview({ video, frameCount, timestamps, prepared, preparing, error, valid }: Props) {
+export function FramePreview({ video, frameCount, timestamps, prepared, preparing, error, valid, onRetry }: Props) {
   const displayed = prepared ? prepared.frames.map((frame) => frame.actual_seconds) : timestamps;
   return <section className="frame-preview" aria-labelledby="frame-preview-title">
     <div className="frame-preview-heading">
       <div><span className="control-label">Frames for analysis</span><strong id="frame-preview-title">{frameCount} timestamped frames</strong></div>
-      <span className="preview-disclaimer">{video.source === "synthetic" ? "Synthetic preview" : prepared ? "Frames sent to vLLM" : "Preparing frames…"}</span>
+      <span className="preview-disclaimer">{video.source === "synthetic" ? "Synthetic preview" : prepared ? "Frames sent to vLLM" : error ? "Preparation failed" : "Preparing frames…"}</span>
     </div>
     {preparing && <p className="preview-note" role="status">Decoding the selected video window…</p>}
-    {error && <p className="range-error" role="alert">{error}</p>}
+    {error && <div>
+      <p className="range-error" role="alert">{error}</p>
+      <button type="button" disabled={preparing || !valid} onClick={onRetry}>Retry preparation</button>
+    </div>}
     {valid && (video.source === "synthetic" || prepared) && <div className="frame-strip">
       {displayed.map((timestamp, index) => <figure className="sample-frame" key={`${timestamp}-${index}`}>
         <div className="frame-image">
