@@ -4,12 +4,14 @@ Local MVP for a video activity-recognition application built on the master's the
 
 **Status:** clip analysis runs end to end against the default simulated inference backend. Uploaded and dataset videos are decoded into immutable frame bundles before analysis. The online vLLM path is implemented but has not been tested against the GPU server yet.
 
+**Next:** continue without GPU access by strengthening deterministic mock scenarios, then implementing monitoring replay, exports, and evaluation plumbing. Nearly all of these application workflows can run locally; model accuracy, research parity, and real serving capacity require separate validation. See the [updated assessment and delivery plan](docs/roadmap.md).
+
 ## Product modes
 
 - **Clip analysis:** upload a clip, select its time range, inspect sampled frames, edit the resolved prompt, temperature, token limit, and sampling settings, run inference, and compare saved runs.
 - **Monitoring:** replay a recording as live, process successive windows, and show timestamped activity predictions. Real camera ingestion follows later.
 
-Both modes use the same prediction pipeline and preserve the 16-class taxonomy. Start with Qwen3-VL-8B-Instruct without an adapter on the existing GPU server. Adapter support is a later configuration option.
+Both modes are intended to use the same prediction pipeline and preserve the 16-class taxonomy; monitoring remains planned. When GPU access becomes available, start with Qwen3-VL-8B-Instruct without an adapter. Adapter support is a later configuration option.
 
 ## Repository outline
 

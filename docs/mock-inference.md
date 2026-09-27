@@ -26,13 +26,15 @@ The current request uses a saved JPEG frame sequence and video metadata describe
 
 ## Proposed extended scenarios
 
+Implement these next, before monitoring replay, following [roadmap milestone 1](roadmap.md#1-strengthen-the-mock-contract-and-fixture-identity). The current service checks basic message shape but does not fully validate JPEG bytes or video metadata. Its configured label/delay are also independent of the fixture-version string saved by the application. Stronger payload validation and a verified identity for the complete effective scenario are planned, not existing guarantees.
+
 | Scenario | Behavior to exercise |
 | --- | --- |
 | Fixed valid label | Basic upload-to-result flow; cover all 16 labels |
 | Scripted activity sequence | Monitoring transitions such as standing → fall → fallen |
 | Variable delays | Loading states, lag, queue bounds, out-of-order completion |
 | Timeout or connection interruption | Retry, reconnect, and explicit failure states |
-| Transient HTTP failure | Bounded retries and idempotent persistence |
+| Transient HTTP failure | Explicit retry and idempotent persistence; automatic inference retry remains deferred |
 | Invalid label or malformed envelope | Parse/protocol errors remain separate from `other` |
 | Truncated generated answer | Incomplete generation handling |
 
