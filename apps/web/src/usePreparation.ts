@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { createPreparedInput } from "./api";
+import { createPreparedInput } from "./api.ts";
 import type { PreparedInput, VideoAsset } from "./api";
 
 export function usePreparation(video: VideoAsset | null, start: number, count: number, fps: number, size: number, valid: boolean) {
+  const [attempt, setAttempt] = useState(0);
   const [prepared, setPrepared] = useState<PreparedInput | null>(null);
   const [preparing, setPreparing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -28,11 +29,15 @@ export function usePreparation(video: VideoAsset | null, start: number, count: n
       }
     }, 350);
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [video, start, count, fps, size, valid]);
+  }, [video, start, count, fps, size, valid, attempt]);
 
   const matches = Boolean(prepared && video && prepared.video_id === video.id &&
     Math.abs(prepared.start_seconds - start) < 0.001 &&
     Math.abs(prepared.end_seconds - end) < 0.001 &&
     prepared.frame_count === count && Math.abs(prepared.fps - fps) < 0.000001 && prepared.size === size);
-  return { visiblePrepared: matches ? prepared : null, preparing, preparationError: error };
+  function retryPreparation() {
+    if (preparing || !error || !video || video.source === "synthetic" || !valid) return;
+    setAttempt((current) => current + 1);
+  }
+  return { visiblePrepared: matches ? prepared : null, preparing, preparationError: error, retryPreparation };
 }

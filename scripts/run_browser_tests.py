@@ -35,6 +35,32 @@ def main() -> int:
             ],
             check=True,
         )
+        short_clip = temporary_path / "short.mp4"
+        offset_clip = temporary_path / "offset.mp4"
+        for target, offset in [(short_clip, "0"), (offset_clip, "5")]:
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "testsrc2=size=320x240:rate=10",
+                    "-t",
+                    "1.2",
+                    "-c:v",
+                    "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-output_ts_offset",
+                    offset,
+                    "-y",
+                    str(target),
+                ],
+                check=True,
+            )
         dataset_clip = (
             temporary_path
             / "data"
@@ -52,6 +78,8 @@ def main() -> int:
         environment.update(
             FALL_DETECTION_E2E_DATA_DIR=str(temporary_path / "data"),
             FALL_DETECTION_E2E_CLIP=str(clip),
+            FALL_DETECTION_E2E_SHORT_CLIP=str(short_clip),
+            FALL_DETECTION_E2E_OFFSET_CLIP=str(offset_clip),
         )
         return subprocess.run(
             ["pnpm", "--dir", "apps/web", "test:e2e", *sys.argv[1:]],

@@ -124,9 +124,13 @@ test("renders failed and retryable frame preparation", async ({ page, request })
   await page.goto("/");
   await page.locator('input[type="file"]').setInputFiles(clip);
   await expect(page.getByRole("alert").filter({ hasText: "decode failed" })).toBeVisible();
-  await page.getByLabel("Sampling FPS").fill("6");
+  await expect(page.locator(".analyze-button")).toBeDisabled();
+  const settings = await page.getByLabel("Sampling FPS").inputValue();
+  await page.getByRole("button", { name: "Retry preparation" }).click();
   await expect(page.getByRole("alert").filter({ hasText: "Preparation capacity is full" })).toBeVisible();
-  await page.getByLabel("Sampling FPS").fill("8");
+  await expect(page.locator(".analyze-button")).toBeDisabled();
+  await page.getByRole("button", { name: "Retry preparation" }).click();
+  await expect(page.getByLabel("Sampling FPS")).toHaveValue(settings);
   await expect(page.locator(".sample-frame img")).toHaveCount(16);
   await expect(page.locator(".analyze-button")).toBeEnabled();
   expect(attempts).toBe(3);
@@ -218,3 +222,47 @@ test("edited prompt and generation survive submission and reload and compare sav
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
+
+
+for (const kind of ["SHORT", "OFFSET"] as const) {
+  test(`${kind.toLowerCase()} video prepares the full browser playback duration`, async ({ page, request }) => {
+    await waitForApi(request);
+    const path = process.env[`FALL_DETECTION_E2E_${kind}_CLIP`];
+    if (!path) throw new Error(`Missing ${kind} browser fixture`);
+    await page.goto("/");
+    await page.locator('input[type="file"]').setInputFiles(path);
+    await expect(page.locator(".source-caption")).toContainText("1.2 s clip");
+    await expect(page.locator(".sample-frame img")).toHaveCount(16);
+    await expect(page.locator(".frame-strip figcaption").first()).toHaveText("0.000s");
+    await expect(page.locator(".frame-strip figcaption").last()).toHaveText("1.100s");
+    await expect(page.locator(".analyze-button")).toBeEnabled();
+    const source = await page.locator(".sample-frame img").first().getAttribute("src");
+    const id = source?.split("/")[3];
+    const manifest = await (await request.get(`http://127.0.0.1:8000/prepared-inputs/${id}`)).json();
+    expect(manifest.end_seconds).toBeCloseTo(1.2, 5);
+    expect(manifest.frames.at(-1).actual_seconds).toBeCloseTo(1.1, 5);
+    expect(manifest.frames[0].source_pts).toBe(kind === "OFFSET" ? 5 * 10240 : 0);
+    if (kind === "OFFSET") {
+      // Native Chromium controls may expose absolute PTS after seeking, while
+      // loadedmetadata and our selection use the clip-relative duration.
+      const difference = await page.locator("video").evaluate(async (video: HTMLVideoElement) => {
+        video.currentTime = 5.4;
+        await new Promise<void>((resolve) => video.addEventListener("seeked", () => resolve(), { once: true }));
+        const image = document.querySelectorAll<HTMLImageElement>(".sample-frame img")[5];
+        await image.decode();
+        const canvas = document.createElement("canvas");
+        canvas.width = canvas.height = 448;
+        const context = canvas.getContext("2d")!;
+        context.drawImage(video, 40, 0, 240, 240, 0, 0, 448, 448);
+        const playback = context.getImageData(0, 0, 448, 448).data;
+        context.drawImage(image, 0, 0);
+        const prepared = context.getImageData(0, 0, 448, 448).data;
+        let difference = 0;
+        for (let i = 0; i < playback.length; i++) difference += Math.abs(playback[i] - prepared[i]);
+        return difference / playback.length;
+      });
+      expect(manifest.frames[5].actual_seconds).toBeCloseTo(0.4, 5);
+      expect(difference).toBeLessThan(8);
+    }
+  });
+}
