@@ -70,7 +70,9 @@ def _selected_frames(path: Path, timestamps: list[float]) -> list[tuple[av.Video
             final_frame = previous[0]
             duration = (
                 float(final_frame.duration * final_frame.time_base)
-                if final_frame.duration > 0 and final_frame.time_base is not None
+                if final_frame.duration is not None
+                and final_frame.duration > 0
+                and final_frame.time_base is not None
                 else last_interval
             )
             if duration is None and stream.average_rate:

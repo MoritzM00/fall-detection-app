@@ -311,16 +311,29 @@ def test_offset_encoded_video_selects_same_pixels_and_full_duration(tmp_path, or
         (0, 5, None, 0.2),
         (0, None, 2, 0.2),
         (0, None, None, 0.0),
+        (None, None, None, 1.0),
+        (None, 5, None, 0.2),
+        (None, None, 2, 0.2),
+        (None, None, None, 0.0),
     ],
 )
 def test_final_extent_with_variable_and_missing_durations(
     tmp_path, monkeypatch, duration, rate, stream_duration, expected_end
 ):
+    class MissingDurationFrame(av.VideoFrame):
+        @property
+        def duration(self):
+            return None
+
     pts = [0, 2, 6] if expected_end >= 0.9 else [0]
     frames = []
     for timestamp in pts:
         frame = av.VideoFrame(64, 32, "rgb24")
-        frame.pts, frame.time_base, frame.duration = timestamp, Fraction(1, 10), duration
+        if duration is None:
+            frame = MissingDurationFrame(64, 32, "rgb24")
+        else:
+            frame.duration = duration
+        frame.pts, frame.time_base = timestamp, Fraction(1, 10)
         frames.append(frame)
     stream = SimpleNamespace(
         type="video",
