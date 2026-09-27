@@ -13,7 +13,7 @@ from PIL import Image
 from fall_detection.models import PreparationRequest, PreparedFrame, PreparedInput, VideoAsset
 from fall_detection.storage_lock import storage_lock
 
-PREPROCESSING_VERSION = "pyav-pillow-online-jpeg-v3"
+PREPROCESSING_VERSION = "pyav-pillow-online-jpeg-v4"
 
 
 def _sha256_file(path: Path) -> str:
@@ -39,6 +39,7 @@ def _selected_frames(path: Path, timestamps: list[float]) -> list[tuple[av.Video
             if stream.start_time is not None and stream.time_base is not None
             else None
         )
+        last_interval = None
         index = 0
         for frame in container.decode(stream):
             if not isinstance(frame, av.VideoFrame) or frame.pts is None or frame.time_base is None:
@@ -49,6 +50,8 @@ def _selected_frames(path: Path, timestamps: list[float]) -> list[tuple[av.Video
             seconds = source_seconds - origin
             if previous is None and timestamps[0] < seconds - 1e-6:
                 raise ValueError("Selected window starts before decoded video")
+            if previous is not None and seconds > previous[1]:
+                last_interval = seconds - previous[1]
             current = (frame, seconds, frame.pts)
             while index < len(timestamps) and timestamps[index] <= seconds:
                 if previous is None or abs(seconds - timestamps[index]) < abs(
@@ -63,8 +66,22 @@ def _selected_frames(path: Path, timestamps: list[float]) -> list[tuple[av.Video
                 break
         if previous is None:
             raise ValueError("Video has no timestamped frames")
-        if timestamps[-1] > previous[1] + 0.05:
-            raise ValueError("Selected window extends beyond decoded video")
+        if index < len(timestamps):
+            final_frame = previous[0]
+            duration = (
+                float(final_frame.duration * final_frame.time_base)
+                if final_frame.duration is not None
+                and final_frame.duration > 0
+                and final_frame.time_base is not None
+                else last_interval
+            )
+            if duration is None and stream.average_rate:
+                duration = float(1 / stream.average_rate)
+            if duration is None and stream.duration is not None and stream.time_base is not None:
+                duration = max(0.0, float(stream.duration * stream.time_base) - previous[1])
+            end_seconds = previous[1] + (duration or 0.0)
+            if timestamps[-1] > end_seconds + 1e-6:
+                raise ValueError("Selected window extends beyond decoded video")
         while index < len(timestamps):
             selected.append(previous)
             index += 1

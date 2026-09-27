@@ -35,8 +35,9 @@ def main() -> int:
             ],
             check=True,
         )
+        short_clip = temporary_path / "short.mp4"
         offset_clip = temporary_path / "offset.mp4"
-        for target, offset in [(offset_clip, "5")]:
+        for target, offset in [(short_clip, "0"), (offset_clip, "5")]:
             subprocess.run(
                 [
                     "ffmpeg",
@@ -77,6 +78,7 @@ def main() -> int:
         environment.update(
             FALL_DETECTION_E2E_DATA_DIR=str(temporary_path / "data"),
             FALL_DETECTION_E2E_CLIP=str(clip),
+            FALL_DETECTION_E2E_SHORT_CLIP=str(short_clip),
             FALL_DETECTION_E2E_OFFSET_CLIP=str(offset_clip),
         )
         return subprocess.run(

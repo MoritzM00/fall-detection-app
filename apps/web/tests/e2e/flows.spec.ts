@@ -268,3 +268,25 @@ for (const kind of ["OFFSET"] as const) {
     }
   });
 }
+
+
+for (const kind of ["SHORT"] as const) {
+  test(`${kind.toLowerCase()} video prepares the full browser playback duration`, async ({ page, request }) => {
+    await waitForApi(request);
+    const path = process.env[`FALL_DETECTION_E2E_${kind}_CLIP`];
+    if (!path) throw new Error(`Missing ${kind} browser fixture`);
+    await page.goto("/");
+    await page.locator('input[type="file"]').setInputFiles(path);
+    await expect(page.locator(".source-caption")).toContainText("1.2 s clip");
+    await expect(page.locator(".sample-frame img")).toHaveCount(16);
+    await expect(page.locator(".frame-strip figcaption").first()).toHaveText("0.000s");
+    await expect(page.locator(".frame-strip figcaption").last()).toHaveText("1.100s");
+    await expect(page.locator(".analyze-button")).toBeEnabled();
+    const source = await page.locator(".sample-frame img").first().getAttribute("src");
+    const id = source?.split("/")[3];
+    const manifest = await (await request.get(`http://127.0.0.1:8000/prepared-inputs/${id}`)).json();
+    expect(manifest.end_seconds).toBeCloseTo(1.2, 5);
+    expect(manifest.frames.at(-1).actual_seconds).toBeCloseTo(1.1, 5);
+    expect(manifest.frames[0].source_pts).toBe(0);
+  });
+}
