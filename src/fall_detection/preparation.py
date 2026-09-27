@@ -13,7 +13,7 @@ from PIL import Image
 from fall_detection.models import PreparationRequest, PreparedFrame, PreparedInput, VideoAsset
 from fall_detection.storage_lock import storage_lock
 
-PREPROCESSING_VERSION = "pyav-pillow-online-jpeg-v2"
+PREPROCESSING_VERSION = "pyav-pillow-online-jpeg-v3"
 
 
 def _sha256_file(path: Path) -> str:
@@ -25,18 +25,30 @@ def _sha256_file(path: Path) -> str:
 
 
 def _selected_frames(path: Path, timestamps: list[float]) -> list[tuple[av.VideoFrame, float, int]]:
-    """Select the nearest decoded PTS frame for each requested media time."""
+    """Select nearest frames on the playback timeline, retaining original PTS."""
+    if not timestamps or timestamps[0] < 0:
+        raise ValueError("Selected window must contain nonnegative timestamps")
     selected: list[tuple[av.VideoFrame, float, int]] = []
     with av.open(str(path)) as container:
         stream = next((item for item in container.streams if item.type == "video"), None)
         if stream is None:
             raise ValueError("Video has no decodable video stream")
         previous: tuple[av.VideoFrame, float, int] | None = None
+        origin = (
+            float(stream.start_time * stream.time_base)
+            if stream.start_time is not None and stream.time_base is not None
+            else None
+        )
         index = 0
         for frame in container.decode(stream):
             if not isinstance(frame, av.VideoFrame) or frame.pts is None or frame.time_base is None:
                 continue
-            seconds = float(frame.pts * frame.time_base)
+            source_seconds = float(frame.pts * frame.time_base)
+            if origin is None:
+                origin = source_seconds
+            seconds = source_seconds - origin
+            if previous is None and timestamps[0] < seconds - 1e-6:
+                raise ValueError("Selected window starts before decoded video")
             current = (frame, seconds, frame.pts)
             while index < len(timestamps) and timestamps[index] <= seconds:
                 if previous is None or abs(seconds - timestamps[index]) < abs(
