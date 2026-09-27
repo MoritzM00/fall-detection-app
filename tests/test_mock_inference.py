@@ -6,12 +6,23 @@ from fall_detection.pipeline import build_inference_payload
 from fall_detection.prompts import THESIS_BASELINE_PROMPT
 
 
+@pytest.fixture(autouse=True)
+def fast_default(monkeypatch):
+    manifest = mock_server.MANIFEST
+    monkeypatch.setattr(
+        mock_server,
+        "MANIFEST",
+        manifest.model_copy(
+            update={"default": manifest.default.model_copy(update={"delay_ms": 0})}
+        ),
+    )
+
+
 def test_mock_implements_used_chat_completion_contract(monkeypatch) -> None:
-    monkeypatch.setattr(mock_server, "DELAY_MS", 0)
     client = TestClient(mock_server.app)
     payload = build_inference_payload(
-        mock_server.SERVED_MODEL,
-        "data:video/mp4;base64,bW9jaw==",
+        mock_server.MANIFEST.model,
+        "data:video/mp4;base64,ZmFsbC1kZXRlY3Rpb24tc3ludGhldGljLWNvcnJpZG9yLXYx",
         THESIS_BASELINE_PROMPT,
     )
 
@@ -22,13 +33,12 @@ def test_mock_implements_used_chat_completion_contract(monkeypatch) -> None:
 
 
 def test_mock_rejects_missing_video_payload(monkeypatch) -> None:
-    monkeypatch.setattr(mock_server, "DELAY_MS", 0)
     client = TestClient(mock_server.app)
 
     response = client.post(
         "/v1/chat/completions",
         json={
-            "model": mock_server.SERVED_MODEL,
+            "model": mock_server.MANIFEST.model,
             "messages": [{"role": "user", "content": [{"type": "text", "text": "prompt"}]}],
         },
     )
@@ -39,7 +49,9 @@ def test_mock_rejects_missing_video_payload(monkeypatch) -> None:
 @pytest.mark.parametrize("extra", [None, "invalid", {"type": []}])
 def test_mock_rejects_malformed_content_parts(extra) -> None:
     payload = build_inference_payload(
-        mock_server.SERVED_MODEL, "data:video/mp4;base64,bW9jaw==", "prompt"
+        mock_server.MANIFEST.model,
+        "data:video/mp4;base64,ZmFsbC1kZXRlY3Rpb24tc3ludGhldGljLWNvcnJpZG9yLXYx",
+        "prompt",
     )
     payload["messages"][0]["content"].append(extra)
     response = TestClient(mock_server.app).post("/v1/chat/completions", json=payload)
@@ -57,7 +69,9 @@ def test_mock_rejects_malformed_content_parts(extra) -> None:
 )
 def test_mock_validates_completion_settings(field, value, expected_status) -> None:
     payload = build_inference_payload(
-        mock_server.SERVED_MODEL, "data:video/mp4;base64,bW9jaw==", "prompt"
+        mock_server.MANIFEST.model,
+        "data:video/mp4;base64,ZmFsbC1kZXRlY3Rpb24tc3ludGhldGljLWNvcnJpZG9yLXYx",
+        "prompt",
     )
     payload[field] = value
 
@@ -68,7 +82,9 @@ def test_mock_validates_completion_settings(field, value, expected_status) -> No
 
 def test_mock_rejects_video_without_url() -> None:
     payload = build_inference_payload(
-        mock_server.SERVED_MODEL, "data:video/mp4;base64,bW9jaw==", "prompt"
+        mock_server.MANIFEST.model,
+        "data:video/mp4;base64,ZmFsbC1kZXRlY3Rpb24tc3ludGhldGljLWNvcnJpZG9yLXYx",
+        "prompt",
     )
     payload["messages"][0]["content"][1]["video_url"] = {}
 

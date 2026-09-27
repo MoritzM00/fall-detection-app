@@ -10,6 +10,13 @@ from fall_detection.pipeline import PipelineResult
 from fall_detection.repository import Repository
 
 
+@pytest.fixture(autouse=True)
+def mock_discovery(monkeypatch):
+    from fall_detection.inference import InferenceClient
+
+    monkeypatch.setattr(InferenceClient, "discover_mock_identity", lambda self: "sample-v1")
+
+
 @pytest.fixture
 def queued_job(tmp_path: Path):
     settings = replace(

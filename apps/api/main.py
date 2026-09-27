@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from fall_detection.config import Settings
+from fall_detection.inference import InferenceClient, InferenceServiceError
 from fall_detection.media import list_dataset_video_paths, resolve_dataset_video
 from fall_detection.models import (
     AnalysisJob,
@@ -211,6 +212,12 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
                         detail="Prepared frames do not match the selected video window",
                     )
             try:
+                fixture_version = None
+                if settings.backend_kind == "mock":
+                    fixture_version = InferenceClient(
+                        settings.inference_base_url,
+                        timeout_seconds=settings.request_timeout_seconds,
+                    ).discover_mock_identity()
                 return repository.create_job(
                     request.video_id,
                     request.start_seconds,
@@ -223,7 +230,7 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
                     ),
                     generation=request.generation.model_dump() if request.generation else None,
                     backend_kind=settings.backend_kind,
-                    fixture_version=settings.mock_fixture_version,
+                    fixture_version=fixture_version,
                     prepared_input_id=prepared.id if prepared else None,
                     preprocessing=(
                         {
@@ -243,6 +250,8 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
                         }
                     ),
                 )
+            except InferenceServiceError as exc:
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
             except KeyError as exc:
                 raise HTTPException(status_code=404, detail="Video not found") from exc
 

@@ -12,7 +12,6 @@ class Settings:
     inference_base_url: str
     inference_model: str
     backend_kind: str
-    mock_fixture_version: str
     request_timeout_seconds: float
     upload_max_bytes: int = 512 * 1024 * 1024
     preparation_slots: int = 2
@@ -34,7 +33,6 @@ class Settings:
             ).rstrip("/"),
             inference_model=os.getenv("FALL_DETECTION_INFERENCE_MODEL", "qwen3-vl-8b-instruct"),
             backend_kind=os.getenv("FALL_DETECTION_BACKEND_KIND", "mock"),
-            mock_fixture_version=os.getenv("FALL_DETECTION_MOCK_FIXTURE_VERSION", "sample-v1"),
             request_timeout_seconds=float(
                 os.getenv("FALL_DETECTION_REQUEST_TIMEOUT_SECONDS", "30")
             ),

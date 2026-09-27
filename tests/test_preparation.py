@@ -86,6 +86,7 @@ def test_job_references_prepared_input_and_worker_sends_selected_frames(
     prepared_video, monkeypatch
 ):
     data_dir, repository, video, _, prepared = prepared_video
+    monkeypatch.setattr(worker.InferenceClient, "discover_mock_identity", lambda self: "sample-v1")
     settings = replace(
         Settings.from_env(), data_dir=data_dir, database_path=data_dir / "app.sqlite3"
     )
