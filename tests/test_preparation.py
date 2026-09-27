@@ -1,7 +1,9 @@
 import base64
 import hashlib
 from dataclasses import replace
+from fractions import Fraction
 from pathlib import Path
+from types import SimpleNamespace
 
 import av
 import numpy as np
@@ -15,6 +17,7 @@ from fall_detection.config import Settings
 from fall_detection.inference import InferenceResponse
 from fall_detection.models import PreparationRequest
 from fall_detection.preparation import (
+    _selected_frames,
     load_rgb_frames,
     preparation_path,
     prepare_video,
@@ -233,3 +236,124 @@ def test_tampered_jpeg_fails_job_before_inference(prepared_video, monkeypatch):
     assert failed.state == "failed"
     assert failed.prediction is None
     assert "JPEG frame failed integrity check" in failed.error
+
+
+@pytest.mark.parametrize("origin", [-5, 0, 5])
+@pytest.mark.parametrize("has_start", [True, False])
+def test_playback_timeline_retains_pts_and_nearest_frames(tmp_path, monkeypatch, origin, has_start):
+    frames = []
+    for index in range(12):
+        frame = av.VideoFrame(64, 32, "rgb24")
+        frame.pts = origin * 10 + index
+        frame.time_base = Fraction(1, 10)
+        frame.duration = 1
+        frames.append(frame)
+    stream = SimpleNamespace(
+        type="video", start_time=origin * 10 if has_start else None, time_base=Fraction(1, 10)
+    )
+
+    class Container:
+        streams = [stream]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def decode(self, _stream):
+            return iter(frames)
+
+    monkeypatch.setattr(av, "open", lambda *_: Container())
+    selected = _selected_frames(tmp_path / "clip.mp4", [0, 0.24, 0.8, 1.0, 1.2])
+    assert [item[1] for item in selected] == pytest.approx([0, 0.2, 0.8, 1.0, 1.1])
+    assert [item[2] for item in selected] == [origin * 10 + i for i in [0, 2, 8, 10, 11]]
+    late = _selected_frames(tmp_path / "clip.mp4", [0.8, 1.0, 1.2])
+    assert [item[1] for item in late] == pytest.approx([0.8, 1.0, 1.1])
+    with pytest.raises(ValueError, match="beyond decoded"):
+        _selected_frames(tmp_path / "clip.mp4", [0, 1.201])
+
+
+@pytest.mark.parametrize("origin", [0, 5])
+def test_offset_encoded_video_selects_same_pixels_and_full_duration(tmp_path, origin):
+    path = tmp_path / "clip.mp4"
+    with av.open(str(path), mode="w") as container:
+        stream = container.add_stream("mpeg4", rate=10)
+        stream.width, stream.height, stream.pix_fmt = 64, 32, "yuv420p"
+        for index in range(12):
+            rgb = np.full((32, 64, 3), index * 15, dtype=np.uint8)
+            frame = av.VideoFrame.from_ndarray(rgb, format="rgb24")
+            frame.time_base = Fraction(1, 10)
+            frame.pts = origin * 10 + index
+            for packet in stream.encode(frame):
+                container.mux(packet)
+        for packet in stream.encode():
+            container.mux(packet)
+    selected = _selected_frames(path, [0, 0.24, 0.48, 0.72, 0.96, 1.2])
+    assert [item[1] for item in selected] == pytest.approx([0, 0.2, 0.5, 0.7, 1.0, 1.1])
+    assert [round(float(item[0].to_ndarray(format="rgb24").mean()) / 15) for item in selected] == [
+        0,
+        2,
+        5,
+        7,
+        10,
+        11,
+    ]
+    with pytest.raises(ValueError, match="beyond decoded"):
+        _selected_frames(path, [0, 1.21])
+
+
+@pytest.mark.parametrize(
+    ("duration", "rate", "stream_duration", "expected_end"),
+    [
+        (3, None, None, 0.9),
+        (0, None, None, 1.0),
+        (0, 5, None, 0.2),
+        (0, None, 2, 0.2),
+        (0, None, None, 0.0),
+    ],
+)
+def test_final_extent_with_variable_and_missing_durations(
+    tmp_path, monkeypatch, duration, rate, stream_duration, expected_end
+):
+    pts = [0, 2, 6] if expected_end >= 0.9 else [0]
+    frames = []
+    for timestamp in pts:
+        frame = av.VideoFrame(64, 32, "rgb24")
+        frame.pts, frame.time_base, frame.duration = timestamp, Fraction(1, 10), duration
+        frames.append(frame)
+    stream = SimpleNamespace(
+        type="video",
+        start_time=None,
+        time_base=Fraction(1, 10),
+        average_rate=rate,
+        duration=stream_duration,
+    )
+
+    class Container:
+        streams = [stream]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def decode(self, _stream):
+            return iter(frames)
+
+    monkeypatch.setattr(av, "open", lambda *_: Container())
+    selected = _selected_frames(tmp_path / "clip", [0, expected_end])
+    assert selected[-1][1] == pytest.approx(pts[-1] / 10)
+    with pytest.raises(ValueError, match="beyond decoded"):
+        _selected_frames(tmp_path / "clip", [0, expected_end + 0.01])
+
+
+def test_duration_fit_prepares_manifest_with_playback_times(prepared_video):
+    data_dir, _, video, request, _ = prepared_video
+    fitted = request.model_copy(update={"frame_count": 16, "fps": 15 / 1.2})
+    prepared = prepare_video(video, fitted, data_dir)
+    assert prepared.end_seconds == pytest.approx(1.2)
+    assert prepared.frames[-1].requested_seconds == 1.2
+    assert prepared.frames[-1].actual_seconds == 1.1
+    assert prepared.preprocessing_version == "pyav-pillow-online-jpeg-v3"
