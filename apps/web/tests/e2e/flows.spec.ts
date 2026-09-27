@@ -124,9 +124,13 @@ test("renders failed and retryable frame preparation", async ({ page, request })
   await page.goto("/");
   await page.locator('input[type="file"]').setInputFiles(clip);
   await expect(page.getByRole("alert").filter({ hasText: "decode failed" })).toBeVisible();
-  await page.getByLabel("Sampling FPS").fill("6");
+  await expect(page.locator(".analyze-button")).toBeDisabled();
+  const settings = await page.getByLabel("Sampling FPS").inputValue();
+  await page.getByRole("button", { name: "Retry preparation" }).click();
   await expect(page.getByRole("alert").filter({ hasText: "Preparation capacity is full" })).toBeVisible();
-  await page.getByLabel("Sampling FPS").fill("8");
+  await expect(page.locator(".analyze-button")).toBeDisabled();
+  await page.getByRole("button", { name: "Retry preparation" }).click();
+  await expect(page.getByLabel("Sampling FPS")).toHaveValue(settings);
   await expect(page.locator(".sample-frame img")).toHaveCount(16);
   await expect(page.locator(".analyze-button")).toBeEnabled();
   expect(attempts).toBe(3);

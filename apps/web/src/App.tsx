@@ -27,7 +27,7 @@ export default function App() {
   const experimentValid = experiment !== null && Boolean(experiment.prompt_text.trim()) && experiment.prompt_text.length <= 16000
     && Number.isFinite(experiment.generation.temperature) && experiment.generation.temperature >= 0 && experiment.generation.temperature <= 2
     && Number.isInteger(experiment.generation.max_tokens) && experiment.generation.max_tokens >= (capabilities?.generation_limits.min_max_tokens ?? 16) && experiment.generation.max_tokens <= (capabilities?.generation_limits.max_max_tokens ?? 4096);
-  const { visiblePrepared, preparing, preparationError } = usePreparation(
+  const { visiblePrepared, preparing, preparationError, retryPreparation } = usePreparation(
     source.video, sampling.startSeconds, sampling.frameCount, sampling.fps,
     sampling.size, rangeValid,
   );
@@ -120,6 +120,7 @@ export default function App() {
             prepared={visiblePrepared}
             preparing={preparing}
             error={preparationError}
+            onRetry={retryPreparation}
             valid={rangeValid}
           />
         </>}
