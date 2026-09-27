@@ -96,7 +96,7 @@ def test_effective_environment_identity(tmp_path, monkeypatch):
     path = tmp_path / "manifest.json"
     path.write_text(
         json.dumps(
-            {"default": {"delay_ms": 0}, "inputs": {"a": {"label": "standing", "delay_ms": 1}}}
+            {"default": {"delay_ms": 0}, "inputs": {"a" * 64: {"label": "standing", "delay_ms": 1}}}
         )
     )
     monkeypatch.setenv("MOCK_INFERENCE_MANIFEST", str(path))
@@ -111,7 +111,9 @@ def test_effective_environment_identity(tmp_path, monkeypatch):
         monkeypatch.setenv(env, value)
         assert load_manifest().identity() != baseline.identity()
         monkeypatch.delenv(env)
-    changed = baseline.model_copy(update={"inputs": {"a": Scenario(label="fallen", delay_ms=1)}})
+    changed = baseline.model_copy(
+        update={"inputs": {"a" * 64: Scenario(label="fallen", delay_ms=1)}}
+    )
     assert changed.identity() != baseline.identity()
 
 
@@ -399,3 +401,42 @@ def test_discovery_rejects_manifest_identity_mismatch(monkeypatch):
     )
     with pytest.raises(InferenceServiceError, match="Invalid mock service identity"):
         InferenceClient("http://fixture/v1").discover_mock_identity()
+
+
+def test_numeric_metadata_spelling_and_empty_output(set_manifest):
+    client = TestClient(mock.app)
+    body = payload()
+    original = client.post("/v1/chat/completions", json=body)
+    body["media_io_kwargs"]["video"]["fps"] = 5.0
+    body["media_io_kwargs"]["video"]["duration"] = 1.0
+    normalized = client.post("/v1/chat/completions", json=body)
+    assert (
+        normalized.headers["X-Mock-Input-Fingerprint"]
+        == original.headers["X-Mock-Input-Fingerprint"]
+    )
+    assert (
+        normalized.headers["X-Mock-Request-Fingerprint"]
+        == original.headers["X-Mock-Request-Fingerprint"]
+    )
+    set_manifest(Scenario(output="", delay_ms=0))
+    assert (
+        client.post("/v1/chat/completions", json=body).json()["choices"][0]["message"]["content"]
+        == ""
+    )
+
+
+@pytest.mark.parametrize(
+    "manifest",
+    [
+        {"version": 2},
+        {"inputs": {"invalid-fingerprint": {}}},
+        {"default": {"label": "not-a-label"}},
+        {"default": {"delay_ms": -1}},
+        {"default": {"unsupported": True}},
+    ],
+)
+def test_invalid_manifests_are_rejected(manifest):
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        Manifest.model_validate(manifest)

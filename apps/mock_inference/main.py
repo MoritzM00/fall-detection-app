@@ -113,7 +113,11 @@ def validate_prepared_video(request: ChatCompletionRequest) -> dict[str, object]
         or len(set(sizes)) != 1
     ):
         raise HTTPException(400, "Prepared video metadata or frame count is inconsistent")
-    return {"kind": "prepared-jpeg", "frames": hashes, "metadata": video}
+    return {
+        "kind": "prepared-jpeg",
+        "frames": hashes,
+        "metadata": {**video, "fps": float(video["fps"]), "duration": float(video["duration"])},
+    }
 
 
 @app.get("/v1/mock/identity")
@@ -203,7 +207,10 @@ async def chat_completions(
         "invalid": "The best answer is: flying",
         "ambiguous": "The best answer is: fall or fallen",
         "truncated": "The best answer is:",
-    }.get(scenario.fault, scenario.output or f"The best answer is: {scenario.label}")
+    }.get(
+        scenario.fault,
+        scenario.output if scenario.output is not None else f"The best answer is: {scenario.label}",
+    )
     completion_id = f"mock-{uuid4()}"
     return JSONResponse(
         {

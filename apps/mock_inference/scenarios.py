@@ -5,7 +5,7 @@ import json
 import os
 import sqlite3
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -38,10 +38,14 @@ class Manifest(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
     version: Literal[1] = 1
-    model: str = "qwen3-vl-8b-instruct"
+    model: str = Field(default="qwen3-vl-8b-instruct", min_length=1)
     default: Scenario = Scenario()
-    inputs: dict[str, Scenario] = Field(default_factory=dict)
-    requests: dict[str, Scenario] = Field(default_factory=dict)
+    inputs: dict[Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")], Scenario] = Field(
+        default_factory=dict
+    )
+    requests: dict[Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")], Scenario] = Field(
+        default_factory=dict
+    )
 
     def identity(self) -> str:
         """Hash all settings that can affect a response."""
