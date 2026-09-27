@@ -1,3 +1,4 @@
+import { MonitoringReplay } from "./MonitoringReplay";
 import { useEffect, useState } from "react";
 import { createJob, getCapabilities } from "./api";
 import { FramePreview } from "./FramePreview";
@@ -13,6 +14,8 @@ import { useSamplingSelection } from "./useSamplingSelection";
 import { useSourceSelection } from "./useSourceSelection";
 
 export default function App() {
+  const [mode, setMode] = useState(() => localStorage.getItem("sentinel-mode") ?? "clip");
+  function selectMode(value: string) { setMode(value); localStorage.setItem("sentinel-mode", value); }
   const sampling = useSamplingSelection();
   const source = useSourceSelection(sampling.reset, sampling.fitDuration);
   const { jobs, selectedJob: job, selectedJobId, activeJob, pollError, ready: historyReady, setSelectedJobId, refresh, record } = useRunHistory();
@@ -71,12 +74,13 @@ export default function App() {
         <span>Sentinel</span>
       </a>
       <div className="mode-tabs" aria-label="Application mode">
-        <button className="active">Clip analysis</button>
-        <button disabled>Monitoring <small>soon</small></button>
+        <button className={mode === "clip" ? "active" : ""} onClick={() => selectMode("clip")}>Clip analysis</button>
+        <button className={mode === "monitoring" ? "active" : ""} onClick={() => selectMode("monitoring")}>Monitoring</button>
       </div>
       <span className={`system-state ${capabilities ? "" : "offline"}`}><i /> {capabilities ? simulated ? "Local simulation" : "Online vLLM" : "Backend unavailable"}</span>
     </header>
 
+    <div hidden={mode !== "clip"}>
     <section className="intro" id="top">
       <div>
         <h1>Clip analysis</h1>
@@ -172,6 +176,8 @@ export default function App() {
 
     <RunComparison key={job?.id ?? "no-run"} jobs={jobs} selectedJob={job} />
 
+    </div>
+    {mode === "monitoring" && <MonitoringReplay capabilities={capabilities} />}
     <footer><span>{capabilities ? simulated ? "Results are simulated by a mock backend, not produced by a model." : "Results come from the online vLLM backend." : "Backend settings unavailable."}</span><span>Every result keeps its input window and configuration.</span></footer>
   </main>;
 }
