@@ -440,3 +440,64 @@ def test_invalid_manifests_are_rejected(manifest):
 
     with pytest.raises(ValidationError):
         Manifest.model_validate(manifest)
+
+
+@pytest.mark.parametrize("limit", ["body", "count", "bytes", "pixels"])
+def test_mock_resource_bounds(set_manifest, monkeypatch, limit):
+    body = payload()
+    if limit == "body":
+        monkeypatch.setattr(mock, "MAX_REQUEST_BYTES", 64)
+    elif limit == "count":
+        monkeypatch.setattr(mock, "MAX_FRAMES", 0)
+    elif limit == "bytes":
+        monkeypatch.setattr(mock, "MAX_FRAME_BYTES", 64)
+    else:
+        monkeypatch.setattr(mock, "MAX_FRAME_PIXELS", 255)
+    response = TestClient(mock.app).post("/v1/chat/completions", json=body)
+    assert response.status_code == 413
+
+
+def test_chunked_request_body_limit(set_manifest, monkeypatch):
+    import asyncio
+
+    monkeypatch.setattr(mock, "MAX_REQUEST_BYTES", 5)
+    sent = []
+    chunks = iter(
+        [
+            {"type": "http.request", "body": b"123", "more_body": True},
+            {"type": "http.request", "body": b"456", "more_body": False},
+        ]
+    )
+
+    async def receive():
+        return next(chunks)
+
+    async def send(message):
+        sent.append(message)
+
+    asyncio.run(mock.app({"type": "http", "path": "/v1/chat/completions"}, receive, send))
+    assert sent[0]["status"] == 413
+
+
+def test_discovery_does_not_hold_storage_lock(tmp_path, monkeypatch):
+    import fcntl
+    import os
+
+    settings = replace(
+        Settings.from_env(), data_dir=tmp_path, database_path=tmp_path / "app.sqlite3"
+    )
+    repository = Repository(settings.database_path)
+
+    def discover(self):
+        descriptor = os.open(tmp_path, os.O_RDONLY)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+        return "sample-v1"
+
+    monkeypatch.setattr(InferenceClient, "discover_mock_identity", discover)
+    with TestClient(api.create_app(settings, repository)) as client:
+        video = client.post("/videos/sample").json()
+        assert client.post("/analysis-jobs", json={"video_id": video["id"]}).status_code == 202

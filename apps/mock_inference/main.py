@@ -13,11 +13,58 @@ from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, ConfigDict, Field
+from starlette.concurrency import run_in_threadpool
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from apps.mock_inference.scenarios import fingerprint, load_manifest, next_attempt
 
+MAX_REQUEST_BYTES = 32 * 1024 * 1024
+MAX_FRAMES = 32
+MAX_FRAME_BYTES = 1024 * 1024
+MAX_FRAME_PIXELS = 672 * 672
+
+
+class RequestSizeLimit:
+    """Bound completion bodies before JSON parsing, including chunked requests."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        """Wrap the ASGI application."""
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Buffer at most the supported request size before handing off."""
+        if scope["type"] != "http" or scope["path"] != "/v1/chat/completions":
+            await self.app(scope, receive, send)
+            return
+        body: bytearray | None = bytearray()
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                return
+            chunk = message.get("body", b"")
+            if len(body) + len(chunk) > MAX_REQUEST_BYTES:
+                await JSONResponse({"detail": "Mock request byte limit exceeded"}, 413)(
+                    scope, receive, send
+                )
+                return
+            body.extend(chunk)
+            if not message.get("more_body", False):
+                break
+
+        async def replay() -> Message:
+            nonlocal body
+            if body is not None:
+                data = bytes(body)
+                body = None
+                return {"type": "http.request", "body": data, "more_body": False}
+            return await receive()
+
+        await self.app(scope, replay, send)
+
+
 MANIFEST = load_manifest()
 app = FastAPI(title="Mock vLLM inference", version="0.1.0")
+app.add_middleware(RequestSizeLimit)
 
 
 class ChatCompletionRequest(BaseModel):
@@ -80,18 +127,32 @@ def validate_prepared_video(request: ChatCompletionRequest) -> dict[str, object]
     if not url.startswith("data:video/jpeg;base64,"):
         raise HTTPException(400, "Only prepared JPEG sequences or the synthetic demo are supported")
     frames = url.removeprefix("data:video/jpeg;base64,").split(",")
+    if len(frames) > MAX_FRAMES:
+        raise HTTPException(413, "Mock frame count limit exceeded")
     hashes = []
     sizes = []
     try:
         for frame in frames:
+            if len(frame) > 4 * ((MAX_FRAME_BYTES + 2) // 3):
+                raise HTTPException(413, "Mock encoded frame byte limit exceeded")
             data = base64.b64decode(frame, validate=True)
+            if len(data) > MAX_FRAME_BYTES:
+                raise HTTPException(413, "Mock frame byte limit exceeded")
             with Image.open(io.BytesIO(data)) as image:
                 if image.format != "JPEG":
                     raise ValueError("Frame is not JPEG")
+                if image.width * image.height > MAX_FRAME_PIXELS:
+                    raise HTTPException(413, "Mock decoded frame pixel limit exceeded")
                 sizes.append(image.size)
                 image.load()
             hashes.append(fingerprint(data.hex()))
-    except (ValueError, binascii.Error, UnidentifiedImageError, OSError) as exc:
+    except (
+        ValueError,
+        binascii.Error,
+        UnidentifiedImageError,
+        OSError,
+        Image.DecompressionBombError,
+    ) as exc:
         raise HTTPException(400, "Invalid prepared JPEG frame") from exc
     metadata = request.media_io_kwargs
     if not isinstance(metadata, dict) or set(metadata) != {"video"}:
@@ -164,7 +225,7 @@ async def chat_completions(
     if request.stream:
         raise HTTPException(status_code=400, detail="Streaming is not supported by this mock")
     validate_video_message(request.messages)
-    input_key = fingerprint(validate_prepared_video(request))
+    input_key = fingerprint(await run_in_threadpool(validate_prepared_video, request))
     if x_mock_fixture_identity is not None and x_mock_fixture_identity != manifest.identity():
         raise HTTPException(409, "Required mock fixture identity is unavailable")
     normalized = request.model_dump(exclude={"messages", "media_io_kwargs"})

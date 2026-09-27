@@ -70,3 +70,5 @@ Verified locally on 27 September 2026: Ruff lint/format, ty, 230 Python tests, 1
 Use local contract checks to exercise serialization, response parsing, HTTP errors, and request lifecycle. Later run the same client against real vLLM and review differences using fixed reference clips. Sanitize any captured response fixtures and omit private media/credentials.
 
 The existing research `mock_vllm.py` may inform scenarios, but it mocks an in-process engine and does not replace this HTTP boundary. No research code is copied at this stage.
+
+Completion requests are bounded before JSON parsing to 32 MiB, including chunked bodies. Prepared inputs accept at most 32 frames, 1 MiB of encoded JPEG bytes per frame, and 672 × 672 decoded pixels per frame. Larger inputs fail with HTTP 413 before full image decoding. JPEG validation runs in the thread pool so it does not block the async event loop. These fixed mock limits match the application's supported preparation range.
