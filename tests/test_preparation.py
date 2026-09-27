@@ -301,3 +301,59 @@ def test_offset_encoded_video_selects_same_pixels_and_full_duration(tmp_path, or
     ]
     with pytest.raises(ValueError, match="beyond decoded"):
         _selected_frames(path, [0, 1.21])
+
+
+@pytest.mark.parametrize(
+    ("duration", "rate", "stream_duration", "expected_end"),
+    [
+        (3, None, None, 0.9),
+        (0, None, None, 1.0),
+        (0, 5, None, 0.2),
+        (0, None, 2, 0.2),
+        (0, None, None, 0.0),
+    ],
+)
+def test_final_extent_with_variable_and_missing_durations(
+    tmp_path, monkeypatch, duration, rate, stream_duration, expected_end
+):
+    pts = [0, 2, 6] if expected_end >= 0.9 else [0]
+    frames = []
+    for timestamp in pts:
+        frame = av.VideoFrame(64, 32, "rgb24")
+        frame.pts, frame.time_base, frame.duration = timestamp, Fraction(1, 10), duration
+        frames.append(frame)
+    stream = SimpleNamespace(
+        type="video",
+        start_time=None,
+        time_base=Fraction(1, 10),
+        average_rate=rate,
+        duration=stream_duration,
+    )
+
+    class Container:
+        streams = [stream]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def decode(self, _stream):
+            return iter(frames)
+
+    monkeypatch.setattr(av, "open", lambda *_: Container())
+    selected = _selected_frames(tmp_path / "clip", [0, expected_end])
+    assert selected[-1][1] == pytest.approx(pts[-1] / 10)
+    with pytest.raises(ValueError, match="beyond decoded"):
+        _selected_frames(tmp_path / "clip", [0, expected_end + 0.01])
+
+
+def test_duration_fit_prepares_manifest_with_playback_times(prepared_video):
+    data_dir, _, video, request, _ = prepared_video
+    fitted = request.model_copy(update={"frame_count": 16, "fps": 15 / 1.2})
+    prepared = prepare_video(video, fitted, data_dir)
+    assert prepared.end_seconds == pytest.approx(1.2)
+    assert prepared.frames[-1].requested_seconds == 1.2
+    assert prepared.frames[-1].actual_seconds == 1.1
+    assert prepared.preprocessing_version == "pyav-pillow-online-jpeg-v4"
