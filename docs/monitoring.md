@@ -18,6 +18,8 @@ from the serving process and saved with each configuration segment.
 The supplied duration is a provisional playback bound. For real media the worker
 verifies video-stream duration **before admission** and shortens the bound when
 necessary; unavailable duration/source pauses the session with a visible reason.
+Verification rechecks the current timeline transactionally; a seek beyond the real
+source bound during metadata inspection also recovers paused with a visible reason.
 Frame preparation independently rejects ranges beyond decodable media. Synthetic
 sources use their known duration and are restricted to mock serving.
 

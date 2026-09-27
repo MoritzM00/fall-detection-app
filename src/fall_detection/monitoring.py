@@ -522,13 +522,22 @@ class Monitoring:
                     if stream is None or stream.duration is None or stream.time_base is None:
                         raise ValueError("Replay requires a video stream with a duration")
                     duration = min(row["duration"], float(stream.duration * stream.time_base))
-                    if duration <= row["origin"]:
-                        raise ValueError("Replay starts beyond the source duration")
                 with self.repository._connect() as connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    current = connection.execute(
+                        "SELECT origin,state FROM monitoring_sessions WHERE id=?", (row["id"],)
+                    ).fetchone()
+                    # Commands can move the timeline while source metadata is read.
+                    if duration <= current["origin"]:
+                        connection.execute(
+                            "UPDATE monitoring_sessions SET state=CASE WHEN state='running' THEN 'paused' ELSE state END,recovery_reason='Replay starts beyond the source duration' WHERE id=?",
+                            (row["id"],),
+                        )
                     connection.execute(
                         "UPDATE monitoring_sessions SET duration=?,position=MIN(position,?),duration_verified=1 WHERE id=?",
                         (duration, duration, row["id"]),
                     )
+                    connection.commit()
         except (ValueError, OSError, av.error.FFmpegError) as exc:
             with self.repository._connect() as connection:
                 connection.execute(

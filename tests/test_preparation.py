@@ -426,3 +426,31 @@ def test_real_replay_worker_uses_prepared_timestamps_and_verifies_duration(
     assert sent["sampled_timestamps"] == [0, 0]
     assert job.configuration.preprocessing.version.endswith("-causal")
     assert job.configuration.preprocessing.bundle_sha256
+
+
+def test_source_verification_rechecks_seek_during_metadata_read(prepared_video, monkeypatch):
+    import av
+
+    from fall_detection.monitoring import Monitoring, SessionCommand, SessionCreate
+
+    data_dir, repository, video, _, _ = prepared_video
+    settings = replace(Settings.from_env(), data_dir=data_dir)
+    monitor = Monitoring(repository)
+    request = SessionCreate(video_id=video.id, duration_seconds=100, frame_count=2)
+    session = monitor.create(request, monitor.configuration(request, "model", "mock", "sample-v1"))
+    monitor.command(session["id"], SessionCommand(action="start"))
+    original_open = av.open
+
+    def open_after_seek(*args, **kwargs):
+        monitor.command(session["id"], SessionCommand(action="seek", position_seconds=10))
+        return original_open(*args, **kwargs)
+
+    monkeypatch.setattr(av, "open", open_after_seek)
+    monitor.verify_source(settings)
+    current = monitor.get(session["id"])
+    assert current["state"] == "paused"
+    assert "source duration" in current["recovery_reason"]
+    assert current["generation"] == 1
+    assert current["duration"] == pytest.approx(1.2)
+    assert current["position"] <= current["duration"]
+    assert monitor.history(session["id"]) == []
