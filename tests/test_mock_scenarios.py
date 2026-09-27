@@ -501,3 +501,51 @@ def test_discovery_does_not_hold_storage_lock(tmp_path, monkeypatch):
     with TestClient(api.create_app(settings, repository)) as client:
         video = client.post("/videos/sample").json()
         assert client.post("/analysis-jobs", json={"video_id": video["id"]}).status_code == 202
+
+
+@pytest.mark.parametrize(
+    ("changes", "status"),
+    [
+        ({"end_seconds": 0}, 422),
+        ({"model": "unavailable"}, 422),
+        ({"video_id": "missing"}, 404),
+    ],
+)
+def test_invalid_submission_preserves_errors_when_mock_unavailable(
+    tmp_path, monkeypatch, changes, status
+):
+    settings = replace(
+        Settings.from_env(), data_dir=tmp_path, database_path=tmp_path / "app.sqlite3"
+    )
+    repository = Repository(settings.database_path)
+
+    def unavailable(self):
+        raise InferenceServiceError("Fixture service unavailable")
+
+    monkeypatch.setattr(InferenceClient, "discover_mock_identity", unavailable)
+    with TestClient(api.create_app(settings, repository)) as client:
+        video = client.post("/videos/sample").json()
+        response = client.post("/analysis-jobs", json={"video_id": video["id"], **changes})
+        assert response.status_code == status
+        assert repository.claim_next_job() is None
+
+
+def test_submission_revalidates_storage_after_discovery(tmp_path, monkeypatch):
+    settings = replace(
+        Settings.from_env(), data_dir=tmp_path, database_path=tmp_path / "app.sqlite3"
+    )
+    repository = Repository(settings.database_path)
+
+    import sqlite3
+
+    def discover(self):
+        with sqlite3.connect(settings.database_path) as connection:
+            connection.execute("DELETE FROM videos")
+        return "sample-v1"
+
+    monkeypatch.setattr(InferenceClient, "discover_mock_identity", discover)
+    with TestClient(api.create_app(settings, repository)) as client:
+        video = client.post("/videos/sample").json()
+        response = client.post("/analysis-jobs", json={"video_id": video["id"]})
+        assert response.status_code == 404
+        assert repository.claim_next_job() is None
