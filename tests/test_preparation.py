@@ -454,3 +454,23 @@ def test_source_verification_rechecks_seek_during_metadata_read(prepared_video, 
     assert current["duration"] == pytest.approx(1.2)
     assert current["position"] <= current["duration"]
     assert monitor.history(session["id"]) == []
+
+
+@pytest.mark.parametrize("action", ["stop", "restart", "pause"])
+def test_source_verification_error_preserves_newer_command(prepared_video, monkeypatch, action):
+    from fall_detection.monitoring import Monitoring, SessionCommand, SessionCreate
+
+    data_dir, repository, video, _, _ = prepared_video
+    monitor = Monitoring(repository)
+    request = SessionCreate(video_id=video.id, duration_seconds=100)
+    session = monitor.create(request, monitor.configuration(request, "model", "mock", "sample-v1"))
+    monitor.command(session["id"], SessionCommand(action="start"))
+    expected = {}
+
+    def open_after_command(*args, **kwargs):
+        expected.update(monitor.command(session["id"], SessionCommand(action=action)))
+        raise OSError("old read failed")
+
+    monkeypatch.setattr(av, "open", open_after_command)
+    monitor.verify_source(replace(Settings.from_env(), data_dir=data_dir))
+    assert monitor.get(session["id"]) == expected

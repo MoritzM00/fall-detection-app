@@ -41,7 +41,7 @@ with a different payload returns 409. IDs are scoped to a session. Without an ID
 commands express new intentions and generation-changing commands advance again.
 
 - `start` / `resume`: run the existing timeline; stopped sessions require restart.
-- `pause`: stop admission and drop an unprepared pending candidate as `pause`.
+- `pause`: stopped sessions require restart; otherwise stop admission and drop an unprepared pending candidate as `pause`.
   An already preparing/queued/running attempt may finish; pause followed by resume
   retains generation, position and sequence.
 - `seek`: require position, advance generation, begin a segment there, preserve
@@ -97,7 +97,8 @@ explicit `incomplete_tail`. Other reasons include lifecycle commands,
 `process_restart`, source/preparation errors and `preparation_interrupted`.
 
 A preparing candidate older than 90 seconds is fenced and its session pauses when
-a worker reconciles it; inference has the existing lease/heartbeat and request
+a worker reconciles it, including while already paused. Resume can then continue
+the same timeline without the abandoned candidate; inference has the existing lease/heartbeat and request
 timeout. This is a recovery fence, not a forced decoder cancellation. One unusually
 slow current decode can delay clip work; input size/frame/window bounds limit
 storage/concurrency, not a hard decode deadline. The single worker cannot reconcile

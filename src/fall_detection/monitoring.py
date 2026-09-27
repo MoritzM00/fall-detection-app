@@ -292,6 +292,8 @@ class Monitoring:
                     raise ValueError("Stopped sessions require restart")
                 values["state"] = "running"
             elif action in {"pause", "stop"}:
+                if action == "pause" and row["state"] == "stopped":
+                    raise ValueError("Stopped sessions require restart")
                 values["state"] = "paused" if action == "pause" else "stopped"
             elif action == "restart":
                 values["state"] = "running"
@@ -372,6 +374,22 @@ class Monitoring:
         """Admit only completed playback intervals, coalescing backlog into explicit coverage."""
         with self.repository._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            # Recovery must also sweep paused sessions before any later resume.
+            abandoned = connection.execute(
+                "SELECT id,session_id,created_at FROM monitoring_windows WHERE state='preparing'"
+            ).fetchall()
+            for candidate in abandoned:
+                if (
+                    self.repository._clock() - datetime.fromisoformat(candidate["created_at"])
+                ).total_seconds() > 90:
+                    connection.execute(
+                        "UPDATE monitoring_windows SET state='failed',reason='preparation_interrupted' WHERE id=?",
+                        (candidate["id"],),
+                    )
+                    connection.execute(
+                        "UPDATE monitoring_sessions SET state=CASE WHEN state='running' THEN 'paused' ELSE state END,recovery_reason='preparation_interrupted' WHERE id=?",
+                        (candidate["session_id"],),
+                    )
             queued = connection.execute("""SELECT w.*,s.position,s.expiration FROM monitoring_windows w
                 JOIN monitoring_sessions s ON s.id=w.session_id JOIN jobs j ON j.id=w.job_id
                 WHERE j.state='queued'""").fetchall()
@@ -411,17 +429,6 @@ class Monitoring:
                 (row["id"],),
             ).fetchone()
             if pending is not None and pending["state"] == "preparing":
-                if (
-                    self.repository._clock() - datetime.fromisoformat(pending["created_at"])
-                ).total_seconds() > 90:
-                    connection.execute(
-                        "UPDATE monitoring_windows SET state='failed',reason='preparation_interrupted' WHERE id=?",
-                        (pending["id"],),
-                    )
-                    connection.execute(
-                        "UPDATE monitoring_sessions SET state='paused',recovery_reason='preparation_interrupted' WHERE id=?",
-                        (row["id"],),
-                    )
                 connection.commit()
                 return
             if pending is not None and (
@@ -541,8 +548,8 @@ class Monitoring:
         except (ValueError, OSError, av.error.FFmpegError) as exc:
             with self.repository._connect() as connection:
                 connection.execute(
-                    "UPDATE monitoring_sessions SET state='paused',recovery_reason=? WHERE id=?",
-                    (str(exc), row["id"]),
+                    "UPDATE monitoring_sessions SET state='paused',recovery_reason=? WHERE id=? AND state='running' AND generation=? AND segment_id=?",
+                    (str(exc), row["id"], row["generation"], row["segment_id"]),
                 )
 
     def prepare_next(self, settings) -> bool:

@@ -270,3 +270,65 @@ def test_newest_sequence_remains_latest_after_out_of_order_completion(replay):
         claim_token="old",
     )
     assert replay[2].get(replay[3]["id"])["latest_job_id"] == new.id
+
+
+def test_pause_cannot_reopen_stopped_session(replay):
+    command(replay, "stop")
+    with pytest.raises(ValueError, match="restart"):
+        command(replay, "pause")
+    assert replay[2].get(replay[3]["id"])["state"] == "stopped"
+
+
+def test_paused_abandoned_preparation_recovers_before_resume(replay):
+    command(replay, "start", 1)
+    replay[2].tick()
+    with replay[1]._connect() as connection:
+        connection.execute("UPDATE monitoring_windows SET state='preparing'")
+    command(replay, "pause")
+    replay[-1][0] += timedelta(seconds=91)
+    replay[2].tick()
+    assert history(replay)[0]["reason"] == "preparation_interrupted"
+    assert history(replay)[0]["state"] == "failed"
+    assert command(replay, "resume")["generation"] == 0
+    command(replay, "position", 2)
+    assert replay[2].prepare_next(replay[0])
+    assert any(row["job_id"] for row in history(replay))
+
+
+def test_invalid_monitoring_input_precedes_serving_discovery(replay, monkeypatch):
+    def unavailable(self):
+        raise AssertionError("invalid requests must not contact serving")
+
+    monkeypatch.setattr(worker.InferenceClient, "discover_mock_identity", unavailable)
+    with TestClient(create_app(replay[0], replay[1])) as client:
+        payload = replay[4].model_dump(mode="json")
+        assert (
+            client.post("/monitoring-sessions", json={**payload, "video_id": "missing"}).status_code
+            == 404
+        )
+        assert (
+            client.post("/monitoring-sessions", json={**payload, "duration_seconds": 7}).status_code
+            == 422
+        )
+        assert (
+            client.post(
+                "/monitoring-sessions", json={**payload, "model": "unadvertised"}
+            ).status_code
+            == 422
+        )
+        url = "/monitoring-sessions/" + replay[3]["id"] + "/commands"
+        assert client.post(url, json={"action": "configure"}).status_code == 409
+        assert (
+            client.post(
+                url,
+                json={"action": "configure", "configuration": {**payload, "video_id": "missing"}},
+            ).status_code
+            == 409
+        )
+        assert (
+            client.post(
+                "/monitoring-sessions/missing/commands",
+                json={"action": "configure", "configuration": payload},
+            ).status_code
+            == 404
+        )

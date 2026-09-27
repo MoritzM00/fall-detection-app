@@ -355,6 +355,16 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
     def create_monitoring_session(request: SessionCreate) -> dict:
         """Persist replay policy without decoding in the API request."""
         try:
+            video = repository.get_video(request.video_id)
+            if video is None:
+                raise KeyError(request.video_id)
+            if (
+                video.duration_seconds is not None
+                and request.duration_seconds > video.duration_seconds
+            ):
+                raise ValueError("Playback bound exceeds known source duration")
+            if video.source == "synthetic" and settings.backend_kind != "mock":
+                raise ValueError("Synthetic replay requires mock serving")
             config = monitoring_configuration(request)
             with storage_lock(settings.data_dir, exclusive=False):
                 return Monitoring(repository).create(request, config)
@@ -404,6 +414,12 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
         import sqlite3
 
         try:
+            session = Monitoring(repository).get(session_id)
+            if request.action == "configure":
+                if request.configuration is None:
+                    raise ValueError("Configure requires a configuration")
+                if request.configuration.video_id != session["video_id"]:
+                    raise ValueError("Configuration cannot change the source")
             config = (
                 monitoring_configuration(request.configuration)
                 if request.action == "configure" and request.configuration
