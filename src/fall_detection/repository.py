@@ -155,7 +155,10 @@ class Repository:
                 updated_at = ? WHERE state = 'running' AND claim_token IS NULL""",
                 (self._timestamp(),),
             )
-            connection.execute("PRAGMA user_version = 2")
+            from fall_detection.monitoring import migrate
+
+            migrate(connection)
+            connection.execute("PRAGMA user_version = 3")
             if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
                 raise RuntimeError("Migration would violate foreign keys")
             connection.commit()
@@ -369,7 +372,9 @@ class Repository:
             connection.execute("BEGIN IMMEDIATE")
             self._recover_expired_locked(connection)
             row = connection.execute(
-                "SELECT id FROM jobs WHERE state = 'queued' ORDER BY created_at LIMIT 1"
+                """SELECT id FROM jobs WHERE state = 'queued' ORDER BY
+                CASE WHEN id IN (SELECT job_id FROM monitoring_windows) THEN 1 ELSE 0 END,
+                created_at, rowid LIMIT 1"""
             ).fetchone()
             if row is None:
                 connection.commit()
@@ -487,6 +492,12 @@ class Repository:
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             self._recover_expired_locked(connection)
+            if connection.execute(
+                "SELECT 1 FROM monitoring_windows WHERE job_id=?", (job_id,)
+            ).fetchone():
+                raise ValueError(
+                    "Monitoring coverage is immutable; restart or seek to schedule a new generation"
+                )
             changed = connection.execute(
                 """UPDATE jobs SET state = 'queued', error = NULL, updated_at = ?
                 WHERE id = ? AND state = 'failed'""",

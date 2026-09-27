@@ -86,6 +86,19 @@ def _collect_candidates(
     jobs = connection.execute("SELECT video_id, prepared_input_id FROM jobs").fetchall()
     protected_videos = {row["video_id"] for row in jobs}
     protected_bundles = {row["prepared_input_id"] for row in jobs if row["prepared_input_id"]}
+    if connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE name='monitoring_sessions'"
+    ).fetchone():
+        protected_videos.update(
+            row["video_id"]
+            for row in connection.execute("SELECT video_id FROM monitoring_sessions")
+        )
+        protected_bundles.update(
+            row["prepared_input_id"]
+            for row in connection.execute(
+                "SELECT prepared_input_id FROM monitoring_windows WHERE prepared_input_id IS NOT NULL"
+            )
+        )
     videos_by_key: dict[str, list[sqlite3.Row]] = {}
     for row in connection.execute("SELECT id, source, storage_key, created_at FROM videos"):
         if row["storage_key"]:

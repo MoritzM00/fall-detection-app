@@ -16,6 +16,7 @@ import apps.worker.main as worker
 from fall_detection.config import Settings
 from fall_detection.inference import InferenceResponse
 from fall_detection.models import PreparationRequest
+from fall_detection.pipeline import PipelineResult
 from fall_detection.preparation import (
     _selected_frames,
     load_rgb_frames,
@@ -371,3 +372,105 @@ def test_duration_fit_prepares_manifest_with_playback_times(prepared_video):
     assert prepared.frames[-1].requested_seconds == 1.2
     assert prepared.frames[-1].actual_seconds == 1.1
     assert prepared.preprocessing_version == "pyav-pillow-online-jpeg-v4"
+
+
+def test_causal_preparation_does_not_select_future_nearest_pts(prepared_video):
+    data_dir, _, video, request, _ = prepared_video
+    # 0.08 is closer to the future 0.1 frame than the available 0.0 frame.
+    request = request.model_copy(update={"frame_count": 2, "fps": 12.5})
+    nearest = prepare_video(video, request, data_dir)
+    causal = prepare_video(video, request, data_dir, causal=True)
+    assert nearest.frames[-1].actual_seconds == 0.1
+    assert causal.frames[-1].actual_seconds == 0
+    assert causal.id != nearest.id
+    assert all(frame.actual_seconds <= causal.end_seconds for frame in causal.frames)
+
+
+def test_real_replay_worker_uses_prepared_timestamps_and_verifies_duration(
+    prepared_video, monkeypatch
+):
+    from fall_detection.monitoring import Monitoring, SessionCommand, SessionCreate
+
+    data_dir, repository, video, _, _ = prepared_video
+    settings = replace(
+        Settings.from_env(), data_dir=data_dir, database_path=data_dir / "app.sqlite3"
+    )
+    monitor = Monitoring(repository)
+    request = SessionCreate(
+        video_id=video.id,
+        duration_seconds=100,
+        frame_count=2,
+        fps=12.5,
+        size=224,
+        stride_seconds=0.08,
+    )
+    config = monitor.configuration(request, "model", "mock", "sample-v1")
+    session = monitor.create(request, config)
+    monitor.command(session["id"], SessionCommand(action="start", position_seconds=0.08))
+    monitor.tick()
+    assert monitor.history(session["id"]) == []  # Source metadata has not been verified.
+    sent = {}
+
+    def run(**kwargs):
+        sent.update(kwargs)
+        return PipelineResult("fall", "fall", kwargs["sampled_timestamps"], 1, 2)
+
+    monkeypatch.setattr(worker, "run_pipeline", run)
+    monkeypatch.setattr(worker.InferenceClient, "discover_mock_identity", lambda self: "sample-v1")
+    assert worker.process_next_job(settings, repository)
+    current = monitor.get(session["id"])
+    assert current["duration"] == pytest.approx(1.2)
+    assert current["duration_verified"] == 1
+    job = repository.get_job(current["latest_job_id"])
+    assert job.prediction.sampled_timestamps == [0, 0]
+    assert sent["sampled_timestamps"] == [0, 0]
+    assert job.configuration.preprocessing.version.endswith("-causal")
+    assert job.configuration.preprocessing.bundle_sha256
+
+
+def test_source_verification_rechecks_seek_during_metadata_read(prepared_video, monkeypatch):
+    import av
+
+    from fall_detection.monitoring import Monitoring, SessionCommand, SessionCreate
+
+    data_dir, repository, video, _, _ = prepared_video
+    settings = replace(Settings.from_env(), data_dir=data_dir)
+    monitor = Monitoring(repository)
+    request = SessionCreate(video_id=video.id, duration_seconds=100, frame_count=2)
+    session = monitor.create(request, monitor.configuration(request, "model", "mock", "sample-v1"))
+    monitor.command(session["id"], SessionCommand(action="start"))
+    original_open = av.open
+
+    def open_after_seek(*args, **kwargs):
+        monitor.command(session["id"], SessionCommand(action="seek", position_seconds=10))
+        return original_open(*args, **kwargs)
+
+    monkeypatch.setattr(av, "open", open_after_seek)
+    monitor.verify_source(settings)
+    current = monitor.get(session["id"])
+    assert current["state"] == "paused"
+    assert "source duration" in current["recovery_reason"]
+    assert current["generation"] == 1
+    assert current["duration"] == pytest.approx(1.2)
+    assert current["position"] <= current["duration"]
+    assert monitor.history(session["id"]) == []
+
+
+@pytest.mark.parametrize("action", ["stop", "restart", "pause"])
+def test_source_verification_error_preserves_newer_command(prepared_video, monkeypatch, action):
+    from fall_detection.monitoring import Monitoring, SessionCommand, SessionCreate
+
+    data_dir, repository, video, _, _ = prepared_video
+    monitor = Monitoring(repository)
+    request = SessionCreate(video_id=video.id, duration_seconds=100)
+    session = monitor.create(request, monitor.configuration(request, "model", "mock", "sample-v1"))
+    monitor.command(session["id"], SessionCommand(action="start"))
+    expected = {}
+
+    def open_after_command(*args, **kwargs):
+        expected.update(monitor.command(session["id"], SessionCommand(action=action)))
+        raise OSError("old read failed")
+
+    monkeypatch.setattr(av, "open", open_after_command)
+    monitor.verify_source(replace(Settings.from_env(), data_dir=data_dir))
+    assert monitor.get(session["id"]) == expected

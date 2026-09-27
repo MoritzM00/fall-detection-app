@@ -24,7 +24,9 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _selected_frames(path: Path, timestamps: list[float]) -> list[tuple[av.VideoFrame, float, int]]:
+def _selected_frames(
+    path: Path, timestamps: list[float], max_actual_seconds: float | None = None
+) -> list[tuple[av.VideoFrame, float, int]]:
     """Select nearest frames on the playback timeline, retaining original PTS."""
     if not timestamps or timestamps[0] < 0:
         raise ValueError("Selected window must contain nonnegative timestamps")
@@ -54,7 +56,11 @@ def _selected_frames(path: Path, timestamps: list[float]) -> list[tuple[av.Video
                 last_interval = seconds - previous[1]
             current = (frame, seconds, frame.pts)
             while index < len(timestamps) and timestamps[index] <= seconds:
-                if previous is None or abs(seconds - timestamps[index]) < abs(
+                if max_actual_seconds is not None and seconds > max_actual_seconds + 1e-6:
+                    if previous is None:
+                        raise ValueError("No available frame at the playback watermark")
+                    selected.append(previous)
+                elif previous is None or abs(seconds - timestamps[index]) < abs(
                     previous[1] - timestamps[index]
                 ):
                     selected.append(current)
@@ -124,10 +130,12 @@ def prepare_video(
     request: PreparationRequest,
     data_dir: Path,
     inspection_pngs: bool = True,
+    *,
+    causal: bool = False,
 ) -> PreparedInput:
     """Prepare a bundle while maintenance cannot remove its source or output."""
     with storage_lock(data_dir, exclusive=False):
-        return _prepare_video_unlocked(video, request, data_dir, inspection_pngs)
+        return _prepare_video_unlocked(video, request, data_dir, inspection_pngs, causal)
 
 
 def _prepare_video_unlocked(
@@ -135,6 +143,7 @@ def _prepare_video_unlocked(
     request: PreparationRequest,
     data_dir: Path,
     inspection_pngs: bool,
+    causal: bool,
 ) -> PreparedInput:
     """Store verified RGB arrays and JPEG transport frames; PNGs are optional."""
     if video.id != request.video_id or video.storage_key is None:
@@ -145,6 +154,7 @@ def _prepare_video_unlocked(
     end_seconds = request.start_seconds + (request.frame_count - 1) / request.fps
     if end_seconds - request.start_seconds > 30:
         raise ValueError("Prepared windows are limited to 30 seconds")
+    version = PREPROCESSING_VERSION + ("-causal" if causal else "")
     source_sha256 = _sha256_file(media_path)
     identity = json.dumps(
         [
@@ -154,7 +164,7 @@ def _prepare_video_unlocked(
             request.frame_count,
             request.fps,
             request.size,
-            PREPROCESSING_VERSION,
+            version,
         ],
         separators=(",", ":"),
     )
@@ -166,7 +176,7 @@ def _prepare_video_unlocked(
     timestamps = [
         request.start_seconds + index / request.fps for index in range(request.frame_count)
     ]
-    selected = _selected_frames(media_path, timestamps)
+    selected = _selected_frames(media_path, timestamps, end_seconds if causal else None)
     if _sha256_file(media_path) != source_sha256:
         raise ValueError("Video changed during preparation")
     parent = target.parent
@@ -207,7 +217,7 @@ def _prepare_video_unlocked(
             frame_count=request.frame_count,
             fps=request.fps,
             size=request.size,
-            preprocessing_version=PREPROCESSING_VERSION,
+            preprocessing_version=version,
             bundle_sha256=bundle_sha256,
             frames=frames,
         )
