@@ -200,3 +200,23 @@ def test_cleanup_waits_for_writer_and_rechecks_age(tmp_path: Path) -> None:
     assert not cleanup_thread.is_alive()
     assert not result[0].candidates
     assert media.exists()
+
+
+def test_session_source_protected_before_any_job_and_after_stop(tmp_path):
+    from fall_detection.monitoring import Monitoring, SessionCommand, SessionCreate
+
+    root, repository = setup_storage(tmp_path)
+    video, media = upload(root, repository)
+    monitor = Monitoring(repository)
+    request = SessionCreate(video_id=video.id, duration_seconds=10)
+    session = monitor.create(request, monitor.configuration(request, "model", "mock", "sample-v1"))
+    assert not repository.list_jobs()
+    assert media not in {
+        candidate.path for candidate in prune_media(root, root / "app.sqlite3", now=NOW).candidates
+    }
+    monitor.command(session["id"], SessionCommand(action="stop"))
+    assert media not in {
+        candidate.path
+        for candidate in prune_media(root, root / "app.sqlite3", now=NOW, apply=True).candidates
+    }
+    assert media.exists()
