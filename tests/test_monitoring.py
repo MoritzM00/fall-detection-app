@@ -334,21 +334,18 @@ def test_invalid_monitoring_input_precedes_serving_discovery(replay, monkeypatch
         )
 
 
-def test_end_of_playback_admits_final_window_before_pausing(replay):
+def test_end_of_playback_admits_final_window_before_pausing(replay, monkeypatch):
+    monkeypatch.setattr(worker.InferenceClient, "discover_mock_identity", lambda self: "sample-v1")
+    monkeypatch.setattr(
+        worker,
+        "run_pipeline",
+        lambda **kw: PipelineResult("lying", "lying", [kw["start_seconds"]], 1, 2),
+    )
     request = replay[4].model_copy(update={"fps": 1, "stride_seconds": 1.5})
-    session = replay[2].create(request, replay[2].configuration(request, "model", "mock", "v1"))
-
-    def submit_pending():
-        with replay[1]._connect() as connection:
-            connection.execute(
-                "UPDATE monitoring_windows SET state='submitted' WHERE session_id=? AND state='pending'",
-                (session["id"],),
-            )
-
+    session = replay[2].create(
+        request, replay[2].configuration(request, "model", "mock", "sample-v1")
+    )
     replay[2].command(session["id"], SessionCommand(action="start"))
-    replay[2].command(session["id"], SessionCommand(action="position", position_seconds=4.9))
-    replay[2].tick()
-    submit_pending()
     replay[2].command(session["id"], SessionCommand(action="position", position_seconds=6))
     replay[2].tick()
     rows = {row["sequence"]: row for row in replay[2].history(session["id"])}
@@ -360,8 +357,15 @@ def test_end_of_playback_admits_final_window_before_pausing(replay):
     )
     # The final complete window is still owed a prediction, so playback end must not drop it.
     assert replay[2].get(session["id"])["state"] == "running"
-    submit_pending()
+    assert replay[2].prepare_next(replay[0])
+    final_job = next(r for r in replay[2].history(session["id"]) if r["sequence"] == 2)["job_id"]
+    assert replay[1].get_job(final_job).state == "queued"
     replay[2].tick()
     ended = replay[2].get(session["id"])
     assert ended["state"] == "paused" and ended["recovery_reason"] is None
-    assert replay[2].history(session["id"])[0]["sequence"] == 3
+    # Auto-pause at EOF leaves the already queued final job to complete normally.
+    assert worker.process_next_job(replay[0], replay[1])
+    assert replay[1].get_job(final_job).state == "succeeded"
+    assert replay[1].get_job(final_job).prediction.label == "lying"
+    assert replay[2].get(session["id"])["latest_job_id"] == final_job
+    assert not worker.process_next_job(replay[0], replay[1])
