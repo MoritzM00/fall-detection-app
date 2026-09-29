@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Develop clip analysis, configuration editing, result comparison, monitoring, queue behavior, and error handling entirely locally. A separate mock HTTP process substitutes for vLLM. Clip analysis exercises real frame decoding, selected-window preprocessing, persistence, media transport, prompt/generation editing, output parsing, and saved-run comparison. Monitoring remains planned.
+Develop clip analysis, configuration editing, result comparison, monitoring, queue behavior, and error handling entirely locally. A separate mock HTTP process substitutes for vLLM. Clip analysis exercises real frame decoding, selected-window preprocessing, persistence, media transport, prompt/generation editing, output parsing, and saved-run comparison. Persisted recorded monitoring is implemented with bounded replay scheduling and explicit coverage.
 
 No model inference occurs. Mock labels and timings are simulated and cannot establish accuracy, GPU capacity, prompt quality, or video-processing parity.
 

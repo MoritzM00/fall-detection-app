@@ -2,8 +2,11 @@
 
 import os
 import shutil
+import signal
+import socket
 import subprocess
 import sys
+from contextlib import suppress
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -74,19 +77,56 @@ def main() -> int:
         )
         dataset_clip.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(clip, dataset_clip)
-        environment = os.environ.copy()
+        environment = {
+            key: value
+            for key, value in os.environ.items()
+            if not key.startswith(("FALL_DETECTION_", "MOCK_INFERENCE_"))
+        }
+        # Distinct ephemeral selections; strictPort/uvicorn reject any bind race.
+        listeners = [socket.socket() for _ in range(3)]
+        try:
+            for listener in listeners:
+                listener.bind(("127.0.0.1", 0))
+            for name, listener in zip(("API", "MOCK", "WEB"), listeners, strict=True):
+                environment[f"FALL_DETECTION_{name}_PORT"] = str(listener.getsockname()[1])
+        finally:
+            for listener in listeners:
+                listener.close()
         environment.update(
             FALL_DETECTION_E2E_DATA_DIR=str(temporary_path / "data"),
             FALL_DETECTION_E2E_CLIP=str(clip),
             FALL_DETECTION_E2E_SHORT_CLIP=str(short_clip),
             FALL_DETECTION_E2E_OFFSET_CLIP=str(offset_clip),
         )
-        return subprocess.run(
-            ["pnpm", "--dir", "apps/web", "test:e2e", *sys.argv[1:]],
-            cwd=root,
+        # Invoke Playwright directly: pnpm scripts create a separate process group
+        # that would escape ownership when this runner receives a signal.
+        process = subprocess.Popen(
+            [str(root / "apps/web/node_modules/.bin/playwright"), "test", *sys.argv[1:]],
+            cwd=root / "apps/web",
             env=environment,
-            check=False,
-        ).returncode
+            start_new_session=True,
+        )
+
+        def interrupted(_number: int, _frame: object) -> None:
+            raise KeyboardInterrupt
+
+        previous = signal.signal(signal.SIGTERM, interrupted)
+        try:
+            return process.wait()
+        finally:
+            try:
+                with suppress(ProcessLookupError):
+                    os.killpg(process.pid, signal.SIGTERM)
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    with suppress(ProcessLookupError):
+                        os.killpg(process.pid, signal.SIGKILL)
+                    process.wait(timeout=5)
+            finally:
+                with suppress(ProcessLookupError):
+                    os.killpg(process.pid, signal.SIGKILL)
+                signal.signal(signal.SIGTERM, previous)
 
 
 if __name__ == "__main__":

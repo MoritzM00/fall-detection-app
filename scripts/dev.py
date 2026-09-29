@@ -1,3 +1,4 @@
+import os
 import signal
 import subprocess
 import sys
@@ -54,19 +55,30 @@ def stop_processes(processes: Sequence[ChildProcess], timeout_seconds: float = 5
 def main() -> None:
     """Run the API, worker, mock inference, and Vite frontend together."""
     root = Path(__file__).resolve().parents[1]
+    api_port = os.getenv("FALL_DETECTION_API_PORT", "8000")
+    mock_port = os.getenv("FALL_DETECTION_MOCK_PORT", "8001")
+    web_port = os.getenv("FALL_DETECTION_WEB_PORT", "5173")
+    environment = os.environ.copy()
+    if environment.get("FALL_DETECTION_BACKEND_KIND", "mock") == "mock":
+        environment.setdefault(
+            "FALL_DETECTION_INFERENCE_BASE_URL", f"http://127.0.0.1:{mock_port}/v1"
+        )
     services = [
         (
             "mock inference",
-            [sys.executable, "-m", "uvicorn", "apps.mock_inference.main:app", "--port", "8001"],
+            [sys.executable, "-m", "uvicorn", "apps.mock_inference.main:app", "--port", mock_port],
         ),
         (
             "API",
-            [sys.executable, "-m", "uvicorn", "apps.api.main:app", "--port", "8000", "--reload"],
+            [sys.executable, "-m", "uvicorn", "apps.api.main:app", "--port", api_port],
         ),
         ("worker", [sys.executable, "-m", "apps.worker.main"]),
         # Start Vite directly: pnpm runs scripts in a separate process group, which
         # survives the group kill Playwright uses to stop its web server.
-        ("web", ["apps/web/node_modules/.bin/vite", "apps/web"]),
+        (
+            "web",
+            ["apps/web/node_modules/.bin/vite", "apps/web", "--port", web_port, "--strictPort"],
+        ),
     ]
     processes: list[tuple[str, subprocess.Popen[bytes]]] = []
     previous_handlers: dict[
@@ -85,7 +97,7 @@ def main() -> None:
         for name, command in services:
             if stop_requested:
                 break
-            process = subprocess.Popen(command, cwd=root)
+            process = subprocess.Popen(command, cwd=root, env=environment)
             processes.append((name, process))
         while not stop_requested:
             for name, process in processes:
