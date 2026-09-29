@@ -28,13 +28,13 @@ The UI exposes the exact prompt, its baseline/reset option, supported model, tem
 
 Done when configuration changes are visible and previous results remain reproducible and unchanged. These application properties are tested locally; model quality and parity with research inference remain unverified.
 
-## 4. Add monitoring replay
+## 4. Add monitoring replay — local implementation delivered
 
 Create session scheduling, overlapping windows, playback alignment, bounded pending work, generation tracking, latest-result selection, and skipped-coverage reporting.
 
 Done when sustained replay has measured processing lag and handles seek, stop/restart, slow inference, and out-of-order completion correctly.
 
-Milestones 2–3 are implemented and tested against mock serving; milestone 4 remains planned and can also run entirely against mock serving. Their timings are simulated, not hardware performance measurements.
+Milestones 2–4 are implemented and tested against mock serving. Issues #35–#39 delivered deterministic serving fixtures, persisted replay, UI controls, exports and synthetic evaluation tooling. Issue #40 adds the disposable CPU scenario command and [runbook](runbook.md). Tracker #43 retains the separate real-model gates. Local timings are simulated, not hardware performance measurements.
 
 ## 4a. Validate real GPU integration
 

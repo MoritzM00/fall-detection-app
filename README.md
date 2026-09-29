@@ -2,7 +2,7 @@
 
 Local MVP for a video activity-recognition application built on the master's thesis work in `fall-detection-mllm`.
 
-**Status:** clip analysis runs end to end against the default simulated inference backend. Uploaded and dataset videos are decoded into immutable frame bundles before analysis. The online vLLM path is implemented but has not been tested against the GPU server yet.
+**Status:** clip analysis and persisted recorded monitoring run end to end against simulated HTTP serving. Deterministic faults, reproducible exports and synthetic offline evaluation are implemented. Uploaded and dataset videos are decoded into immutable frame bundles before analysis. The online vLLM path is implemented but has not been tested against the GPU server yet.
 
 ## Product modes
 
@@ -58,8 +58,10 @@ The mock returns `fall` after a short delay. Override its deterministic behavior
 - Both mock and real vLLM backends use the online chat-completions `video_url` frame-sequence format. Real inference requires a configured vLLM server with a version that supports request-level video `media_io_kwargs`; it is not GPU-tested here.
 - Submitted runs survive reloads and selection changes. Worker leases and explicit retries preserve input and configuration identity.
 - Run comparison shows saved settings, responses, timestamps, and timings for the same source/window; differing or unknown frame identities are identified explicitly.
-- Monitoring, server-sent events, and PostgreSQL migration remain planned.
+- Recorded monitoring includes replay controls, timestamped history, bounded scheduling and explicit recovery. Server-sent events and PostgreSQL migration remain planned.
 
 See [prepared video input](docs/prepared-video.md) for the frame and vLLM payload contracts.
+
+CPU-only disposable acceptance: `uv run python -m scripts.demo` (or `make demo`). See the [operational runbook and GPU handoff](docs/runbook.md).
 
 Complete run/session JSON and CSV downloads: [export contract](docs/exports.md).
