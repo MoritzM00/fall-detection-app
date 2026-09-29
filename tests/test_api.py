@@ -299,3 +299,27 @@ def test_interrupted_upload_leaves_no_persistent_media(make_api):
     assert messages[0]["status"] == 400
     assert received == 1
     assert not (data_dir / "media").exists()
+
+
+def test_dataset_video_registration_rejects_media_outside_data_dir(make_api, tmp_path):
+    app, _, data_dir = make_api()
+    relative = "GMDCSA24/video/Subject_1/Fall/01.mp4"
+    inside = data_dir / "omnifall" / "videos" / relative
+    inside.parent.mkdir(parents=True)
+    inside.write_bytes(b"not decoded during registration")
+    with TestClient(app) as test_client:
+        created = test_client.post("/videos/dataset", json={"path": relative})
+        assert created.status_code == 200
+        assert created.json()["storage_key"] == f"omnifall/videos/{relative}"
+
+    external = tmp_path / "external-videos"
+    (external / relative).parent.mkdir(parents=True)
+    (external / relative).write_bytes(b"outside")
+    app, _, data_dir = make_api("linked")
+    (data_dir / "omnifall").mkdir(parents=True)
+    (data_dir / "omnifall" / "videos").symlink_to(external)
+    with TestClient(app) as test_client:
+        assert [item["path"] for item in test_client.get("/dataset-videos").json()] == [relative]
+        rejected = test_client.post("/videos/dataset", json={"path": relative})
+        assert rejected.status_code == 400
+        assert "inside the data directory" in rejected.json()["detail"]
