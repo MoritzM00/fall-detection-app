@@ -241,3 +241,17 @@ footer { padding: 20px 0 32px; display: flex; justify-content: space-between; ga
   .figure, .spinner { animation: none; }
   .button, .analyze-button { transition: none; }
 }
+
+.monitoring label { display: block; margin: 12px 0; }
+.monitoring select, .monitoring input { max-width: 100%; }
+.monitoring video { width: 100%; max-height: 480px; background: #111; }
+.monitoring input[type="range"] { width: 100%; }
+.monitoring .source-actions { flex-wrap: wrap; }
+.monitoring .preview-note, .monitoring .result-card p, .monitoring summary { overflow-wrap: anywhere; }
+.monitoring .result-card { margin: 12px 0; }
+.monitoring .recent-runs details { padding: 12px; border-bottom: 1px solid #ddd; }
+[hidden] { display: none !important; }
+@media (max-width: 880px) {
+  .topbar { height: auto; min-height: 96px; row-gap: 10px; padding: 12px 0; }
+  .mode-tabs { display: flex; grid-column: 1 / -1; grid-row: 2; justify-self: center; }
+}

@@ -139,3 +139,22 @@ export function retryJob(jobId: string): Promise<AnalysisJob> {
 export function getVideo(videoId: string): Promise<VideoAsset> {
   return request(`/videos/${videoId}`);
 }
+
+export type MonitoringSession = {
+  id: string; video_id: string; state: "paused" | "running" | "stopped";
+  generation: number; segment_id: string; position: number; duration: number;
+  stride: number; expiration: number; recovery_reason: string | null;
+  latest_job_id: string | null; configuration: NonNullable<AnalysisJob["configuration"]>;
+};
+export type MonitoringWindow = {
+  id: string; cursor: number; generation: number; segment_id: string;
+  sequence: number; sequence_end: number; start_seconds: number; end_seconds: number;
+  state: string; reason: string | null; job_id: string | null;
+};
+export type MonitoringSettings = ExperimentSettings & { video_id: string; frame_count: number; fps: number; size: number };
+export type MonitoringCommand = { action: "start" | "pause" | "resume" | "stop" | "seek" | "restart" | "position" | "configure"; position_seconds?: number; configuration?: MonitoringSettings; command_id?: string };
+export const listSessions = () => request<MonitoringSession[]>("/monitoring-sessions");
+export const getSession = (id: string) => request<MonitoringSession>(`/monitoring-sessions/${id}`);
+export const getWindows = (id: string, before?: number) => request<MonitoringWindow[]>(`/monitoring-sessions/${id}/windows${before === undefined ? "" : `?before=${before}`}`);
+export const createSession = (settings: MonitoringSettings, duration: number) => request<MonitoringSession>("/monitoring-sessions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...settings, duration_seconds: duration }) });
+export const commandSession = (id: string, command: MonitoringCommand) => request<MonitoringSession>(`/monitoring-sessions/${id}/commands`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(command) });

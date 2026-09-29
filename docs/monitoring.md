@@ -1,7 +1,7 @@
 # Recorded monitoring sessions
 
-This is proposed application behavior, not verified research behavior. No UI is
-added here; issue #37 consumes these polling APIs. SQLite schema version 3 adds
+This is proposed application behavior, not verified research behavior. The
+recorded-monitoring UI consumes these polling APIs. SQLite schema version 3 adds
 version 1 session/window records without rewriting clip jobs/configurations.
 Model responses retain all 16 labels; failed/skipped coverage has no prediction.
 
@@ -118,3 +118,45 @@ and durable job references share the storage lock. No session deletion API is
 provided in this issue; retaining history conservatively retains its inputs. Disk
 history follows existing manual retention practices; admission bounds are not a
 quota on total historical bundles.
+
+## Recorded monitoring UI
+
+Choose **Monitoring**, select/upload a recording or the synthetic sample, and
+create a paused session. Start/Resume uses browser playback; only the media
+player's current time advances real-media availability. Synthetic playback has an
+explicitly labeled simulated clock. Seeking fences prior generations; Restart /
+retry inference begins a new generation rather than retrying an old monitoring
+job. Applying settings creates a new immutable configuration segment. Replay
+stride and expiration stay fixed for the session.
+
+Session selection survives reload. Reload pauses a restored running session, since
+browser playback cannot be recovered automatically. Switching modes or sessions
+also requests pause for the session being left. One browser controller per session
+is supported: tabs share server state, so opening/reloading the same session in
+another tab can pause it. During an outage playback pauses and availability stops;
+the next successful poll reconciles the persisted session to paused and resume is
+explicit. Terminal job results are cached; queued/running jobs continue polling.
+A service restart's persisted recovery reason remains visible.
+Failed lifecycle commands can be explicitly retried with their original command
+identity. Polling never promotes a historical result into the current generation
+or segment.
+
+Latest activity shows the input interval, actual frame timestamps, immutable
+configuration and prepared-input identities. The baseline describes the first
+part of the interval; completion time is labeled processing metadata. Coverage
+history distinguishes skipped/expired/superseded intervals and processing failures
+from all 16 activity classes. Fall/fallen receive visual emphasis. Mock provenance
+remains visible. Local request/pipeline timings include any server-injected delay;
+that configured delay is not separately measured or presented as GPU throughput.
+
+Browser verification uses disposable inputs. The real local mock-backed flow
+exercises lifecycle, seek during inference, reload and mobile layout; controlled
+API fixtures exercise scripted activity transitions, overload coverage, timeout,
+explicit generation retry, disconnection and process-restart recovery. These
+fixtures verify UI contracts, not real model behavior or GPU readiness.
+
+Issue #37 verification: 261 backend tests, 13 frontend unit tests, frontend build
+and browser TypeScript checks pass. The disposable browser suite has 12 passing
+flows (9 existing clip/comparison and 3 monitoring). Browser failure/restart
+scenarios use controlled API responses; they do not terminate production services.
+Real GPU/model checks remain unperformed because GPU access is unavailable.
