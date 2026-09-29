@@ -262,6 +262,19 @@ def csv_export(snapshot: dict) -> str:
     """Emit separate coverage and run rows; blank labels never mean other."""
     output = io.StringIO(newline="")
     writer = csv.DictWriter(output, fieldnames=CSV_FIELDS, lineterminator="\n")
+
+    def write_row(row: dict) -> None:
+        for name, value in row.items():
+            if isinstance(value, (dict, list)):
+                row[name] = json.dumps(
+                    value, sort_keys=True, ensure_ascii=False, separators=(",", ":")
+                )
+            elif isinstance(value, str) and value.startswith(
+                ("=", "+", "-", "@", "\t", "\r", "\n", "'")
+            ):
+                row[name] = "'" + value
+        writer.writerow(row)
+
     writer.writeheader()
     session_id = snapshot.get("session", {}).get("id", "")
     for window in snapshot["coverage"]:
@@ -281,7 +294,7 @@ def csv_export(snapshot: dict) -> str:
                 segment["configuration"], sort_keys=True, ensure_ascii=False, separators=(",", ":")
             )
             row["provenance"] = segment["provenance"]
-        writer.writerow(row)
+        write_row(row)
     for run in snapshot["runs"]:
         row = {name: run[name] for name in CSV_FIELDS if name in run}
         row.update(
@@ -303,13 +316,5 @@ def csv_export(snapshot: dict) -> str:
                     for name in ("source_sha256", "bundle_sha256", "frames")
                 }
             )
-        for name, value in row.items():
-            if isinstance(value, (dict, list)):
-                row[name] = json.dumps(
-                    value, sort_keys=True, ensure_ascii=False, separators=(",", ":")
-                )
-            # Spreadsheet formula injection is avoided without changing JSON payloads.
-            elif isinstance(value, str) and value.startswith(("=", "+", "-", "@", "\t", "\r")):
-                row[name] = "'" + value
-        writer.writerow(row)
+        write_row(row)
     return output.getvalue()

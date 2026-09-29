@@ -2,6 +2,7 @@ import csv
 import io
 import json
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -295,3 +296,41 @@ def test_online_provenance_and_csv_formula_safety(store):
     assert snapshot["runs"][0]["configuration"]["model"] == "=danger()"
     row = next(csv.DictReader(io.StringIO(csv_export(snapshot))))
     assert row["model"] == "'=danger()"
+
+
+@pytest.mark.parametrize(
+    "model", ["=danger()", "'=danger()", "''=danger()", "'plain", "\n=danger()", 'é,"\ntext']
+)
+def test_csv_scalar_identity_round_trips(store, model):
+    repository, video, exports = store
+    job = repository.create_job(video.id, 0, 2, model=model)
+    row = next(csv.DictReader(io.StringIO(csv_export(exports.snapshot("run", job.id)))))
+    encoded = row["model"]
+    decoded = encoded[1:] if encoded.startswith("'") else encoded
+    assert decoded == model
+    assert not encoded.startswith(("=", "+", "-", "@", "\t", "\r", "\n"))
+    assert json.loads(row["configuration"])["model"] == model
+
+
+def test_lease_recovery_never_changes_a_job_without_its_event(store, monkeypatch):
+    repository, video, exports = store
+    job = repository.create_job(video.id, 0, 2)
+    repository.claim_next_job()
+    boundary = datetime(2030, 1, 1, tzinfo=UTC)
+    with repository._connect() as connection:
+        connection.execute(
+            "UPDATE jobs SET lease_expires_at=? WHERE id=?", (boundary.isoformat(), job.id)
+        )
+    times = iter(
+        [boundary - timedelta(microseconds=1), boundary, boundary + timedelta(microseconds=1)]
+    )
+    monkeypatch.setattr(repository, "_clock", lambda: next(times, boundary + timedelta(seconds=1)))
+    changed = repository.recover_expired()
+    run = exports.snapshot("run", job.id)["runs"][0]
+    assert changed == 0
+    assert run["state"] == "running"
+    assert [event["event"] for event in run["attempt_events"]] == ["started"]
+    assert repository.recover_expired() == 1
+    run = exports.snapshot("run", job.id)["runs"][0]
+    assert [event["event"] for event in run["attempt_events"]] == ["started", "lease_expired"]
+    assert run["attempt_events"][-1]["occurred_at"] == run["updated_at"]

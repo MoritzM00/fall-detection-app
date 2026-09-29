@@ -38,9 +38,10 @@ User-authored prompts and model/fixture identifiers are intentionally exported;
 do not put credentials, private paths or media payloads in those fields.
 
 CSV embeds structured configuration, frame and attempt data as JSON cells. Scalar
-strings starting with `=`, `+`, `-`, `@`, tab or carriage return receive a leading
-apostrophe to prevent spreadsheet formula execution. Consumers reversing this
-escape remove one apostrophe only when it precedes one of those prefixes. Canonical
+strings starting with `=`, `+`, `-`, `@`, tab, carriage return, newline or apostrophe
+receive a leading apostrophe to prevent spreadsheet formula execution and preserve
+literal leading apostrophes. Consumers reversing this escape remove exactly one
+leading apostrophe when present. Canonical
 JSON and embedded JSON identities are unchanged. Standard CSV quoting handles commas,
 newlines and quotes; UTF-8 is used. Prefer JSON for automated reproduction.
 

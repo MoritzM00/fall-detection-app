@@ -483,18 +483,19 @@ class Repository:
         return changed == 1
 
     def _recover_expired_locked(self, connection: sqlite3.Connection) -> int:
+        now = self._timestamp()
         expired = connection.execute(
             "SELECT id FROM jobs WHERE state='running' AND (lease_expires_at IS NULL OR lease_expires_at <= ?)",
-            (self._timestamp(),),
+            (now,),
         ).fetchall()
         for row in expired:
-            self._attempt_event(connection, row["id"], "lease_expired", self._timestamp())
+            self._attempt_event(connection, row["id"], "lease_expired", now)
         return connection.execute(
             """UPDATE jobs SET state = 'failed', error =
             'Worker interrupted or its lease expired. Retry this run.',
             claim_token = NULL, lease_expires_at = NULL, updated_at = ?
             WHERE state = 'running' AND (lease_expires_at IS NULL OR lease_expires_at <= ?)""",
-            (self._timestamp(), self._timestamp()),
+            (now, now),
         ).rowcount
 
     def recover_expired(self) -> int:
