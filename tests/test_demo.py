@@ -1,7 +1,11 @@
 """Ownership and cleanup contracts for the disposable CPU scenario runner."""
 
+import os
+import signal
 import subprocess
 import sys
+import time
+from contextlib import suppress
 
 import pytest
 
@@ -39,3 +43,77 @@ def test_partial_startup_cleanup_reaps_only_owned_children(tmp_path, monkeypatch
         unrelated.terminate()
         unrelated.wait(timeout=5)
         stack.close()
+
+
+def test_cleanup_stops_descendant_after_owned_parent_exits(tmp_path):
+    marker = tmp_path / "descendant.txt"
+    stack = Stack(tmp_path)
+    script = (
+        "import subprocess, sys; "
+        "subprocess.Popen([sys.executable, '-c', "
+        + repr(
+            "import signal, time; from pathlib import Path; "
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+            f"p = Path({str(marker)!r}); "
+            "\nwhile True:\n p.write_text(str(time.monotonic()))\n time.sleep(0.02)"
+        )
+        + "])"
+    )
+    try:
+        parent = stack.spawn(["-c", script])
+        parent.wait(timeout=5)
+        deadline = time.monotonic() + 5
+        while not marker.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert marker.exists()
+        stack.close()
+        time.sleep(0.1)
+        content = marker.read_text()
+        time.sleep(0.1)
+        assert marker.read_text() == content
+    finally:
+        # Test failure must not itself strand the deliberately resistant child.
+        with suppress(ProcessLookupError):
+            os.killpg(parent.pid, signal.SIGKILL)
+        stack.close()
+
+
+@pytest.mark.parametrize("signum", [signal.SIGINT, signal.SIGTERM])
+def test_interruption_reaps_children_and_removes_generated_state(tmp_path, signum):
+    marker = tmp_path / "owned.json"
+    script = f"""
+import json, time
+from scripts import demo
+
+def scenario(name, directory):
+    stack = demo.Stack(directory)
+    try:
+        child = stack.spawn(["-c", "import time; time.sleep(30)"])
+        from pathlib import Path
+        Path({str(marker)!r}).write_text(json.dumps([child.pid, str(directory.parent)]))
+        time.sleep(30)
+    finally:
+        stack.close()
+
+demo.scenario = scenario
+demo.main()
+"""
+    runner = subprocess.Popen([sys.executable, "-c", script], stderr=subprocess.DEVNULL)
+    try:
+        deadline = time.monotonic() + 5
+        while not marker.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert marker.exists()
+        import json
+        from pathlib import Path
+
+        child_pid, generated_directory = json.loads(marker.read_text())
+        runner.send_signal(signum)
+        assert runner.wait(timeout=5) != 0
+        assert not Path(generated_directory).exists()
+        with pytest.raises(ProcessLookupError):
+            os.kill(child_pid, 0)
+    finally:
+        if runner.poll() is None:
+            runner.terminate()
+            runner.wait(timeout=5)

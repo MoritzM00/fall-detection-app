@@ -58,6 +58,11 @@ def main() -> None:
     api_port = os.getenv("FALL_DETECTION_API_PORT", "8000")
     mock_port = os.getenv("FALL_DETECTION_MOCK_PORT", "8001")
     web_port = os.getenv("FALL_DETECTION_WEB_PORT", "5173")
+    environment = os.environ.copy()
+    if environment.get("FALL_DETECTION_BACKEND_KIND", "mock") == "mock":
+        environment.setdefault(
+            "FALL_DETECTION_INFERENCE_BASE_URL", f"http://127.0.0.1:{mock_port}/v1"
+        )
     services = [
         (
             "mock inference",
@@ -92,7 +97,7 @@ def main() -> None:
         for name, command in services:
             if stop_requested:
                 break
-            process = subprocess.Popen(command, cwd=root)
+            process = subprocess.Popen(command, cwd=root, env=environment)
             processes.append((name, process))
         while not stop_requested:
             for name, process in processes:

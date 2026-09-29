@@ -163,3 +163,27 @@ def test_signal_during_startup_stops_launching(monkeypatch, fake_signals, signum
     assert started[0].returncode == -signal.SIGTERM
     assert started[0].waited
     assert fake_signals == {signal.SIGINT: signal.SIG_DFL, signal.SIGTERM: signal.SIG_DFL}
+
+
+@pytest.mark.parametrize("explicit_url", [None, "http://remote.example/v1"])
+def test_mock_port_aligns_inference_default_and_preserves_override(
+    monkeypatch, fake_signals, explicit_url
+):
+    monkeypatch.setenv("FALL_DETECTION_MOCK_PORT", "18001")
+    monkeypatch.setenv("FALL_DETECTION_BACKEND_KIND", "mock")
+    monkeypatch.delenv("FALL_DETECTION_INFERENCE_BASE_URL", raising=False)
+    if explicit_url:
+        monkeypatch.setenv("FALL_DETECTION_INFERENCE_BASE_URL", explicit_url)
+    environments = []
+
+    def start(command, **kwargs):
+        environments.append(kwargs["env"])
+        return FakeProcess(returncode=0)
+
+    monkeypatch.setattr(dev.subprocess, "Popen", start)
+    with pytest.raises(SystemExit):
+        dev.main()
+    assert all(
+        env["FALL_DETECTION_INFERENCE_BASE_URL"] == (explicit_url or "http://127.0.0.1:18001/v1")
+        for env in environments
+    )

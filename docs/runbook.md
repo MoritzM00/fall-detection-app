@@ -30,14 +30,15 @@ PASS: four simulated scenarios; owned children reaped; temporary media/state rem
 | nominal | Prepared uploaded video succeeds with mock provenance and preserved input/configuration identity |
 | overloaded | Selected HTTP 429 fails without a prediction; explicit retry succeeds with the same identity. A controlled playback jump produces compressed superseded coverage and at most one pending/preparing candidate |
 | disconnected | Stop only the owned mock after queuing; discovery times out with no prediction. Restart the same fixture and explicitly retry |
-| recovery | Restart only the owned API with retained temporary storage; running replay recovers paused with `process_restart`, then explicitly resumes |
+| recovery | Restart only the owned API with retained temporary storage; running replay recovers paused with `process_restart`, then explicitly resumes, advances playback and completes a replay inference job |
 
 The demo reserves ephemeral loopback sockets and passes them directly to uvicorn;
 they remain reserved across its simulated outages. Disconnection therefore models
 an endpoint that accepts TCP but cannot answer, rather than connection refusal.
 It waits at most 15 seconds for each readiness/result condition and uses a one
 second serving timeout. Cleanup terminates, force-kills if needed, and reaps only
-owned children on success, exceptions, Ctrl-C and SIGTERM. SIGKILL cannot execute
+owned child process groups on success, exceptions, Ctrl-C and SIGTERM.
+Direct children are reaped; descendants are terminated even if their parent exits. SIGKILL cannot execute
 cleanup. The runner is a bounded smoke command; it does not measure sustained
 throughput, continuous accuracy or interactive UI behavior.
 
@@ -46,9 +47,11 @@ For interactive use install Node/pnpm and run `make setup && make dev`, opening
 acceptance install ffmpeg and Playwright Chromium, then `make browser-test`.
 The browser runner selects distinct ephemeral API/mock/web ports and Vite rejects
 a port conflict rather than moving to another port. A bind race fails clearly;
-tests never reuse existing servers. Override `FALL_DETECTION_API_PORT`,
+tests never reuse existing servers. The browser runner also owns and terminates
+its Playwright process group on success or interruption. Override `FALL_DETECTION_API_PORT`,
 `FALL_DETECTION_MOCK_PORT`, `FALL_DETECTION_WEB_PORT` for interactive development;
-also set `FALL_DETECTION_INFERENCE_BASE_URL` when changing the mock port.
+the launcher aligns the default mock inference URL with that port. An explicit
+`FALL_DETECTION_INFERENCE_BASE_URL` remains authoritative.
 
 ## Processes, health and configuration
 

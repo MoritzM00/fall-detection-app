@@ -2,9 +2,11 @@
 
 import os
 import shutil
+import signal
 import socket
 import subprocess
 import sys
+from contextlib import suppress
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -96,12 +98,35 @@ def main() -> int:
             FALL_DETECTION_E2E_SHORT_CLIP=str(short_clip),
             FALL_DETECTION_E2E_OFFSET_CLIP=str(offset_clip),
         )
-        return subprocess.run(
-            ["pnpm", "--dir", "apps/web", "test:e2e", *sys.argv[1:]],
-            cwd=root,
+        # Invoke Playwright directly: pnpm scripts create a separate process group
+        # that would escape ownership when this runner receives a signal.
+        process = subprocess.Popen(
+            [str(root / "apps/web/node_modules/.bin/playwright"), "test", *sys.argv[1:]],
+            cwd=root / "apps/web",
             env=environment,
-            check=False,
-        ).returncode
+            start_new_session=True,
+        )
+
+        def interrupted(_number: int, _frame: object) -> None:
+            raise KeyboardInterrupt
+
+        previous = signal.signal(signal.SIGTERM, interrupted)
+        try:
+            return process.wait()
+        finally:
+            try:
+                with suppress(ProcessLookupError):
+                    os.killpg(process.pid, signal.SIGTERM)
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    with suppress(ProcessLookupError):
+                        os.killpg(process.pid, signal.SIGKILL)
+                    process.wait(timeout=5)
+            finally:
+                with suppress(ProcessLookupError):
+                    os.killpg(process.pid, signal.SIGKILL)
+                signal.signal(signal.SIGTERM, previous)
 
 
 if __name__ == "__main__":

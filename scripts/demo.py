@@ -7,6 +7,7 @@ import socket
 import subprocess
 import sys
 import time
+from contextlib import suppress
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -81,15 +82,25 @@ class Stack:
             env=self.environment,
             pass_fds=descriptors,
             stdout=subprocess.DEVNULL,
+            start_new_session=True,
         )
         self.children.append(process)
         return process
 
     def close(self) -> None:
         """Reap children before closing their reserved sockets."""
+        children, self.children = self.children, []
         try:
-            stop_processes(self.children, timeout_seconds=3)
+            # Every child owns an isolated process group. Signal descendants even
+            # when their direct parent already exited; never signal our own group.
+            for process in children:
+                with suppress(ProcessLookupError):
+                    os.killpg(process.pid, signal.SIGTERM)
+            stop_processes(children, timeout_seconds=3)
         finally:
+            for process in children:
+                with suppress(ProcessLookupError):
+                    os.killpg(process.pid, signal.SIGKILL)
             for listener in self.sockets:
                 listener.close()
 
@@ -212,6 +223,21 @@ def scenario(name: str, directory: Path) -> dict:
                 ), recovered
                 client.post(path + "/commands", json={"action": "resume"}).raise_for_status()
                 assert client.get(path).json()["state"] == "running"
+                client.post(
+                    path + "/commands", json={"action": "position", "position_seconds": 3}
+                ).raise_for_status()
+                stack.spawn(["-m", "apps.worker.main"])
+                deadline = time.monotonic() + 15
+                resumed_job = None
+                while time.monotonic() < deadline:
+                    resumed = client.get(path).raise_for_status().json()
+                    if resumed["latest_job_id"]:
+                        resumed_job = wait_job(client, resumed["latest_job_id"])
+                        break
+                    time.sleep(0.05)
+                assert resumed_job is not None and resumed_job["state"] == "succeeded"
+                assert resumed_job["prediction"]["fixture_version"] == prediction["fixture_version"]
+                assert resumed_job["prediction"]["sampled_timestamps"]
                 client.post(path + "/commands", json={"action": "pause"}).raise_for_status()
                 coverage = client.get(path + "/windows").raise_for_status().json()
             return {
