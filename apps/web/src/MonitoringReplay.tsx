@@ -91,7 +91,7 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
         syntheticPosition.current = next.position; setPosition(next.position);
         // Reload cannot restore browser playback. Explicitly pause persisted admission.
         initialPosition.current = false;
-        if (next.state === "running") void send({ action: "pause" });
+        if (next.state === "running") void send({ action: "pause" }, false, true);
       }
     } catch (cause) {
       if (token === fence.current) { setConnected(false); setError(message(cause)); media.current?.pause(); initialPosition.current = true; }
@@ -105,7 +105,7 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
     return () => { clearInterval(timer); fence.current++; media.current?.pause(); const leaving = current.current; if (leaving?.id === id && leaving.state === "running") void commandSession(leaving.id, { action: "pause", command_id: crypto.randomUUID() }).catch(() => {}); };
   }, [id]); // Each selection invalidates every previous asynchronous response.
 
-  async function send(command: MonitoringCommand, isRetry = false) {
+  async function send(command: MonitoringCommand, isRetry = false, preserveRetry = false) {
     const saved = current.current;
     if (!saved) return;
     while (positionPending.current) await new Promise(resolve => window.setTimeout(resolve, 20));
@@ -115,8 +115,8 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
     const target = isRetry && retry.current ? retry.current.id : saved.id;
     const token = payload.action === "position" ? fence.current : ++fence.current;
     positionPending.current = payload.action === "position";
-    pending.current = true; if (!positionPending.current) setBusy(true); setError(null);
-    retry.current = { id: target, command: payload };
+    pending.current = true; if (!positionPending.current) setBusy(true); if (!preserveRetry) setError(null);
+    if (!preserveRetry) retry.current = { id: target, command: payload };
     try {
       const next = await commandSession(target, payload);
       if (token !== fence.current) {
@@ -124,14 +124,15 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
         return;
       }
       if (payload.action === "position" && (current.current?.generation !== next.generation || current.current.segment_id !== next.segment_id)) return;
-      retry.current = null; current.current = next; adopt(next); setConnected(true);
+      if (!preserveRetry) retry.current = null; current.current = next; adopt(next); setConnected(true);
       if (payload.action !== "position") {
         syntheticPosition.current = next.position; setPosition(next.position);
         if (media.current && Math.abs(media.current.currentTime - next.position) > 0.1) media.current.currentTime = next.position;
       }
       if (["start", "resume", "restart"].includes(payload.action) && media.current) {
-        try { await media.current.play(); } catch { if (token === fence.current) setError("Playback was blocked. Press Resume to try again."); const paused = await commandSession(target, { action: "pause", command_id: crypto.randomUUID() }); if (token === fence.current) adopt(paused); }
+        try { await media.current.play(); } catch { if (token !== fence.current) return; setError("Playback was blocked. Press Resume to try again."); const paused = await commandSession(target, { action: "pause", command_id: crypto.randomUUID() }); if (token === fence.current) adopt(paused); }
       }
+      return next;
     } catch (cause) { if (token === fence.current) { setError(message(cause)); setConnected(false); media.current?.pause(); initialPosition.current = true; } }
     finally { pending.current = false; positionPending.current = false; setBusy(false); }
   }
@@ -141,7 +142,7 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
     const timer = window.setInterval(() => {
       const now = performance.now();
       const saved = current.current;
-      if (saved?.state === "running" && connected && !pending.current) {
+      if (saved?.state === "running" && connected && !pending.current && !initialPosition.current && !retry.current) {
         const actual = video?.source === "synthetic" ? Math.min(saved.duration, syntheticPosition.current + (now - last) / 1000) : media.current?.currentTime;
         if (actual !== undefined && Number.isFinite(actual)) {
           syntheticPosition.current = actual; setPosition(actual);
@@ -188,7 +189,7 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
           {video?.source !== "synthetic" && video && <video ref={media} src={`/api/videos/${video.id}/media`} onLoadedMetadata={event => { event.currentTarget.currentTime = current.current?.position ?? 0; }} onEnded={event => { const saved = current.current; const actual = event.currentTarget.currentTime; void send({ action: "position", position_seconds: Math.min(actual, saved?.duration ?? actual) }).then(() => { if (saved && current.current?.id === saved.id && current.current.generation === saved.generation && current.current.segment_id === saved.segment_id) void send({ action: "pause" }); }); }} onError={() => { setError("Recording playback unavailable"); void send({ action: "pause" }); }} />}
           {video?.source === "synthetic" && <p className="preview-note">Synthetic recording · simulated playback clock</p>}
           <p>Playback {seconds(position)} / {seconds(session?.duration ?? 0)}</p>
-          <label>Seek recording <input aria-label="Seek recording" type="range" min="0" max={session?.duration ?? 0} step="0.1" value={position} disabled={busy || !session || !connected} onChange={event => { const savedId = current.current?.id; media.current?.pause(); void send({ action: "seek", position_seconds: Number(event.target.value) }).then(() => { if (current.current?.id === savedId && current.current?.state === "running") void media.current?.play().catch(() => { if (current.current?.id === savedId) { setError("Playback was blocked. Press Resume to try again."); void send({ action: "pause" }); } }); }); }} /></label>
+          <label>Seek recording <input aria-label="Seek recording" type="range" min="0" max={session?.duration ?? 0} step="0.1" value={position} disabled={busy || !session || !connected} onChange={event => { media.current?.pause(); void send({ action: "seek", position_seconds: Number(event.target.value) }).then(next => { if (next && current.current?.id === next.id && current.current.generation === next.generation && current.current.segment_id === next.segment_id && current.current.state === "running") { const playbackFence = fence.current; void media.current?.play().catch(() => { if (playbackFence === fence.current) { setError("Playback was blocked. Press Resume to try again."); void send({ action: "pause" }); } }); } }); }} /></label>
           <div className="source-actions"><button className="button primary" disabled={busy || !session || !connected || session.state === "running" || session.state === "stopped"} onClick={() => void send({ action: session?.position === 0 ? "start" : "resume" })}>{session?.position === 0 ? "Start" : "Resume"}</button><button className="button secondary" disabled={busy || session?.state !== "running"} onClick={() => { media.current?.pause(); void send({ action: "pause" }); }}>Pause</button><button className="button secondary" disabled={busy || !session || session.state === "stopped"} onClick={() => { media.current?.pause(); void send({ action: "stop" }); }}>Stop</button><button className="button secondary" disabled={busy || !session || !connected} onClick={() => void send({ action: "restart", position_seconds: 0 })}>Restart / retry inference</button></div>
           <p role="status">System: {connected ? session?.state ?? "recovering" : "disconnected"}{busy ? " · updating" : ""}{session?.recovery_reason ? ` · ${session.recovery_reason}` : ""}</p>
           <p role="status">Inference: {inferenceState}{newestWindow?.reason ? ` · ${newestWindow.reason}` : ""}</p>
