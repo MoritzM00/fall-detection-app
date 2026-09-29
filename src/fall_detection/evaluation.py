@@ -176,6 +176,19 @@ def _validate_run(run: dict, source: GroundTruthSource, synthetic: bool) -> list
                 raise ValueError("invalid prepared hash")
         if not prepared.get("preprocessing_version"):
             unknown.append("preprocessing_version_unknown")
+        sampling = config.get("preprocessing", {})
+        for prepared_key, config_key in (
+            ("frame_count", "frames"),
+            ("fps", "fps"),
+            ("size", "resize"),
+            ("preprocessing_version", "version"),
+            ("bundle_sha256", "bundle_sha256"),
+        ):
+            actual, configured = prepared.get(prepared_key), sampling.get(config_key)
+            if prepared_key in {"fps", "size"} and actual is None:
+                unknown.append(f"prepared_{prepared_key}_unknown")
+            if actual is not None and configured is not None and actual != configured:
+                raise ValueError("prepared input/configuration sampling mismatch")
         frames = prepared["frames"]
         if len(frames) != prepared["frame_count"] or not frames:
             raise ValueError("prepared frame count mismatch")

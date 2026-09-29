@@ -21,6 +21,11 @@ missing input facts; another retained input must verify that source's hash in a
 real report. Successful predictions with unknown inputs are rejected. Online
 provenance alone does not establish GPU correctness.
 
+Retained prepared frame counts, FPS and resize must agree with the saved sampling
+configuration; known preprocessing versions and bundle hashes must also agree.
+Missing prepared FPS/resize identity is rejected in real mode and explicitly
+listed in synthetic mode.
+
 ## Ground truth schema 1
 
 ```json

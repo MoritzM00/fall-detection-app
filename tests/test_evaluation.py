@@ -89,6 +89,8 @@ def run(identity, start, end, label, timestamps=None):
             "bundle_sha256": "e" * 64,
             "preprocessing_version": "fixture-v1",
             "frame_count": len(frames),
+            "fps": 1,
+            "size": 448,
             "frames": frames,
         },
         "prediction": {
@@ -270,6 +272,38 @@ def test_no_silent_mixed_configuration_or_duplicate_input(truth):
     second["configuration"]["prompt_text"] = "Exact prompt"
     second["configuration_id"] = second["configuration"]["id"] = "config-2"
     assert evaluate(truth, [export([first, second])], synthetic=True)["metrics"]["event_count"] == 3
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"frames": 16},
+        {"fps": 7.5},
+        {"resize": 224},
+        {"version": "different-decoder"},
+        {"bundle_sha256": "f" * 64},
+    ],
+)
+def test_rejects_prepared_input_configuration_contradiction(truth, settings):
+    record = run("one", 0, 2, "walk")
+    record["configuration"]["preprocessing"].update(settings)
+    with pytest.raises(ValueError, match="sampling mismatch"):
+        evaluate(truth, [export([record])], synthetic=True)
+
+
+def test_real_mode_rejects_unknown_prepared_sampling_identity(truth):
+    truth["purpose"] = "final"
+    record = run("one", 0, 2, "walk")
+    record["configuration"].update(backend_kind="vllm", fixture_version=None)
+    record["provenance"] = "online_unverified"
+    record["prediction"].update(
+        backend_kind="vllm", fixture_version=None, provenance="online_unverified"
+    )
+    del record["prepared_input"]["fps"]
+    with pytest.raises(ValueError, match="unknown legacy"):
+        evaluate(truth, [export([record])])
+    report = evaluate({**truth, "purpose": "synthetic"}, [export([record])], synthetic=True)
+    assert {"run_id": "one", "fact": "prepared_fps_unknown"} in report["unknown_identity_facts"]
 
 
 def test_real_mode_rejects_mock_unknown_synthetic_and_incomplete_identity(truth):
