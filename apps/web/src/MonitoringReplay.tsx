@@ -26,6 +26,7 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
   const [updated, setUpdated] = useState(0);
   const [now, setNow] = useState(Date.now());
   const [position, setPosition] = useState(0);
+  const [historyComplete, setHistoryComplete] = useState(false);
   const [settings, setSettings] = useState<ExperimentSettings | null>(null);
   const [frames, setFrames] = useState(16);
   const [fps, setFps] = useState(7.5);
@@ -58,7 +59,7 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
     initialPosition.current = true;
     retry.current = null; setError(null);
     current.current = null; jobCache.current = {};
-    setSession(null); setVideo(null); setWindows([]); setJobs({}); setConnected(false);
+    setSession(null); setVideo(null); setWindows([]); setJobs({}); setConnected(false); setHistoryComplete(false);
     setId(next); localStorage.setItem("sentinel-session", next);
   }
 
@@ -73,7 +74,9 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
       const next = await getSession(id);
       const history = await getWindows(id);
       const asset = await getVideo(next.video_id);
-      const jobIds = [...new Set([...history.flatMap(w => w.job_id ? [w.job_id] : []), ...(next.latest_job_id ? [next.latest_job_id] : [])])];
+      // Unfinished jobs are refreshed even after their window leaves the newest history page.
+      const unfinished = Object.values(jobCache.current).filter(job => ["queued", "running"].includes(job.state)).map(job => job.id);
+      const jobIds = [...new Set([...history.flatMap(w => w.job_id ? [w.job_id] : []), ...(next.latest_job_id ? [next.latest_job_id] : []), ...unfinished])];
       const loaded = await Promise.all(jobIds.filter(jobId => {
         const cached = jobCache.current[jobId];
         return !cached || ["queued", "running"].includes(cached.state);
@@ -176,6 +179,7 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
       const loaded = await Promise.all(page.flatMap(w => w.job_id ? [getJob(w.job_id)] : []));
       if (token !== fence.current) return;
       Object.assign(jobCache.current, Object.fromEntries(loaded.map(job => [job.id, job])));
+      if (page.length < 100) setHistoryComplete(true);
       setWindows(old => [...old, ...page.filter(w => !old.some(existing => existing.id === w.id))]);
       setJobs(old => ({ ...old, ...Object.fromEntries(loaded.map(job => [job.id, job])) }));
     } catch (cause) { setError(message(cause)); }
@@ -199,7 +203,7 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
             {video?.source !== "synthetic" && video && <video ref={media} src={`/api/videos/${video.id}/media`} onLoadedMetadata={event => { event.currentTarget.currentTime = current.current?.position ?? 0; }} onEnded={event => { const saved = current.current; void send({ action: "position", position_seconds: saved?.duration ?? event.currentTarget.currentTime }); }} onError={() => { setError("Recording playback unavailable"); void send({ action: "pause" }); }} />}
             {video?.source === "synthetic" && <p className="replay-placeholder">Synthetic recording · simulated playback clock</p>}
           </div>
-          {session && <CoverageTimeline windows={windows.filter(window => window.generation === session.generation)} jobs={jobs} duration={duration} position={position} partial={windows.length >= 100} onLoadOlder={() => void older()} />}
+          {session && <CoverageTimeline windows={windows.filter(window => window.generation === session.generation)} jobs={jobs} duration={duration} position={position} partial={windows.length >= 100 && !historyComplete} onLoadOlder={() => void older()} />}
           <label className="seek-control">Seek recording <input aria-label="Seek recording" type="range" min="0" max={duration} step="0.1" value={position} disabled={busy || !session || !connected} onChange={event => { media.current?.pause(); void send({ action: "seek", position_seconds: Number(event.target.value) }).then(next => { if (next && current.current?.id === next.id && current.current.generation === next.generation && current.current.segment_id === next.segment_id && current.current.state === "running") { const playbackFence = fence.current; void media.current?.play().catch(() => { if (playbackFence === fence.current) { setError("Playback was blocked. Press Resume to try again."); void send({ action: "pause" }); } }); } }); }} /></label>
           <div className="replay-controls"><button className="button primary" disabled={busy || !session || !connected || session.state === "running" || session.state === "stopped"} onClick={() => void send({ action: session?.position === 0 ? "start" : "resume" })}>{session?.position === 0 ? "Start" : "Resume"}</button><button className="button secondary" disabled={busy || session?.state !== "running"} onClick={() => { media.current?.pause(); void send({ action: "pause" }); }}>Pause</button><button className="button secondary" disabled={busy || !session || session.state === "stopped"} onClick={() => { media.current?.pause(); void send({ action: "stop" }); }}>Stop</button><button className="button secondary restart" disabled={busy || !session || !connected} onClick={() => void send({ action: "restart", position_seconds: 0 })}>Restart / retry inference</button></div>
           <div className="replay-status">
@@ -223,7 +227,7 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
         <details className="plain-details"><summary>All 16 activity labels</summary><p>{labels.join(", ")}</p></details>
       </aside>
     </div>
-    {session && <section className="coverage-history"><h2>Coverage and prediction history</h2>{windows.length === 0 && <p className="preview-note">Windows appear here as playback passes them.</p>}<ul>{windows.map(window => { const state = window.job_id ? jobs[window.job_id]?.state ?? window.state : window.state; const job = window.job_id ? jobs[window.job_id] : undefined; return <li key={window.id}><details><summary><i data-tone={toneOf(state, job)} aria-hidden="true" /><span className="history-range">{seconds(window.start_seconds)}–{seconds(window.end_seconds)}</span><span className="history-meta">Generation {window.generation} · #{window.sequence}{window.sequence_end !== window.sequence ? `–${window.sequence_end}` : ""} · {state}{window.reason ? ` ${window.reason}` : ""}{session && (window.generation !== session.generation || window.segment_id !== session.segment_id) ? " · historical" : ""}</span>{job?.prediction && <strong className={isAlert(job) ? "alert" : ""}>{job.prediction.label.replaceAll("_", " ")}</strong>}</summary><p className="preview-note">Segment {window.segment_id.slice(0, 8)} · {window.reason ?? "No coverage gap recorded"}</p>{job && <Result job={job} />}</details></li>; })}</ul>{windows.length >= 100 && <button className="text-button" onClick={() => void older()}>Load older history</button>}</section>}
+    {session && <section className="coverage-history"><h2>Coverage and prediction history</h2>{windows.length === 0 && <p className="preview-note">Windows appear here as playback passes them.</p>}<ul>{windows.map(window => { const state = window.job_id ? jobs[window.job_id]?.state ?? window.state : window.state; const job = window.job_id ? jobs[window.job_id] : undefined; return <li key={window.id}><details><summary><i data-tone={toneOf(state, job)} aria-hidden="true" /><span className="history-range">{seconds(window.start_seconds)}–{seconds(window.end_seconds)}</span><span className="history-meta">Generation {window.generation} · #{window.sequence}{window.sequence_end !== window.sequence ? `–${window.sequence_end}` : ""} · {state}{window.reason ? ` ${window.reason}` : ""}{session && (window.generation !== session.generation || window.segment_id !== session.segment_id) ? " · historical" : ""}</span>{job?.prediction && <strong className={isAlert(job) ? "alert" : ""}>{job.prediction.label.replaceAll("_", " ")}</strong>}</summary><p className="preview-note">Segment {window.segment_id.slice(0, 8)} · {window.reason ?? "No coverage gap recorded"}</p>{job && <Result job={job} />}</details></li>; })}</ul>{windows.length >= 100 && !historyComplete && <button className="text-button" onClick={() => void older()}>Load older history</button>}</section>}
   </section>;
 }
 
