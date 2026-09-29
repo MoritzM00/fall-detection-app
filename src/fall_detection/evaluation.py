@@ -134,7 +134,14 @@ def _ratio(numerator: float, denominator: float) -> float | None:
 
 
 def _configuration(configuration: dict) -> dict:
-    return {k: v for k, v in configuration.items() if k not in {"id", "created_at"}}
+    shared = {k: v for k, v in configuration.items() if k not in {"id", "created_at"}}
+    if "preprocessing" in shared:
+        shared["preprocessing"] = {
+            k: v
+            for k, v in shared["preprocessing"].items()
+            if k not in {"version", "bundle_sha256"}
+        }
+    return shared
 
 
 def _validate_run(run: dict, source: GroundTruthSource, synthetic: bool) -> list[str]:
@@ -159,6 +166,8 @@ def _validate_run(run: dict, source: GroundTruthSource, synthetic: bool) -> list
     if config["id"] != run["configuration_id"]:
         raise ValueError("configuration identity mismatch")
     unknown = []
+    if run.get("input_status") == "identity_mismatch":
+        raise ValueError("export reports prepared input identity mismatch")
     prepared = run.get("prepared_input")
     if prepared is None:
         unknown.extend(["prepared_input_unavailable", "source_hash_unverified"])
@@ -201,6 +210,8 @@ def _validate_run(run: dict, source: GroundTruthSource, synthetic: bool) -> list
                 raise ValueError("prepared frame index mismatch")
             _seconds(frame["actual_seconds"])
             _seconds(frame["requested_seconds"])
+            if duration is not None and frame["actual_seconds"] > duration:
+                raise ValueError("actual frame timestamp exceeds known source duration")
             if not isinstance(frame["source_pts"], int) or isinstance(frame["source_pts"], bool):
                 raise ValueError("invalid source PTS")
             if any(not re.fullmatch(r"[a-f0-9]{64}", frame[k]) for k in ("sha256", "jpeg_sha256")):
@@ -217,6 +228,8 @@ def _validate_run(run: dict, source: GroundTruthSource, synthetic: bool) -> list
         times = [_seconds(t) for t in timestamps]
         if times != sorted(times):
             raise ValueError("prediction timestamps unordered")
+        if duration is not None and times[-1] > duration:
+            raise ValueError("prediction timestamp exceeds known source duration")
         if prepared and timestamps != [frame["actual_seconds"] for frame in prepared["frames"]]:
             raise ValueError("prediction/prepared timestamps mismatch")
         for key in ("backend_kind", "model", "fixture_version"):
@@ -273,6 +286,7 @@ def evaluate(ground_truth: dict, exports: list[dict], *, synthetic: bool = False
     seen_runs: set[str] = set()
     configuration = None
     segment_configuration = None
+    preprocessing_versions: set[str] = set()
     for export in exports:
         if (
             type(export["schema_version"]) is not int
@@ -290,6 +304,12 @@ def evaluate(ground_truth: dict, exports: list[dict], *, synthetic: bool = False
             if run["video_id"] not in sources:
                 raise ValueError("export source absent from ground truth")
             missing = _validate_run(run, sources[run["video_id"]], synthetic)
+            for version in (
+                run["configuration"].get("preprocessing", {}).get("version"),
+                (run.get("prepared_input") or {}).get("preprocessing_version"),
+            ):
+                if version is not None:
+                    preprocessing_versions.add(version)
             unknown.extend({"run_id": run["id"], "fact": fact} for fact in missing)
             saved = _configuration(run["configuration"])
             if configuration is not None and configuration != saved:
@@ -301,7 +321,10 @@ def evaluate(ground_truth: dict, exports: list[dict], *, synthetic: bool = False
             coverage.append(item)
         export_hashes.append(canonical_sha256(export))
         for segment in export["segments"]:
-            saved = segment["configuration"]
+            saved = _configuration(segment["configuration"])
+            version = segment["configuration"].get("preprocessing", {}).get("version")
+            if version is not None:
+                preprocessing_versions.add(version)
             if segment_configuration is not None and segment_configuration != saved:
                 raise ValueError("mixed session segment configurations")
             segment_configuration = saved
@@ -332,6 +355,8 @@ def evaluate(ground_truth: dict, exports: list[dict], *, synthetic: bool = False
                     r["id"] for r in export["runs"]
                 }:
                     raise ValueError("coverage references absent run")
+    if len(preprocessing_versions) > 1:
+        raise ValueError("mixed known input preprocessing versions")
     if (
         segment_configuration is not None
         and configuration is not None
@@ -493,6 +518,7 @@ def evaluate(ground_truth: dict, exports: list[dict], *, synthetic: bool = False
         "ground_truth_sha256": canonical_sha256(ground_truth),
         "export_sha256": export_hashes,
         "configuration": configuration,
+        "input_preprocessing_versions": sorted(preprocessing_versions),
         "unknown_identity_facts": unknown,
         "raw_exports": exports,
         "raw_runs": runs,

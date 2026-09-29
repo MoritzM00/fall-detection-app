@@ -306,6 +306,108 @@ def test_real_mode_rejects_unknown_prepared_sampling_identity(truth):
     assert {"run_id": "one", "fact": "prepared_fps_unknown"} in report["unknown_identity_facts"]
 
 
+def test_source_duration_bounds_actual_frames_not_requested_window(truth):
+    record = run("one", 0, 2, "walk", [0, 21])
+    record["source"]["duration_seconds"] = 20
+    with pytest.raises(ValueError, match="actual frame timestamp exceeds"):
+        evaluate(truth, [export([record])], synthetic=True)
+    record.update(prepared_input=None, prepared_input_id=None, input_status="unknown")
+    with pytest.raises(ValueError, match="prediction timestamp exceeds"):
+        evaluate(truth, [export([record])], synthetic=True)
+
+
+def test_known_export_input_identity_mismatch_is_not_missing_legacy_identity(truth):
+    record = run("failed", 0, 2, None)
+    record.update(prepared_input=None, input_status="identity_mismatch")
+    with pytest.raises(ValueError, match="identity mismatch"):
+        evaluate(truth, [export([record])], synthetic=True)
+
+
+def test_canonical_prepared_online_session_and_multiwindow_exports(tmp_path, truth):
+    """Persist fixture identities through real stores; no online inference is claimed."""
+    from fall_detection.models import PreparedInput
+    from fall_detection.monitoring import Monitoring, SessionCreate
+
+    repository = Repository(tmp_path / "prepared.sqlite3")
+    repository.initialize()
+    video = repository.create_uploaded_video("fixture.mp4", "fixture.mp4")
+    monitor = Monitoring(repository)
+    request = SessionCreate(video_id=video.id, duration_seconds=20, frame_count=2, fps=1)
+    config = monitor.configuration(request, "fixture-model", "vllm", None)
+    session = monitor.create(request, config)
+    jobs = []
+    for index, start in enumerate((0, 2)):
+        manifest = run(str(index), start, start + 1, "walk")["prepared_input"]
+        manifest.update(
+            id=str(index + 1) * 64, video_id=video.id, bundle_sha256=str(index + 3) * 64
+        )
+        prepared = PreparedInput.model_validate(manifest)
+        directory = tmp_path / "prepared" / prepared.id
+        directory.mkdir(parents=True)
+        (directory / "manifest.json").write_text(prepared.model_dump_json())
+        sampling = config.preprocessing.model_dump()
+        sampling.update(
+            version=prepared.preprocessing_version, bundle_sha256=prepared.bundle_sha256
+        )
+        job = repository.create_job(
+            video.id,
+            start,
+            start + 1,
+            model=config.model,
+            backend_kind="vllm",
+            prepared_input_id=prepared.id,
+            preprocessing=sampling,
+            generation=config.generation.model_dump(),
+            prompt_text=config.prompt_text,
+        )
+        claimed = repository.claim_next_job()
+        assert claimed is not None and claimed.claim_token is not None
+        assert repository.complete_job(
+            job.id,
+            PipelineResult("walk", "unused", [start, start + 0.5], 1, 2),
+            backend_kind="vllm",
+            model=config.model,
+            fixture_version=None,
+            claim_token=claimed.claim_token,
+        )
+        jobs.append(job)
+        with repository._connect() as connection:
+            connection.execute(
+                """INSERT INTO monitoring_windows
+                (id,session_id,generation,sequence,sequence_end,segment_id,start_seconds,end_seconds,available_seconds,state,job_id,created_at)
+                VALUES (?,?,0,?,?,?,?,?,?,'submitted',?,'time')""",
+                (
+                    str(index),
+                    session["id"],
+                    index,
+                    index,
+                    session["segment_id"],
+                    start,
+                    start + 1,
+                    start + 1,
+                    job.id,
+                ),
+            )
+    truth["purpose"] = "final"
+    truth["sources"][0]["source_id"] = video.id
+    exports = ExperimentExports(repository, tmp_path)
+    snapshot = exports.snapshot("session", session["id"])
+    report = evaluate(truth, [snapshot])
+    assert report["raw_exports"] == [snapshot]
+    assert report["metrics"]["processed_observation_seconds"] == 2
+    assert report["input_preprocessing_versions"] == ["fixture-v1"]
+    assert "bundle_sha256" not in report["configuration"]["preprocessing"]
+    assert (
+        evaluate(truth, [exports.snapshot("run", job.id) for job in jobs])["metrics"]
+        == report["metrics"]
+    )
+    conflicting = copy.deepcopy(snapshot)
+    conflicting["runs"][1]["prepared_input"]["preprocessing_version"] = "different-decoder"
+    conflicting["runs"][1]["configuration"]["preprocessing"]["version"] = "different-decoder"
+    with pytest.raises(ValueError, match="mixed known input preprocessing"):
+        evaluate(truth, [conflicting])
+
+
 def test_real_mode_rejects_mock_unknown_synthetic_and_incomplete_identity(truth):
     record = run("one", 0, 2, "walk")
     with pytest.raises(ValueError, match="synthetic mode"):

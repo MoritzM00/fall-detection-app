@@ -108,9 +108,13 @@ of every input export, full saved configurations, raw runs/predictions/input
 manifests, and coverage records. It retains their original precision and identity.
 Ground-truth selection is explicit; never combine tuning and final manifests or
 reuse final results to select settings. A report accepts only one exact saved
-configuration content (ignoring its database ID/creation time), with matching
+shared configuration content (ignoring its database ID/creation time and per-input
+preprocessing version/bundle hash), with matching
 prediction backend/model/fixture identity. Configuration IDs remain separately
-visible. Mixed backends, differing prompts/settings, unknown provenance and missing
+visible. Each input version/hash is checked against its own saved configuration
+and retained in raw records; differing known preprocessing versions are rejected.
+Session segments may have null input version/hash before frames are prepared.
+Mixed backends, differing prompts/settings, unknown provenance and missing
 legacy fields are rejected for real reports. Synthetic mode relaxes *known missing
 legacy identity* checks, lists them, and still rejects conflicting known identities,
 invalid times/labels and source/hash mismatches. Synthetic built-in exports
