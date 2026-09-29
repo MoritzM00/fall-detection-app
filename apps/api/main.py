@@ -95,9 +95,13 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
     def list_dataset_videos() -> list[DatasetVideoOption]:
         """List videos already prepared in the local OmniFall directory."""
         options: list[DatasetVideoOption] = []
+        data_root = settings.data_dir.resolve()
         for relative_path in list_dataset_video_paths(dataset_video_root):
             parts = Path(relative_path).parts
-            if len(parts) < 5:
+            # Registration only accepts media inside the data directory; never offer the rest.
+            if len(parts) < 5 or not (dataset_video_root / relative_path).resolve().is_relative_to(
+                data_root
+            ):
                 continue
             options.append(
                 DatasetVideoOption(

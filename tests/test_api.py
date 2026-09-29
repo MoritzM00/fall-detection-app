@@ -308,6 +308,7 @@ def test_dataset_video_registration_rejects_media_outside_data_dir(make_api, tmp
     inside.parent.mkdir(parents=True)
     inside.write_bytes(b"not decoded during registration")
     with TestClient(app) as test_client:
+        assert [item["path"] for item in test_client.get("/dataset-videos").json()] == [relative]
         created = test_client.post("/videos/dataset", json={"path": relative})
         assert created.status_code == 200
         assert created.json()["storage_key"] == f"omnifall/videos/{relative}"
@@ -319,7 +320,7 @@ def test_dataset_video_registration_rejects_media_outside_data_dir(make_api, tmp
     (data_dir / "omnifall").mkdir(parents=True)
     (data_dir / "omnifall" / "videos").symlink_to(external)
     with TestClient(app) as test_client:
-        assert [item["path"] for item in test_client.get("/dataset-videos").json()] == [relative]
+        assert test_client.get("/dataset-videos").json() == []
         rejected = test_client.post("/videos/dataset", json={"path": relative})
         assert rejected.status_code == 400
         assert "inside the data directory" in rejected.json()["detail"]
