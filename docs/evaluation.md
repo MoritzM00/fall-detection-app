@@ -15,9 +15,11 @@ uv run python -m fall_detection.evaluation --ground-truth truth.json --export se
 exact saved configuration. Use `--synthetic` explicitly for harness verification;
 its report is labeled `synthetic_harness_not_model_quality`. Default real mode
 requires saved online provenance, recorded frame identities, and a complete saved
-configuration and verifiable source hashes for every annotated source. Failures
-whose retained input identity is unavailable require synthetic mode; they are never
-silently dropped from real reports. Online provenance alone does not establish GPU correctness.
+configuration and verifiable source hashes for every annotated source. Failed or
+pending runs without prepared inputs remain unprocessed and explicitly list the
+missing input facts; another retained input must verify that source's hash in a
+real report. Successful predictions with unknown inputs are rejected. Online
+provenance alone does not establish GPU correctness.
 
 ## Ground truth schema 1
 
