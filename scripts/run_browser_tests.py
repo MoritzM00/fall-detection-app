@@ -2,6 +2,7 @@
 
 import os
 import shutil
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -74,7 +75,21 @@ def main() -> int:
         )
         dataset_clip.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(clip, dataset_clip)
-        environment = os.environ.copy()
+        environment = {
+            key: value
+            for key, value in os.environ.items()
+            if not key.startswith(("FALL_DETECTION_", "MOCK_INFERENCE_"))
+        }
+        # Distinct ephemeral selections; strictPort/uvicorn reject any bind race.
+        listeners = [socket.socket() for _ in range(3)]
+        try:
+            for listener in listeners:
+                listener.bind(("127.0.0.1", 0))
+            for name, listener in zip(("API", "MOCK", "WEB"), listeners, strict=True):
+                environment[f"FALL_DETECTION_{name}_PORT"] = str(listener.getsockname()[1])
+        finally:
+            for listener in listeners:
+                listener.close()
         environment.update(
             FALL_DETECTION_E2E_DATA_DIR=str(temporary_path / "data"),
             FALL_DETECTION_E2E_CLIP=str(clip),

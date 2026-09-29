@@ -7,7 +7,7 @@ const clip = process.env.FALL_DETECTION_E2E_CLIP;
 if (!clip) throw new Error("Run browser tests through scripts/run_browser_tests.py");
 
 async function waitForApi(request: APIRequestContext) {
-  await expect.poll(async () => (await request.get("http://127.0.0.1:8000/health")).status()).toBe(200);
+  await expect.poll(async () => (await request.get(`http://127.0.0.1:${process.env.FALL_DETECTION_API_PORT ?? "8000"}/health`)).status()).toBe(200);
 }
 
 test("uploaded frames and submitted result survive source and sampling changes", async ({ page, request }) => {
@@ -209,7 +209,7 @@ test("edited prompt and generation survive submission and reload and compare sav
   const comparison = page.getByRole("region", { name: "Run comparison" });
   await expect(comparison.getByRole("row").filter({ has: page.getByRole("rowheader", { name: "Temperature Different", exact: true }) })).toContainText("0.6");
   await expect(comparison.getByRole("row").filter({ has: page.getByRole("rowheader", { name: "Prompt Different", exact: true }) })).toContainText(prompt);
-  const original = await (await request.get(`http://127.0.0.1:8000/analysis-jobs/${baseline.id}`)).json();
+  const original = await (await request.get(`http://127.0.0.1:${process.env.FALL_DETECTION_API_PORT ?? "8000"}/analysis-jobs/${baseline.id}`)).json();
   expect(original.configuration).toEqual(baseline.configuration);
   expect(original.configuration_id).not.toBe(edited.configuration_id);
   await page.locator("#recent-run").selectOption(baseline.id);
@@ -240,7 +240,7 @@ for (const kind of ["OFFSET"] as const) {
     await expect(page.locator(".analyze-button")).toBeEnabled();
     const source = await page.locator(".sample-frame img").first().getAttribute("src");
     const id = source?.split("/")[3];
-    const manifest = await (await request.get(`http://127.0.0.1:8000/prepared-inputs/${id}`)).json();
+    const manifest = await (await request.get(`http://127.0.0.1:${process.env.FALL_DETECTION_API_PORT ?? "8000"}/prepared-inputs/${id}`)).json();
     expect(manifest.end_seconds).toBeCloseTo(1.0, 5);
     expect(manifest.frames.at(-1).actual_seconds).toBeCloseTo(1.0, 5);
     expect(manifest.frames[0].source_pts).toBe(kind === "OFFSET" ? 5 * 10240 : 0);
@@ -284,7 +284,7 @@ for (const kind of ["SHORT"] as const) {
     await expect(page.locator(".analyze-button")).toBeEnabled();
     const source = await page.locator(".sample-frame img").first().getAttribute("src");
     const id = source?.split("/")[3];
-    const manifest = await (await request.get(`http://127.0.0.1:8000/prepared-inputs/${id}`)).json();
+    const manifest = await (await request.get(`http://127.0.0.1:${process.env.FALL_DETECTION_API_PORT ?? "8000"}/prepared-inputs/${id}`)).json();
     expect(manifest.end_seconds).toBeCloseTo(1.2, 5);
     expect(manifest.frames.at(-1).actual_seconds).toBeCloseTo(1.1, 5);
     expect(manifest.frames[0].source_pts).toBe(0);

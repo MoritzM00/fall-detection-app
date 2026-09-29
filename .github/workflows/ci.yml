@@ -31,6 +31,8 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run ty check
       - run: uv run pytest
+      - name: Disposable CPU application scenarios
+        run: uv run python -m scripts.demo
 
   web:
     name: Web (build, types, unit tests)

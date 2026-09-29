@@ -1,4 +1,4 @@
-.PHONY: setup dev check browser-test
+.PHONY: setup dev check browser-test demo
 
 setup:
 	UV_CACHE_DIR=.uv-cache uv sync
@@ -19,3 +19,6 @@ check:
 
 browser-test:
 	.venv/bin/python scripts/run_browser_tests.py
+
+demo:
+	.venv/bin/python -m scripts.demo

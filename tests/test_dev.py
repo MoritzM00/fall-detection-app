@@ -127,6 +127,24 @@ def test_unexpected_service_exit_reports_service_and_code(monkeypatch, fake_sign
     assert fake_signals == {signal.SIGINT: signal.SIG_DFL, signal.SIGTERM: signal.SIG_DFL}
 
 
+def test_configured_ports_strict_web_bind_and_single_api_process(monkeypatch, fake_signals):
+    commands = []
+    for name, port in [("API", "18000"), ("MOCK", "18001"), ("WEB", "15173")]:
+        monkeypatch.setenv(f"FALL_DETECTION_{name}_PORT", port)
+
+    def start(command, **kwargs):
+        commands.append(command)
+        return FakeProcess(returncode=0)
+
+    monkeypatch.setattr(dev.subprocess, "Popen", start)
+    with pytest.raises(SystemExit, match="mock inference"):
+        dev.main()
+    assert commands[0][-2:] == ["--port", "18001"]
+    assert commands[1][-2:] == ["--port", "18000"]
+    assert "--reload" not in commands[1]
+    assert commands[3][-3:] == ["--port", "15173", "--strictPort"]
+
+
 @pytest.mark.parametrize("signum", [signal.SIGINT, signal.SIGTERM])
 def test_signal_during_startup_stops_launching(monkeypatch, fake_signals, signum):
     started = []
