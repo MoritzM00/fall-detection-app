@@ -95,9 +95,13 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
     def list_dataset_videos() -> list[DatasetVideoOption]:
         """List videos already prepared in the local OmniFall directory."""
         options: list[DatasetVideoOption] = []
+        data_root = settings.data_dir.resolve()
         for relative_path in list_dataset_video_paths(dataset_video_root):
             parts = Path(relative_path).parts
-            if len(parts) < 5:
+            # Registration only accepts media inside the data directory; never offer the rest.
+            if len(parts) < 5 or not (dataset_video_root / relative_path).resolve().is_relative_to(
+                data_root
+            ):
                 continue
             options.append(
                 DatasetVideoOption(
@@ -117,6 +121,13 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
             path = resolve_dataset_video(dataset_video_root, request.path)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        # Media consumers only open files that resolve inside the data directory.
+        if not path.is_relative_to(settings.data_dir.resolve()):
+            raise HTTPException(
+                status_code=400,
+                detail="Dataset videos must be stored inside the data directory; "
+                "symbolic links to other locations are not supported",
+            )
         storage_key = path.relative_to(settings.data_dir.resolve()).as_posix()
         return repository.create_dataset_video(path.name, storage_key)
 

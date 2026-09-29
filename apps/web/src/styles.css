@@ -247,6 +247,8 @@ footer { padding: 20px 0 32px; display: flex; justify-content: space-between; ga
 .monitoring video { width: 100%; max-height: 480px; background: #111; }
 .monitoring input[type="range"] { width: 100%; }
 .monitoring .source-actions { flex-wrap: wrap; }
+.monitoring .button.secondary:not(.empty-state .button) { background: var(--surface); border-color: var(--line-strong); color: var(--ink); }
+.monitoring .button.secondary:not(.empty-state .button):not(:disabled):hover { background: #eef1f4; }
 .monitoring .preview-note, .monitoring .result-card p, .monitoring summary { overflow-wrap: anywhere; }
 .monitoring .result-card { margin: 12px 0; }
 .monitoring .recent-runs details { padding: 12px; border-bottom: 1px solid #ddd; }

@@ -479,6 +479,19 @@ class Monitoring:
             connection.execute(
                 "UPDATE monitoring_sessions SET next_sequence=? WHERE id=?", (seq, row["id"])
             )
+            # Playback end pauses here, after admission, so the final window is not dropped.
+            if (
+                row["position"] >= row["duration"]
+                and connection.execute(
+                    "SELECT 1 FROM monitoring_windows WHERE session_id=? AND state IN ('pending','preparing')",
+                    (row["id"],),
+                ).fetchone()
+                is None
+            ):
+                connection.execute(
+                    "UPDATE monitoring_sessions SET state='paused',updated_at=? WHERE id=?",
+                    (self.repository._timestamp(), row["id"]),
+                )
             connection.commit()
 
     def _window(self, connection, row, seq, last, width, state, reason, *, end=None):
