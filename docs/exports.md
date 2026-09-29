@@ -62,3 +62,7 @@ do not bundle media, weights, adapters, deployment secrets or inference-server
 settings such as injected mock delay. Obtain those separately from the operator;
 legacy/unknown inputs or provenance may prevent exact reproduction. Mock timings
 include local serving delay and are not GPU capacity measurements.
+
+For explicit ground-truth import and offline metrics, see the proposed
+[offline evaluation protocol](evaluation.md). Synthetic harness correctness does
+not establish measured model quality.
