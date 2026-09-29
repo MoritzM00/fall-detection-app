@@ -61,3 +61,5 @@ The mock returns `fall` after a short delay. Override its deterministic behavior
 - Monitoring, server-sent events, and PostgreSQL migration remain planned.
 
 See [prepared video input](docs/prepared-video.md) for the frame and vLLM payload contracts.
+
+Complete run/session JSON and CSV downloads: [export contract](docs/exports.md).

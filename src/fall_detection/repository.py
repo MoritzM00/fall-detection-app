@@ -1,3 +1,4 @@
+import hashlib
 import json
 import sqlite3
 from collections.abc import Callable
@@ -112,6 +113,13 @@ class Repository:
                 )""",
             ):
                 connection.execute(statement)
+            connection.execute("""CREATE TABLE IF NOT EXISTS attempt_events (
+                id INTEGER PRIMARY KEY, job_id TEXT NOT NULL REFERENCES jobs(id),
+                attempt INTEGER NOT NULL, event TEXT NOT NULL, occurred_at TEXT NOT NULL,
+                error_sha256 TEXT)""")
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS attempt_events_by_job ON attempt_events(job_id,id)"
+            )
             videos_schema = connection.execute(
                 "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'videos'"
             ).fetchone()["sql"]
@@ -158,7 +166,7 @@ class Repository:
             from fall_detection.monitoring import migrate
 
             migrate(connection)
-            connection.execute("PRAGMA user_version = 3")
+            connection.execute("PRAGMA user_version = 4")
             if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
                 raise RuntimeError("Migration would violate foreign keys")
             connection.commit()
@@ -388,6 +396,7 @@ class Repository:
                 WHERE id = ? AND state = 'queued'""",
                 (timestamp, token, expires, row["id"]),
             )
+            self._attempt_event(connection, row["id"], "started", timestamp)
             connection.commit()
         claimed = self.get_job(row["id"])
         # The lease may have expired between commit and this read. Never hand
@@ -439,6 +448,7 @@ class Repository:
                     completed_at,
                 ),
             )
+            self._attempt_event(connection, job_id, "succeeded", completed_at)
             connection.commit()
             return True
 
@@ -453,6 +463,8 @@ class Repository:
                 AND state = 'running' AND claim_token = ? AND lease_expires_at > ?""",
                 (error, now, job_id, claim_token, now),
             ).rowcount
+            if changed:
+                self._attempt_event(connection, job_id, "failed", now, error)
             connection.commit()
         return changed == 1
 
@@ -471,6 +483,12 @@ class Repository:
         return changed == 1
 
     def _recover_expired_locked(self, connection: sqlite3.Connection) -> int:
+        expired = connection.execute(
+            "SELECT id FROM jobs WHERE state='running' AND (lease_expires_at IS NULL OR lease_expires_at <= ?)",
+            (self._timestamp(),),
+        ).fetchall()
+        for row in expired:
+            self._attempt_event(connection, row["id"], "lease_expired", self._timestamp())
         return connection.execute(
             """UPDATE jobs SET state = 'failed', error =
             'Worker interrupted or its lease expired. Retry this run.',
@@ -503,6 +521,8 @@ class Repository:
                 WHERE id = ? AND state = 'failed'""",
                 (self._timestamp(), job_id),
             ).rowcount
+            if changed:
+                self._attempt_event(connection, job_id, "retry_requested", self._timestamp())
             connection.commit()
         if changed != 1:
             raise ValueError("Only a failed job can be retried")
@@ -510,6 +530,26 @@ class Repository:
         if job is None:
             raise RuntimeError("retried job no longer exists")
         return job
+
+    @staticmethod
+    def _attempt_event(
+        connection: sqlite3.Connection,
+        job_id: str,
+        event: str,
+        timestamp: str,
+        error: str | None = None,
+    ) -> None:
+        """Record forward-only audit events without copying sensitive diagnostics."""
+        connection.execute(
+            """INSERT INTO attempt_events(job_id,attempt,event,occurred_at,error_sha256)
+            SELECT id,attempt_count,?,?,? FROM jobs WHERE id=?""",
+            (
+                event,
+                timestamp,
+                hashlib.sha256(error.encode()).hexdigest() if error else None,
+                job_id,
+            ),
+        )
 
     @staticmethod
     def _video_from_row(row: sqlite3.Row) -> VideoAsset:

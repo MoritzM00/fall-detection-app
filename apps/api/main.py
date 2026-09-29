@@ -5,11 +5,12 @@ from typing import Annotated
 from uuid import uuid4
 
 import av
-from fastapi import FastAPI, File, HTTPException, UploadFile, status
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 from fall_detection.config import Settings
+from fall_detection.exports import ExperimentExports, csv_export, json_export
 from fall_detection.inference import InferenceClient, InferenceServiceError
 from fall_detection.media import list_dataset_video_paths, resolve_dataset_video
 from fall_detection.models import (
@@ -312,6 +313,36 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
         if not 0 <= index < prepared.frame_count:
             raise HTTPException(status_code=404, detail="Frame not found")
         return FileResponse(preparation_path(settings.data_dir, prepared_id) / f"{index:02d}.jpg")
+
+    def export_response(kind: str, identity: str, export_format: str) -> Response:
+        if export_format not in {"json", "csv"}:
+            raise HTTPException(status_code=422, detail="Export format must be json or csv")
+        try:
+            snapshot = ExperimentExports(repository, settings.data_dir).snapshot(kind, identity)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Export record not found") from exc
+        content = json_export(snapshot) if export_format == "json" else csv_export(snapshot)
+        return Response(
+            content,
+            media_type="application/json" if export_format == "json" else "text/csv",
+            headers={
+                "Content-Disposition": f'attachment; filename="{kind}-export.{export_format}"'
+            },
+        )
+
+    @app.get("/analysis-jobs/{job_id}/export")
+    def export_run(
+        job_id: str, export_format: Annotated[str, Query(alias="format")] = "json"
+    ) -> Response:
+        """Download a versioned run manifest or prediction CSV."""
+        return export_response("run", job_id, export_format)
+
+    @app.get("/monitoring-sessions/{session_id}/export")
+    def export_session(
+        session_id: str, export_format: Annotated[str, Query(alias="format")] = "json"
+    ) -> Response:
+        """Download complete session coverage and runs, including historical generations."""
+        return export_response("session", session_id, export_format)
 
     @app.get("/analysis-jobs/{job_id}", response_model=AnalysisJob)
     def get_analysis_job(job_id: str) -> AnalysisJob:
