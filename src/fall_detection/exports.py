@@ -233,6 +233,7 @@ CSV_FIELDS = [
     "prepared_input_id",
     "state",
     "reason",
+    "diagnostic_sha256",
     "start_seconds",
     "end_seconds",
     "available_seconds",

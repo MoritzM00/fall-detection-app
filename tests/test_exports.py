@@ -284,6 +284,9 @@ def test_skip_configuration_and_diagnostic_redaction(store):
     assert snapshot["coverage"][-1]["diagnostic_sha256"]
     assert "private" not in json_export(snapshot)
     rows = list(csv.DictReader(io.StringIO(csv_export(snapshot))))
+    assert rows[-1]["diagnostic_sha256"] == snapshot["coverage"][-1]["diagnostic_sha256"]
+    assert all(row["diagnostic_sha256"] == "" for row in rows[:-1])
+    assert "private" not in csv_export(snapshot)
     assert all(row["label"] == "" for row in rows)
     assert all(json.loads(row["configuration"]) == config.model_dump() for row in rows)
 

@@ -31,7 +31,8 @@ Each event includes its attempt number and wall-clock time. Request/pipeline tim
 are exported when recorded; processing completion is not the activity timestamp.
 Failures preserve diagnostic SHA-256 identifiers and presence without copying
 freeform exception messages. Known lifecycle skip reasons remain codes; arbitrary
-coverage/recovery diagnostics are redacted. Raw model responses, filenames, storage
+coverage/recovery diagnostics are redacted. Coverage diagnostic hashes are retained
+in both JSON and CSV. Raw model responses, filenames, storage
 paths, claim tokens, media bytes, endpoint URLs, environment settings, credentials
 and weights are not exported. Configurations use an explicit field allowlist.
 User-authored prompts and model/fixture identifiers are intentionally exported;
