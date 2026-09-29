@@ -44,6 +44,9 @@ test("monitoring exposes timed failure, coverage gaps, disconnect and restart re
   let failure = false;
   let disconnected = false;
   const job = () => ({ id: session.latest_job_id ?? "job-failed", video_id: session.video_id, configuration_id: "immutable-config", prepared_input_id: null, state: failure ? "failed" : "succeeded", start_seconds: 0, end_seconds: 2, attempt_count: 1, error: failure ? "Inference request timed out" : null, configuration: config, prediction: failure ? null : { label, sampled_timestamps: [0, 1, 2], backend_kind: "mock", fixture_version: "scripted-v1", request_duration_ms: 1234, total_duration_ms: 1300, completed_at: "2026-09-27T12:00:00Z" } });
+  let releaseCapabilities!: () => void;
+  const capabilitiesReady = new Promise<void>(resolve => { releaseCapabilities = resolve; });
+  await page.route("**/api/capabilities", async route => { await capabilitiesReady; await route.continue(); });
   await page.addInitScript(() => { localStorage.setItem("sentinel-mode", "monitoring"); localStorage.setItem("sentinel-session", "session-fixture"); });
   await page.route("**/api/monitoring-sessions**", async route => {
     if (disconnected) { await route.fulfill({ status: 503, json: { detail: "service unavailable" } }); return; }
@@ -66,6 +69,9 @@ test("monitoring exposes timed failure, coverage gaps, disconnect and restart re
   await page.goto("/");
   const panel = page.getByRole("region", { name: "Recorded monitoring" });
   await expect(panel.locator(".result-label").first()).toHaveText("walk");
+  releaseCapabilities();
+  await panel.locator("summary").filter({ hasText: /Prompt & generation/ }).click();
+  await expect(panel.getByLabel("Resolved prompt")).toHaveValue("first part");
   await page.waitForTimeout(2200); // Observe multiple polls of the same terminal identity.
   expect(jobRequests["job-1"]).toBe(1);
   label = "fall"; session = { ...session, latest_job_id: "job-2" };
