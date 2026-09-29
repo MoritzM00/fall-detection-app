@@ -1,0 +1,30 @@
+import { readFile } from "node:fs/promises";
+import { expect, test } from "@playwright/test";
+
+test("selected run and complete session have working JSON and CSV downloads", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Use sample clip" }).click();
+  await page.locator(".analyze-button").click();
+  await expect(page.getByRole("link", { name: "Download run JSON", exact: true })).toBeVisible();
+  const runDownload = page.waitForEvent("download");
+  await page.getByRole("link", { name: "Download run JSON", exact: true }).click();
+  const run = JSON.parse(await readFile((await (await runDownload).path())!, "utf8"));
+  expect(run.schema_version).toBe(1);
+  expect(run.kind).toBe("run");
+  expect(run.runs[0].provenance).toBe("simulated");
+  const csvDownload = page.waitForEvent("download");
+  await page.getByRole("link", { name: "Download run CSV", exact: true }).click();
+  expect(await readFile((await (await csvDownload).path())!, "utf8")).toContain("record_type");
+  await page.getByRole("button", { name: "Monitoring", exact: true }).click();
+  const panel = page.getByRole("region", { name: "Recorded monitoring" });
+  await panel.getByRole("button", { name: "Use sample clip" }).click();
+  await panel.getByRole("button", { name: "Create monitoring session" }).click();
+  const sessionDownload = page.waitForEvent("download");
+  await panel.getByRole("link", { name: "Download complete session JSON", exact: true }).click();
+  const session = JSON.parse(await readFile((await (await sessionDownload).path())!, "utf8"));
+  expect(session.kind).toBe("session");
+  expect(session.segments).toHaveLength(1);
+  const sessionCsvDownload = page.waitForEvent("download");
+  await panel.getByRole("link", { name: "Download complete session CSV", exact: true }).click();
+  expect(await readFile((await (await sessionCsvDownload).path())!, "utf8")).toContain("schema_version");
+});
