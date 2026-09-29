@@ -332,3 +332,36 @@ def test_invalid_monitoring_input_precedes_serving_discovery(replay, monkeypatch
             ).status_code
             == 404
         )
+
+
+def test_end_of_playback_admits_final_window_before_pausing(replay):
+    request = replay[4].model_copy(update={"fps": 1, "stride_seconds": 1.5})
+    session = replay[2].create(request, replay[2].configuration(request, "model", "mock", "v1"))
+
+    def submit_pending():
+        with replay[1]._connect() as connection:
+            connection.execute(
+                "UPDATE monitoring_windows SET state='submitted' WHERE session_id=? AND state='pending'",
+                (session["id"],),
+            )
+
+    replay[2].command(session["id"], SessionCommand(action="start"))
+    replay[2].command(session["id"], SessionCommand(action="position", position_seconds=4.9))
+    replay[2].tick()
+    submit_pending()
+    replay[2].command(session["id"], SessionCommand(action="position", position_seconds=6))
+    replay[2].tick()
+    rows = {row["sequence"]: row for row in replay[2].history(session["id"])}
+    assert (rows[2]["state"], rows[2]["start_seconds"], rows[2]["end_seconds"]) == ("pending", 3, 5)
+    assert (rows[3]["reason"], rows[3]["start_seconds"], rows[3]["end_seconds"]) == (
+        "incomplete_tail",
+        4.5,
+        6,
+    )
+    # The final complete window is still owed a prediction, so playback end must not drop it.
+    assert replay[2].get(session["id"])["state"] == "running"
+    submit_pending()
+    replay[2].tick()
+    ended = replay[2].get(session["id"])
+    assert ended["state"] == "paused" and ended["recovery_reason"] is None
+    assert replay[2].history(session["id"])[0]["sequence"] == 3

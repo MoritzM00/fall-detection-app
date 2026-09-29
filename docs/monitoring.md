@@ -93,7 +93,10 @@ media lag or controlled-clock age exceeds `expiration_seconds`; queued jobs are
 also skipped before claim, and preparation rechecks expiry after decoding. Records
 are unique on session/generation/sequence, so repeated polls do not duplicate work.
 At EOF, the first stride-aligned interval shorter than a complete window is an
-explicit `incomplete_tail`. Other reasons include lifecycle commands,
+explicit `incomplete_tail`. The browser reports EOF as a position update only; the
+worker pauses the session after admitting the final windows and once no candidate
+is pending or preparing, so the last complete window is not dropped as `pause`
+coverage. An already queued final job keeps running. Other reasons include lifecycle commands,
 `process_restart`, source/preparation errors and `preparation_interrupted`.
 
 A preparing candidate older than 90 seconds is fenced and its session pauses when
