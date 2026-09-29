@@ -41,7 +41,7 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
   const jobCache = useRef<Record<string, AnalysisJob>>({});
   current.current = session;
 
-  useEffect(() => { if (capabilities) setSettings({ model: capabilities.models[0], prompt_text: capabilities.prompt_preset.prompt, generation: { ...capabilities.generation } }); }, [capabilities]);
+  useEffect(() => { if (capabilities && !current.current) setSettings({ model: capabilities.models[0], prompt_text: capabilities.prompt_preset.prompt, generation: { ...capabilities.generation } }); }, [capabilities]);
 
   function adopt(next: MonitoringSession) {
     current.current = next;
