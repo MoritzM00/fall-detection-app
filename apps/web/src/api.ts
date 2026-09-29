@@ -145,6 +145,7 @@ export type MonitoringSession = {
   generation: number; segment_id: string; position: number; duration: number;
   stride: number; expiration: number; recovery_reason: string | null;
   latest_job_id: string | null; configuration: NonNullable<AnalysisJob["configuration"]>;
+  created_at?: string;
 };
 export type MonitoringWindow = {
   id: string; cursor: number; generation: number; segment_id: string;
