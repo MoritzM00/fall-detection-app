@@ -134,7 +134,9 @@ browser playback cannot be recovered automatically. Switching modes or sessions
 also requests pause for the session being left. One browser controller per session
 is supported: tabs share server state, so opening/reloading the same session in
 another tab can pause it. During an outage playback pauses and availability stops;
-resume is explicit. A service restart's persisted recovery reason remains visible.
+the next successful poll reconciles the persisted session to paused and resume is
+explicit. Terminal job results are cached; queued/running jobs continue polling.
+A service restart's persisted recovery reason remains visible.
 Failed lifecycle commands can be explicitly retried with their original command
 identity. Polling never promotes a historical result into the current generation
 or segment.

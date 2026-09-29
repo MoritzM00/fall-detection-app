@@ -38,11 +38,13 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
   const initialPosition = useRef(true);
   const hydrated = useRef("");
   const polling = useRef(false);
+  const jobCache = useRef<Record<string, AnalysisJob>>({});
   current.current = session;
 
   useEffect(() => { if (capabilities) setSettings({ model: capabilities.models[0], prompt_text: capabilities.prompt_preset.prompt, generation: { ...capabilities.generation } }); }, [capabilities]);
 
   function adopt(next: MonitoringSession) {
+    current.current = next;
     setSession(next);
     if (next.state !== "running") media.current?.pause();
   }
@@ -53,6 +55,7 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
     fence.current++;
     initialPosition.current = true;
     retry.current = null; setError(null);
+    current.current = null; jobCache.current = {};
     setSession(null); setVideo(null); setWindows([]); setJobs({}); setConnected(false);
     setId(next); localStorage.setItem("sentinel-session", next);
   }
@@ -69,10 +72,14 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
       const history = await getWindows(id);
       const asset = await getVideo(next.video_id);
       const jobIds = [...new Set([...history.flatMap(w => w.job_id ? [w.job_id] : []), ...(next.latest_job_id ? [next.latest_job_id] : [])])];
-      const loaded = await Promise.all(jobIds.map(getJob));
+      const loaded = await Promise.all(jobIds.filter(jobId => {
+        const cached = jobCache.current[jobId];
+        return !cached || ["queued", "running"].includes(cached.state);
+      }).map(getJob));
       if (token !== fence.current || (pending.current && !positionPending.current)) return;
-      if (current.current && (next.generation !== current.current.generation || next.segment_id !== current.current.segment_id)) media.current?.pause();
+      if (current.current && (next.generation !== current.current.generation || next.segment_id !== current.current.segment_id)) { media.current?.pause(); initialPosition.current = true; }
       if (current.current?.generation === next.generation && current.current.segment_id === next.segment_id) next.position = Math.max(next.position, current.current.position);
+      Object.assign(jobCache.current, Object.fromEntries(loaded.map(job => [job.id, job])));
       adopt(next); setVideo(asset); setWindows(old => [...history, ...old.filter(w => w.cursor < (history.at(-1)?.cursor ?? 0) && !history.some(item => item.id === w.id))]); setJobs(old => ({ ...old, ...Object.fromEntries(loaded.map(job => [job.id, job])) }));
       setConnected(true); setUpdated(Date.now()); if (!retry.current) setError(null);
       if (hydrated.current !== next.segment_id) {
@@ -87,7 +94,7 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
         if (next.state === "running") void send({ action: "pause" });
       }
     } catch (cause) {
-      if (token === fence.current) { setConnected(false); setError(message(cause)); media.current?.pause(); }
+      if (token === fence.current) { setConnected(false); setError(message(cause)); media.current?.pause(); initialPosition.current = true; }
     } finally { polling.current = false; }
   }
 
@@ -123,9 +130,9 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
         if (media.current && Math.abs(media.current.currentTime - next.position) > 0.1) media.current.currentTime = next.position;
       }
       if (["start", "resume", "restart"].includes(payload.action) && media.current) {
-        try { await media.current.play(); } catch { setError("Playback was blocked. Press Resume to try again."); await commandSession(target, { action: "pause", command_id: crypto.randomUUID() }); }
+        try { await media.current.play(); } catch { if (token === fence.current) setError("Playback was blocked. Press Resume to try again."); const paused = await commandSession(target, { action: "pause", command_id: crypto.randomUUID() }); if (token === fence.current) adopt(paused); }
       }
-    } catch (cause) { if (token === fence.current) { setError(message(cause)); setConnected(false); media.current?.pause(); } }
+    } catch (cause) { if (token === fence.current) { setError(message(cause)); setConnected(false); media.current?.pause(); initialPosition.current = true; } }
     finally { pending.current = false; positionPending.current = false; setBusy(false); }
   }
 
@@ -138,7 +145,7 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
         const actual = video?.source === "synthetic" ? Math.min(saved.duration, syntheticPosition.current + (now - last) / 1000) : media.current?.currentTime;
         if (actual !== undefined && Number.isFinite(actual)) {
           syntheticPosition.current = actual; setPosition(actual);
-          if (actual >= saved.position) void send({ action: "position", position_seconds: Math.min(actual, saved.duration) }).then(() => { if (actual >= saved.duration) void send({ action: "pause" }); });
+          if (actual >= saved.position) void send({ action: "position", position_seconds: Math.min(actual, saved.duration) }).then(() => { if (actual >= saved.duration && current.current?.id === saved.id && current.current.generation === saved.generation && current.current.segment_id === saved.segment_id) void send({ action: "pause" }); });
         }
       }
       last = now;
@@ -165,6 +172,7 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
       const page = await getWindows(session.id, windows[windows.length - 1].cursor);
       const loaded = await Promise.all(page.flatMap(w => w.job_id ? [getJob(w.job_id)] : []));
       if (token !== fence.current) return;
+      Object.assign(jobCache.current, Object.fromEntries(loaded.map(job => [job.id, job])));
       setWindows(old => [...old, ...page.filter(w => !old.some(existing => existing.id === w.id))]);
       setJobs(old => ({ ...old, ...Object.fromEntries(loaded.map(job => [job.id, job])) }));
     } catch (cause) { setError(message(cause)); }
@@ -177,10 +185,10 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
       <div className="viewer-panel">
         {!id ? <><SourceSelection {...source} onSample={() => void source.useSample()} onBrowseDataset={() => void source.browseDataset()} onDatasetPathChange={source.setSelectedDatasetPath} onOpenDataset={() => void source.useDatasetVideo()} onUpload={file => void source.upload(file)} onDurationLoaded={source.onDurationLoaded} />{source.error && <p role="alert">{source.error}</p>}<button className="button primary" disabled={busy || !source.video || !source.duration || !settingsValid} onClick={() => void create()}>Create monitoring session</button></> : <>
           <h2>{video?.filename ?? "Recovering recording…"}</h2>
-          {video?.source !== "synthetic" && video && <video ref={media} src={`/api/videos/${video.id}/media`} onLoadedMetadata={event => { event.currentTarget.currentTime = current.current?.position ?? 0; }} onEnded={event => { const actual = event.currentTarget.currentTime; void send({ action: "position", position_seconds: Math.min(actual, current.current?.duration ?? actual) }).then(() => send({ action: "pause" })); }} onError={() => { setError("Recording playback unavailable"); void send({ action: "pause" }); }} />}
+          {video?.source !== "synthetic" && video && <video ref={media} src={`/api/videos/${video.id}/media`} onLoadedMetadata={event => { event.currentTarget.currentTime = current.current?.position ?? 0; }} onEnded={event => { const saved = current.current; const actual = event.currentTarget.currentTime; void send({ action: "position", position_seconds: Math.min(actual, saved?.duration ?? actual) }).then(() => { if (saved && current.current?.id === saved.id && current.current.generation === saved.generation && current.current.segment_id === saved.segment_id) void send({ action: "pause" }); }); }} onError={() => { setError("Recording playback unavailable"); void send({ action: "pause" }); }} />}
           {video?.source === "synthetic" && <p className="preview-note">Synthetic recording · simulated playback clock</p>}
           <p>Playback {seconds(position)} / {seconds(session?.duration ?? 0)}</p>
-          <label>Seek recording <input aria-label="Seek recording" type="range" min="0" max={session?.duration ?? 0} step="0.1" value={position} disabled={busy || !session || !connected} onChange={event => { media.current?.pause(); void send({ action: "seek", position_seconds: Number(event.target.value) }).then(() => { if (current.current?.state === "running") void media.current?.play().catch(() => {}); }); }} /></label>
+          <label>Seek recording <input aria-label="Seek recording" type="range" min="0" max={session?.duration ?? 0} step="0.1" value={position} disabled={busy || !session || !connected} onChange={event => { const savedId = current.current?.id; media.current?.pause(); void send({ action: "seek", position_seconds: Number(event.target.value) }).then(() => { if (current.current?.id === savedId && current.current?.state === "running") void media.current?.play().catch(() => { if (current.current?.id === savedId) { setError("Playback was blocked. Press Resume to try again."); void send({ action: "pause" }); } }); }); }} /></label>
           <div className="source-actions"><button className="button primary" disabled={busy || !session || !connected || session.state === "running" || session.state === "stopped"} onClick={() => void send({ action: session?.position === 0 ? "start" : "resume" })}>{session?.position === 0 ? "Start" : "Resume"}</button><button className="button secondary" disabled={busy || session?.state !== "running"} onClick={() => { media.current?.pause(); void send({ action: "pause" }); }}>Pause</button><button className="button secondary" disabled={busy || !session || session.state === "stopped"} onClick={() => { media.current?.pause(); void send({ action: "stop" }); }}>Stop</button><button className="button secondary" disabled={busy || !session || !connected} onClick={() => void send({ action: "restart", position_seconds: 0 })}>Restart / retry inference</button></div>
           <p role="status">System: {connected ? session?.state ?? "recovering" : "disconnected"}{busy ? " · updating" : ""}{session?.recovery_reason ? ` · ${session.recovery_reason}` : ""}</p>
           <p role="status">Inference: {inferenceState}{newestWindow?.reason ? ` · ${newestWindow.reason}` : ""}</p>
