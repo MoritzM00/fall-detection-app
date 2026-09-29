@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { commandSession, createSession, getJob, getSession, getVideo, getWindows, listSessions } from "./api";
 import type { AnalysisJob, Capabilities, MonitoringCommand, MonitoringSession, MonitoringWindow, VideoAsset } from "./api";
+import { inPaintOrder } from "./coverage";
+import type { Tone } from "./coverage";
 import { SourceSelection } from "./SourceSelection";
 import { ExperimentControls } from "./ExperimentControls";
 import { useSourceSelection } from "./useSourceSelection";
@@ -197,7 +199,7 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
             {video?.source !== "synthetic" && video && <video ref={media} src={`/api/videos/${video.id}/media`} onLoadedMetadata={event => { event.currentTarget.currentTime = current.current?.position ?? 0; }} onEnded={event => { const saved = current.current; void send({ action: "position", position_seconds: saved?.duration ?? event.currentTarget.currentTime }); }} onError={() => { setError("Recording playback unavailable"); void send({ action: "pause" }); }} />}
             {video?.source === "synthetic" && <p className="replay-placeholder">Synthetic recording · simulated playback clock</p>}
           </div>
-          {session && <CoverageTimeline windows={windows.filter(window => window.generation === session.generation)} jobs={jobs} duration={duration} position={position} />}
+          {session && <CoverageTimeline windows={windows.filter(window => window.generation === session.generation)} jobs={jobs} duration={duration} position={position} partial={windows.length >= 100} onLoadOlder={() => void older()} />}
           <label className="seek-control">Seek recording <input aria-label="Seek recording" type="range" min="0" max={duration} step="0.1" value={position} disabled={busy || !session || !connected} onChange={event => { media.current?.pause(); void send({ action: "seek", position_seconds: Number(event.target.value) }).then(next => { if (next && current.current?.id === next.id && current.current.generation === next.generation && current.current.segment_id === next.segment_id && current.current.state === "running") { const playbackFence = fence.current; void media.current?.play().catch(() => { if (playbackFence === fence.current) { setError("Playback was blocked. Press Resume to try again."); void send({ action: "pause" }); } }); } }); }} /></label>
           <div className="replay-controls"><button className="button primary" disabled={busy || !session || !connected || session.state === "running" || session.state === "stopped"} onClick={() => void send({ action: session?.position === 0 ? "start" : "resume" })}>{session?.position === 0 ? "Start" : "Resume"}</button><button className="button secondary" disabled={busy || session?.state !== "running"} onClick={() => { media.current?.pause(); void send({ action: "pause" }); }}>Pause</button><button className="button secondary" disabled={busy || !session || session.state === "stopped"} onClick={() => { media.current?.pause(); void send({ action: "stop" }); }}>Stop</button><button className="button secondary restart" disabled={busy || !session || !connected} onClick={() => void send({ action: "restart", position_seconds: 0 })}>Restart / retry inference</button></div>
           <div className="replay-status">
@@ -227,7 +229,7 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
 
 const shortId = (value: string | null) => !value ? "unknown" : value.length > 24 ? `${value.slice(0, 24)}…` : value;
 const isAlert = (job: AnalysisJob) => ["fall", "fallen"].includes(job.prediction?.label ?? "");
-function toneOf(state: string, job?: AnalysisJob) {
+function toneOf(state: string, job?: AnalysisJob): Tone {
   if (state === "succeeded") return job && isAlert(job) ? "alert" : "done";
   if (["failed", "cancelled", "disconnected"].includes(state)) return "failed";
   if (["skipped", "stopped"].includes(state)) return "gap";
@@ -240,18 +242,21 @@ function sessionName(item: MonitoringSession) {
 }
 
 const legend = [["done", "Other activity"], ["alert", "Fall or fallen"], ["active", "In progress"], ["gap", "Not covered"], ["failed", "Failed"]] as const;
-function CoverageTimeline({ windows, jobs, duration, position }: { windows: MonitoringWindow[]; jobs: Record<string, AnalysisJob>; duration: number; position: number }) {
+function CoverageTimeline({ windows, jobs, duration, position, partial, onLoadOlder }: { windows: MonitoringWindow[]; jobs: Record<string, AnalysisJob>; duration: number; position: number; partial: boolean; onLoadOlder: () => void }) {
   if (!duration) return null;
   const pct = (value: number) => `${Math.min(100, Math.max(0, (value / duration) * 100))}%`;
-  const tones = windows.map(window => { const job = window.job_id ? jobs[window.job_id] : undefined; return { window, job, tone: toneOf(job?.state ?? window.state, job) }; });
+  const tones = windows.map(window => { const job = window.job_id ? jobs[window.job_id] : undefined; return { window, job, tone: toneOf(job?.state ?? window.state, job), start: window.start_seconds }; });
   const counts = Object.fromEntries(legend.map(([tone]) => [tone, tones.filter(item => item.tone === tone).length]));
+  const loadedFrom = windows.length ? Math.min(...windows.map(window => window.start_seconds)) : duration;
   return <div className="coverage">
     <div className="coverage-bar" aria-hidden="true">
-      {[...tones].reverse().map(({ window, job, tone }) => <i key={window.id} data-tone={tone} style={{ left: pct(window.start_seconds), width: pct(window.end_seconds - window.start_seconds) }} title={`${seconds(window.start_seconds)}–${seconds(window.end_seconds)} · ${job?.prediction?.label ?? job?.state ?? window.state}${window.reason ? ` (${window.reason})` : ""}`} />)}
+      {partial && loadedFrom > 0 && <i data-tone="unloaded" style={{ left: 0, width: pct(loadedFrom) }} />}
+      {inPaintOrder(tones).map(({ window, job, tone }) => <i key={window.id} data-tone={tone} style={{ left: pct(window.start_seconds), width: pct(window.end_seconds - window.start_seconds) }} title={`${seconds(window.start_seconds)}–${seconds(window.end_seconds)} · ${job?.prediction?.label ?? job?.state ?? window.state}${window.reason ? ` (${window.reason})` : ""}`} />)}
       <b style={{ left: pct(position) }} />
     </div>
     <div className="window-track-scale"><span>0 s</span><span>{duration.toFixed(1)} s</span></div>
     <ul className="coverage-legend">{legend.filter(([tone]) => counts[tone] > 0).map(([tone, name]) => <li key={tone}><i data-tone={tone} aria-hidden="true" />{name} <span>{counts[tone]}</span></li>)}</ul>
+    {partial && <p className="preview-note">Counts and bars cover the newest loaded windows only; earlier history is not loaded. <button className="text-button" onClick={onLoadOlder}>Load older history</button></p>}
   </div>;
 }
 
