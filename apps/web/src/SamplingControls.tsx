@@ -33,7 +33,7 @@ export function WindowControls({
           if (Number.isFinite(next)) onRangeChange(next, next + (frameCount - 1) / fps);
         }} /></label>
         <span>to</span>
-        <label>End (s) <input disabled={busy} aria-invalid={!valid} type="number" min={startSeconds + 0.1} max={duration ?? 30} step="0.1" value={endSeconds} onChange={(event) => {
+        <label>End (s) <input disabled={busy} aria-invalid={!valid} type="number" min={startSeconds + 0.1} max={duration ?? 30} step="0.1" value={Number(endSeconds.toFixed(3))} onChange={(event) => {
           const next = event.currentTarget.valueAsNumber;
           if (Number.isFinite(next)) onRangeChange(startSeconds, next);
         }} /></label>
