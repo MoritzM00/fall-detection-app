@@ -253,7 +253,8 @@ footer { padding: 20px 0 32px; display: flex; justify-content: space-between; ga
 .download-links a:hover { color: var(--ink); text-decoration-color: currentColor; }
 .session-picker select:focus-visible, .monitor-config input:focus-visible, .monitor-config select:focus-visible { outline: 2px solid var(--amber); outline-offset: 1px; }
 
-.monitoring .panel-heading { align-items: baseline; }
+.monitoring .panel-heading { align-items: baseline; flex-wrap: wrap; }
+.monitoring .panel-heading h2 { min-width: 0; overflow-wrap: anywhere; }
 .playback-clock { margin: 0; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .replay-screen { position: relative; aspect-ratio: 16 / 9; max-height: 440px; border-radius: 12px; overflow: hidden; background: #000; display: grid; place-items: center; }
 .replay-screen video { width: 100%; height: 100%; object-fit: contain; display: block; }
@@ -269,6 +270,7 @@ footer { padding: 20px 0 32px; display: flex; justify-content: space-between; ga
 [data-tone="active"] { --tone: var(--amber); }
 [data-tone="failed"] { --tone: #a3291d; }
 [data-tone="gap"], [data-tone="idle"] { --tone: var(--faint); }
+.coverage-bar i[data-tone="unloaded"] { top: 0; bottom: 0; border-radius: 0; box-shadow: none; background: rgba(22, 32, 44, .06); }
 .coverage-bar i, .coverage-legend i, .coverage-history summary i { background: var(--tone); }
 .coverage-bar i[data-tone="gap"], .coverage-legend i[data-tone="gap"], .coverage-history summary i[data-tone="gap"] { background: repeating-linear-gradient(135deg, var(--faint) 0 2px, transparent 2px 5px); }
 .coverage-bar i[data-tone="failed"], .coverage-legend i[data-tone="failed"], .coverage-history summary i[data-tone="failed"] { background: var(--alert-soft); box-shadow: inset 0 0 0 1.5px var(--tone); }
@@ -292,7 +294,7 @@ footer { padding: 20px 0 32px; display: flex; justify-content: space-between; ga
 
 .monitor-latest, .monitor-config { margin-bottom: 20px; }
 .monitoring .analysis-panel h2, .coverage-history h2 { margin: 0 0 12px; font-size: 17px; font-weight: 600; letter-spacing: -.015em; }
-.monitor-config .setting-row input, .monitor-config .setting-row select { width: 112px; }
+.monitor-config > .setting-row input, .monitor-config > .setting-row select { width: 112px; }
 .monitoring .result-label { display: block; }
 .frame-times { margin: 12px 0 0; color: var(--muted); font: 400 11px/1.6 var(--mono); overflow-wrap: anywhere; }
 .monitoring .result-card .simulation-note { margin-top: 6px; }
