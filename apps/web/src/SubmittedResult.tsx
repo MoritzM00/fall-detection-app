@@ -46,6 +46,7 @@ export function SubmittedResult({
         {jobs.map((item) => <option key={item.id} value={item.id}>{item.created_at.slice(0, 19)} · {item.state} · {item.video_id}</option>)}
       </select>
     </section>}
+    {job && <p><a href={`/api/analysis-jobs/${job.id}/export?format=json`} download>Download run JSON</a> · <a href={`/api/analysis-jobs/${job.id}/export?format=csv`} download>Download run CSV</a></p>}
     {job && <p className="preview-note">Submitted source: {jobVideo?.id === job.video_id ? jobVideo.filename : job.video_id} · {job.start_seconds.toFixed(3)}–{job.end_seconds.toFixed(3)} s · {job.configuration?.model ?? "Saved model unavailable"}</p>}
 
     {!job && <div className="result-placeholder"><span>{currentVideo ? "Ready when you are" : "Start with a clip"}</span><p>{currentVideo?.source === "synthetic" && !simulated ? "Choose a real video for online vLLM analysis." : currentVideo ? simulated ? "Check your window, then run a simulated analysis." : "Check your prepared frames, then run analysis." : "Choose a sample, browse the dataset, or upload a video to get started."}</p></div>}
