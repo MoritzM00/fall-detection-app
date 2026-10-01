@@ -1,5 +1,9 @@
 # Live GPU/vLLM contract validation
 
+For a partial real-serving check on Apple Silicon, see the [local Metal text smoke test](local-metal-validation.md). Metal currently excludes video input, so that test cannot replace this validation.
+
+The [local upstream CPU experiment](local-cpu-validation.md) records a separate attempt with Qwen3-VL-2B-Instruct and Metal disabled.
+
 Issue #9 requires a run against the actual GPU service. The local mock and unit tests establish the application-side request shape, but they cannot show which request fields a deployed vLLM/model stack accepts. The [vLLM documentation](https://docs.vllm.ai/en/latest/features/multimodal_inputs/#pre-extracted-frame-sequences-with-media_io_kwargs) describes the client-extracted `data:video/jpeg;base64,...` format and `media_io_kwargs.video` metadata. The validator exercises that contract through the real worker and persistence path.
 
 From a machine that can reach the GPU service, with the same Python environment as this repository, run:
