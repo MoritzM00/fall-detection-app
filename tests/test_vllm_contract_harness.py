@@ -1,11 +1,14 @@
 """Self-test for the opt-in live validator; this is not GPU validation."""
 
 import httpx
+import pytest
 
+from fall_detection.prompts import THESIS_BASELINE_PROMPT
 from scripts.validate_vllm_contract import validate
 
 
-def test_validator_exercises_success_and_failure_without_gpu(monkeypatch) -> None:
+@pytest.mark.parametrize("prompt", [THESIS_BASELINE_PROMPT, "Custom smoke-test prompt"])
+def test_validator_exercises_success_and_failure_without_gpu(monkeypatch, prompt) -> None:
     def fake_get(url, **_kwargs):
         if url.endswith("/version"):
             return httpx.Response(
@@ -16,6 +19,7 @@ def test_validator_exercises_success_and_failure_without_gpu(monkeypatch) -> Non
         )
 
     def fake_post(url, **_kwargs):
+        assert _kwargs["json"]["messages"][0]["content"][0]["text"] == prompt
         if url.startswith("http://127.0.0.1:"):
             raise httpx.ConnectError("fixture connection refused")
         return httpx.Response(
@@ -29,7 +33,12 @@ def test_validator_exercises_success_and_failure_without_gpu(monkeypatch) -> Non
 
     monkeypatch.setattr(httpx, "get", fake_get)
     monkeypatch.setattr(httpx, "post", fake_post)
-    report = validate("http://gpu.example/v1", "served-model", "fixture-processor", 1)
+    report = validate(
+        "http://gpu.example/v1", "served-model", "fixture-processor", 1, prompt_text=prompt
+    )
+    assert report["prompt_preset"] == (
+        "thesis-baseline-v1" if prompt == THESIS_BASELINE_PROMPT else "custom"
+    )
     assert report["request_exact_jpegs_and_metadata"] is True
     assert report["timestamp_count"] == 16
     assert report["result_label"] == "walk"

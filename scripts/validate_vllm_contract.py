@@ -15,6 +15,7 @@ import apps.worker.main as worker
 from fall_detection.config import Settings
 from fall_detection.models import PreparationRequest
 from fall_detection.preparation import prepare_video, to_vllm_jpeg_data_url
+from fall_detection.prompts import THESIS_BASELINE_PROMPT
 from fall_detection.repository import Repository
 from fall_detection.taxonomy import ACTIVITY_LABELS
 
@@ -54,7 +55,14 @@ def _server_identity(base_url: str, model: str) -> tuple[str, list[str]]:
     return version, models
 
 
-def validate(base_url: str, model: str, processor_version: str, timeout: float) -> dict:
+def validate(
+    base_url: str,
+    model: str,
+    processor_version: str,
+    timeout: float,
+    *,
+    prompt_text: str = THESIS_BASELINE_PROMPT,
+) -> dict:
     """Verify actual request bytes, accepted response, provenance, and failure state."""
     vllm_version, served_models = _server_identity(base_url, model)
     with TemporaryDirectory(prefix="fall-vllm-contract-") as directory:
@@ -88,6 +96,7 @@ def validate(base_url: str, model: str, processor_version: str, timeout: float) 
             model=model,
             prepared_input_id=prepared.id,
             backend_kind="vllm",
+            prompt_text=prompt_text,
             preprocessing={
                 "frames": prepared.frame_count,
                 "fps": prepared.fps,
@@ -137,6 +146,7 @@ def validate(base_url: str, model: str, processor_version: str, timeout: float) 
         assert prediction.fixture_version is None
         assert completed.prepared_input_id == prepared.id
         assert completed.configuration is not None
+        assert completed.configuration.prompt_text == prompt_text
         assert completed.configuration.preprocessing.bundle_sha256 == prepared.bundle_sha256
 
         failure = repository.create_job(
@@ -146,6 +156,7 @@ def validate(base_url: str, model: str, processor_version: str, timeout: float) 
             model=model,
             prepared_input_id=prepared.id,
             backend_kind="vllm",
+            prompt_text=prompt_text,
         )
         with socket.socket() as unavailable:
             unavailable.bind(("127.0.0.1", 0))
@@ -165,6 +176,8 @@ def validate(base_url: str, model: str, processor_version: str, timeout: float) 
             "processor_version": processor_version,
             "served_model_ids": served_models,
             "requested_model": model,
+            "prompt_preset": completed.configuration.prompt_preset,
+            "raw_response": prediction.raw_response,
             "request_exact_jpegs_and_metadata": request_checked,
             "result_label": prediction.label,
             "timestamp_count": len(prediction.sampled_timestamps),
@@ -187,12 +200,25 @@ def main() -> None:
         help="processor class and Transformers version observed on the GPU host",
     )
     parser.add_argument("--timeout", type=float, default=120)
+    parser.add_argument(
+        "--prompt-file", type=Path, help="optional UTF-8 custom prompt saved with the test run"
+    )
     args = parser.parse_args()
     if args.timeout <= 0:
         parser.error("timeout must be positive")
     print(
         json.dumps(
-            validate(args.base_url.rstrip("/"), args.model, args.processor_version, args.timeout),
+            validate(
+                args.base_url.rstrip("/"),
+                args.model,
+                args.processor_version,
+                args.timeout,
+                prompt_text=(
+                    args.prompt_file.read_text(encoding="utf-8")
+                    if args.prompt_file
+                    else THESIS_BASELINE_PROMPT
+                ),
+            ),
             indent=2,
         )
     )
