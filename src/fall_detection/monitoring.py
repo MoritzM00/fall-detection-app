@@ -96,6 +96,10 @@ SCHEMA = (
         created_at TEXT NOT NULL, UNIQUE(session_id, generation, sequence))""",
     """CREATE UNIQUE INDEX IF NOT EXISTS one_pending_window
         ON monitoring_windows(session_id) WHERE state IN ('pending', 'preparing')""",
+    """CREATE TABLE IF NOT EXISTS live_frames (
+        video_id TEXT NOT NULL REFERENCES videos(id), seq INTEGER NOT NULL,
+        capture_seconds REAL NOT NULL, sha256 TEXT NOT NULL, received_at TEXT NOT NULL,
+        PRIMARY KEY(video_id, seq))""",
 )
 
 
@@ -103,6 +107,16 @@ def migrate(connection: sqlite3.Connection) -> None:
     """Add replay tables without rewriting clip jobs or saved configurations."""
     for statement in SCHEMA:
         connection.execute(statement)
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(monitoring_sessions)")}
+    # Live sessions: capture policy and the newest ingest time; recordings keep the defaults.
+    if "source_kind" not in columns:
+        connection.execute(
+            "ALTER TABLE monitoring_sessions ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'recording'"
+        )
+    if "capture_fps" not in columns:
+        connection.execute("ALTER TABLE monitoring_sessions ADD COLUMN capture_fps REAL")
+    if "last_frame_at" not in columns:
+        connection.execute("ALTER TABLE monitoring_sessions ADD COLUMN last_frame_at TEXT")
 
 
 class Monitoring:
@@ -136,8 +150,18 @@ class Monitoring:
             generation=request.generation or GenerationConfiguration(temperature=0, max_tokens=32),
         )
 
-    def create(self, request: SessionCreate, configuration: RunConfiguration) -> dict:
-        """Create a paused session and its immutable initial configuration segment."""
+    def create(
+        self,
+        request: SessionCreate,
+        configuration: RunConfiguration,
+        *,
+        capture_fps: float | None = None,
+    ) -> dict:
+        """Create a paused session and its immutable initial configuration segment.
+
+        A ``capture_fps`` makes it a live session: its bound is the maximum session
+        length and its watermark follows ingested frames instead of playback.
+        """
         session_id, segment = str(uuid4()), str(uuid4())
         timestamp = self.repository._timestamp()
         with self.repository._connect() as connection:
@@ -185,6 +209,14 @@ class Monitoring:
                     timestamp,
                 ),
             )
+            if (video is not None and video.source == "live") != (capture_fps is not None):
+                raise ValueError("Live sources require a live session")
+            if capture_fps is not None:
+                connection.execute(
+                    """UPDATE monitoring_sessions SET source_kind='live',capture_fps=?,
+                    duration_verified=1 WHERE id=?""",
+                    (capture_fps, session_id),
+                )
             if video is not None and video.source == "synthetic":
                 connection.execute(
                     "UPDATE monitoring_sessions SET duration_verified=1 WHERE id=?", (session_id,)
@@ -279,6 +311,15 @@ class Monitoring:
                 )
             values = dict(row)
             action = command.action
+            live = row["source_kind"] == "live"
+            if live and (action in {"position", "seek"} or command.position_seconds is not None):
+                raise ValueError("Live sessions follow ingested frames; position cannot be set")
+            if (
+                live
+                and command.configuration is not None
+                and command.configuration.fps > row["capture_fps"]
+            ):
+                raise ValueError("Sampling FPS cannot exceed the capture FPS")
             if command.position_seconds is not None:
                 if command.position_seconds > row["duration"]:
                     raise ValueError("Position exceeds playback bound")
@@ -297,7 +338,8 @@ class Monitoring:
                 values["state"] = "paused" if action == "pause" else "stopped"
             elif action == "restart":
                 values["state"] = "running"
-                values["position"] = command.position_seconds or 0
+                # A live restart begins at the live edge; there is no earlier media to replay.
+                values["position"] = row["position"] if live else command.position_seconds or 0
             elif action == "position" and command.position_seconds is None:
                 raise ValueError("Position command requires an explicit position")
             if action in {"stop", "seek", "restart", "configure"}:
@@ -353,9 +395,13 @@ class Monitoring:
                     "UPDATE monitoring_windows SET state='skipped',reason='pause' WHERE session_id=? AND state='pending'",
                     (session_id,),
                 )
+            if live and values["state"] == "running" and row["state"] != "running":
+                # Starting capture takes a moment; count the ingest timeout from here.
+                values["last_frame_at"] = self.repository._timestamp()
             connection.execute(
                 """UPDATE monitoring_sessions SET state=?,generation=?,segment_id=?,position=?,
-                origin=?,next_sequence=?,updated_at=?,recovery_reason=NULL WHERE id=?""",
+                origin=?,next_sequence=?,updated_at=?,recovery_reason=NULL,last_frame_at=?
+                WHERE id=?""",
                 (
                     values["state"],
                     values["generation"],
@@ -364,6 +410,7 @@ class Monitoring:
                     values["origin"],
                     values["next_sequence"],
                     self.repository._timestamp(),
+                    values["last_frame_at"],
                     session_id,
                 ),
             )
@@ -413,6 +460,25 @@ class Monitoring:
                 "SELECT * FROM monitoring_sessions WHERE state='running' AND duration_verified=1"
             ).fetchone()
             if row is None:
+                connection.commit()
+                return
+            if (
+                row["source_kind"] == "live"
+                and row["last_frame_at"] is not None
+                and (
+                    self.repository._clock() - datetime.fromisoformat(row["last_frame_at"])
+                ).total_seconds()
+                > row["expiration"]
+            ):
+                connection.execute(
+                    "UPDATE monitoring_windows SET state='skipped',reason='capture_ended' WHERE session_id=? AND state='pending'",
+                    (row["id"],),
+                )
+                connection.execute(
+                    """UPDATE monitoring_sessions SET state='paused',recovery_reason='capture_ended',
+                    updated_at=? WHERE id=?""",
+                    (self.repository._timestamp(), row["id"]),
+                )
                 connection.commit()
                 return
             config = RunConfiguration.model_validate_json(
@@ -569,6 +635,7 @@ class Monitoring:
         """Prepare one candidate on the worker, yielding to all queued clip jobs."""
         import av
 
+        from fall_detection.live import IngestGapError, prepare_frames
         from fall_detection.models import PreparationRequest
         from fall_detection.preparation import prepare_video
         from fall_detection.storage_lock import storage_lock
@@ -588,7 +655,7 @@ class Monitoring:
             ):
                 connection.commit()
                 return False
-            row = connection.execute("""SELECT w.*,s.video_id FROM monitoring_windows w
+            row = connection.execute("""SELECT w.*,s.video_id,s.capture_fps FROM monitoring_windows w
                 JOIN monitoring_sessions s ON s.id=w.session_id WHERE w.state='pending'
                 AND s.state='running' AND s.generation=w.generation AND s.segment_id=w.segment_id""").fetchone()
             if row is None:
@@ -611,7 +678,22 @@ class Monitoring:
                 raise ValueError("Session source is missing")
             # Lock spans publication and durable reference, preventing prune races.
             with storage_lock(settings.data_dir, exclusive=False):
-                if video.source != "synthetic":
+                if video.source == "live":
+                    prepared = prepare_frames(
+                        self.repository,
+                        video,
+                        PreparationRequest(
+                            video_id=video.id,
+                            start_seconds=row["start_seconds"],
+                            frame_count=config.preprocessing.frames,
+                            fps=config.preprocessing.fps,
+                            size=config.preprocessing.resize,
+                        ),
+                        row["capture_fps"],
+                        settings.data_dir,
+                        settings.inspection_pngs,
+                    )
+                elif video.source != "synthetic":
                     prepared = prepare_video(
                         video,
                         PreparationRequest(
@@ -708,6 +790,12 @@ class Monitoring:
                         (prepared.id if prepared else None, job_id, row["id"]),
                     )
                     connection.commit()
+        except IngestGapError:
+            with self.repository._connect() as connection:
+                connection.execute(
+                    "UPDATE monitoring_windows SET state='skipped',reason='ingest_gap' WHERE id=? AND state='preparing'",
+                    (row["id"],),
+                )
         except (ValueError, OSError, av.error.FFmpegError) as exc:
             with self.repository._connect() as connection:
                 connection.execute(

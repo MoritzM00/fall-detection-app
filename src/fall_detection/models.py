@@ -12,7 +12,7 @@ class VideoAsset(BaseModel):
 
     id: str
     filename: str
-    source: Literal["upload", "synthetic", "dataset"]
+    source: Literal["upload", "synthetic", "dataset", "live"]
     storage_key: str | None = None
     duration_seconds: float | None = None
     created_at: str

@@ -70,7 +70,7 @@ class Repository:
                 CREATE TABLE IF NOT EXISTS videos (
                     id TEXT PRIMARY KEY,
                     filename TEXT NOT NULL,
-                    source TEXT NOT NULL CHECK (source IN ('upload', 'synthetic', 'dataset')),
+                    source TEXT NOT NULL CHECK (source IN ('upload', 'synthetic', 'dataset', 'live')),
                     storage_key TEXT,
                     duration_seconds REAL,
                     created_at TEXT NOT NULL
@@ -123,14 +123,14 @@ class Repository:
             videos_schema = connection.execute(
                 "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'videos'"
             ).fetchone()["sql"]
-            if "'dataset'" not in videos_schema:
+            if "'live'" not in videos_schema:
                 # SQLite cannot alter a CHECK constraint. Preserve the old rows
                 # while moving the table name under the same transaction.
                 connection.execute("""CREATE TABLE videos_new (
                         id TEXT PRIMARY KEY,
                         filename TEXT NOT NULL,
                         source TEXT NOT NULL
-                            CHECK (source IN ('upload', 'synthetic', 'dataset')),
+                            CHECK (source IN ('upload', 'synthetic', 'dataset', 'live')),
                         storage_key TEXT,
                         duration_seconds REAL,
                         created_at TEXT NOT NULL
@@ -166,7 +166,7 @@ class Repository:
             from fall_detection.monitoring import migrate
 
             migrate(connection)
-            connection.execute("PRAGMA user_version = 4")
+            connection.execute("PRAGMA user_version = 5")
             if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
                 raise RuntimeError("Migration would violate foreign keys")
             connection.commit()
@@ -209,6 +209,19 @@ class Repository:
                 VALUES (?, ?, 'dataset', ?, NULL, ?)
                 ON CONFLICT(id) DO NOTHING""",
                 (video_id, filename, storage_key, utc_now()),
+            )
+            row = connection.execute("SELECT * FROM videos WHERE id = ?", (video_id,)).fetchone()
+        return self._video_from_row(row)
+
+    def create_live_source(self) -> VideoAsset:
+        """Register a camera frame log; its frames arrive later through ingest."""
+        video_id = str(uuid4())
+        with self._connect() as connection:
+            connection.execute(
+                """INSERT INTO videos
+                (id, filename, source, storage_key, duration_seconds, created_at)
+                VALUES (?, 'Live camera', 'live', ?, NULL, ?)""",
+                (video_id, f"live/{video_id}", utc_now()),
             )
             row = connection.execute("SELECT * FROM videos WHERE id = ?", (video_id,)).fetchone()
         return self._video_from_row(row)
