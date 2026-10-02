@@ -1,7 +1,7 @@
 # Live camera monitoring
 
-Status: **phase 1 (backend ingest) implemented locally against mock serving; browser
-capture is not yet built.** This is proposed application behavior, not verified
+Status: **phases 1–2 (backend ingest and browser capture) implemented locally
+against mock serving; raw-frame retention is not yet built.** This is proposed application behavior, not verified
 research behavior. It addresses the open decision "Camera protocol and browser
 playback approach" ([decisions](decisions.md)) and the ingestion part of roadmap
 milestone 6. Nothing here changes the research baseline or claims parity with it.
@@ -180,26 +180,41 @@ be confirmed:
   [product](product.md) apply: intended users, consent, access control and
   deletion must be defined first. This slice is a local development and demo tool.
 
-## UI sketch
+## Browser capture (phase 2, implemented)
 
-- Source selection gains **Use camera**; permission denial and missing devices are
-  shown as source errors, not session states.
-- The viewer shows the local camera stream (`srcObject`). The timeline becomes a
-  rolling window (for example the last five minutes) with the live edge on the
-  right; the scrubber is hidden.
-- Status adds achieved capture rate, upload lag and dropped/resent frames next to
-  System, Inference and Result lag.
-- The backend badge additionally says **Live camera**; mock provenance stays visible.
+- **Monitoring → New session** offers **Recording** or **Camera**. Camera mode asks
+  for permission on **Connect camera**, shows the local preview, and creates the
+  session with **Create live session** (capture fixed at 15 fps for now).
+  Permission denial and missing devices are shown as camera errors, not session
+  states.
+- The viewer shows the local camera stream with a **Live** marker while running.
+  The coverage timeline is a rolling two-minute span ending at the live edge, with
+  no scrubber. The header clock, playhead and result lag follow the server
+  watermark.
+- Start, Resume and Restart connect the camera first if needed. Each running
+  period is one capture run (`useLiveCapture`): frames are drawn to a canvas
+  (short edge at most 720 px), JPEG-encoded synchronously so `run_seq` stays
+  contiguous, and uploaded in ordered batches of up to 32 every 250 ms. Transient
+  upload errors back off and retry the same frames. A backlog over ten seconds, or
+  a lost-continuity conflict, abandons the run and starts a new one, so the server
+  records the gap. "Not running", "superseded" and the length cap stop capture.
+- Status adds a **Camera** pill: off, connected, or achieved capture rate and upload
+  lag. A **Live camera** badge sits next to the backend badge; mock provenance stays
+  visible.
+- Reload behaves like recordings: the running session is paused and the camera is
+  off until **Resume**, which begins a new run behind an `ingest_gap`.
 
 ## Verification plan
 
 - Backend: frame-log ingest (idempotency, ordering, gaps, caps), watermark
   derivation, `ingest_gap` and `capture_ended` coverage, causal frame selection and
   bundle identity, with synthetic frame batches and mock serving.
-- Browser: Chromium's `--use-fake-device-for-media-stream` and
-  `--use-fake-ui-for-media-stream` provide a deterministic fake camera, so the
-  Playwright suite needs no hardware. Cover start/pause/resume, network loss with
-  resend, tab reload, and mobile layout.
+- Browser (`tests/e2e/live.spec.ts`): Chromium's `--use-fake-device-for-media-stream`
+  and `--use-fake-ui-for-media-stream` provide a deterministic fake camera, so the
+  suite needs no hardware. It covers connect, create, start, a prediction from
+  captured frames with their timestamps, an advancing live clock, pause, reload,
+  resume with an explicit `ingest_gap`, and mobile overflow. Upload retry under
+  network loss is not yet covered by a browser test.
 - No claim about real-model quality or GPU latency on camera input follows from
   these tests.
 
@@ -207,8 +222,8 @@ be confirmed:
 
 1. Backend (done): live source, frame ingest endpoint, watermark/gap handling,
    `prepare_frames`, schema migration (SQLite `user_version` 5), tests.
-2. Frontend: camera capture and upload loop, live viewer and rolling timeline,
-   e2e tests with the fake camera.
+2. Frontend (done): camera capture and upload loop, live viewer and rolling
+   timeline, e2e test with the fake camera.
 3. Retention for live frames and documentation updates (`monitoring.md`,
    `contracts.md`, `retention.md`).
 4. Later, separately: a server-side RTSP reader writing the same frame log, plus

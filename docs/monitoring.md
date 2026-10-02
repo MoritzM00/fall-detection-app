@@ -127,7 +127,8 @@ quota on total historical bundles.
 
 ## Recorded monitoring UI
 
-Choose **Monitoring**, select/upload a recording or the synthetic sample, and
+Choose **Monitoring**, then **Recording** (the default; **Camera** creates a
+[live session](live-camera.md)), select/upload a recording or the synthetic sample, and
 create a paused session. Start/Resume uses browser playback; only the media
 player's current time advances real-media availability. Synthetic playback has an
 explicitly labeled simulated clock. Seeking fences prior generations; Restart /
