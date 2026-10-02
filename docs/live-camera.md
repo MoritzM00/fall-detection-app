@@ -1,6 +1,7 @@
-# Live camera monitoring (design proposal)
+# Live camera monitoring
 
-Status: **proposed, not implemented.** This is application design, not verified
+Status: **phase 1 (backend ingest) implemented locally against mock serving; browser
+capture is not yet built.** This is proposed application behavior, not verified
 research behavior. It addresses the open decision "Camera protocol and browser
 playback approach" ([decisions](decisions.md)) and the ingestion part of roadmap
 milestone 6. Nothing here changes the research baseline or claims parity with it.
@@ -54,80 +55,117 @@ Option 3 trades video-codec fidelity for simplicity. Camera input is out of
 distribution relative to the dataset regardless, so the preprocessing identity
 must say "live frames" explicitly rather than imply research equivalence.
 
-## Proposed contracts
+## Contracts (phase 1, implemented)
 
 ### Session creation
 
-`POST /monitoring-sessions` gains a source discriminator. Existing requests are
-unchanged (`kind: "recording"` is implied by `video_id`).
+`POST /monitoring-sessions/live` creates a **paused** live session. The body takes
+the usual inference settings plus capture policy (defaults shown):
 
 ```json
 {
-  "source": { "kind": "live", "capture_fps": 15, "max_seconds": 3600 },
   "frame_count": 16, "fps": 7.5, "size": 448,
   "model": "…", "prompt_text": "…", "generation": { "temperature": 0, "max_tokens": 32 },
-  "stride_seconds": 2, "expiration_seconds": 5
+  "stride_seconds": 2, "expiration_seconds": 5,
+  "capture_fps": 15, "max_seconds": 3600
 }
 ```
 
-- `capture_fps` (1–30) and `max_seconds` are immutable session policy, like stride
-  and expiration. The sampling `fps` of every configuration segment must be
-  `≤ capture_fps`; `configure` rejects anything higher.
-- The session is created **paused**, with `duration = null` and
-  `source_kind = 'live'`. A live source record (not a `VideoAsset`) owns the
-  frame-log location.
+- `capture_fps` (1–30) and `max_seconds` (up to 4 h) are immutable session policy,
+  like stride and expiration. The sampling `fps` must be `≤ capture_fps`, at
+  creation (422) and for every later `configure` (409).
+- The live source is a `videos` row with `source = "live"` whose storage key is the
+  frame-log directory. Jobs therefore keep an ordinary `video_id`, and exports list
+  the source as `live`. Clip analysis (`/prepared-inputs`, `/analysis-jobs`) and
+  recorded sessions reject live sources with 422; there is no media to stream.
+- The session stores `source_kind = 'live'` and `capture_fps`; its `duration` is
+  `max_seconds`, so the existing end-of-bound handling pauses a session that
+  reaches the cap.
+
+Deviation from the first draft: a separate endpoint replaces a `source`
+discriminator on `POST /monitoring-sessions`, and the source is a `videos` row
+rather than a separate record, because jobs and sessions already reference
+`videos(id)`.
 
 ### Frame ingest
 
-`POST /monitoring-sessions/{id}/frames` (multipart) takes one JSON part with
-`[{ "seq": 412, "capture_seconds": 27.466 }, …]` and one JPEG part per frame.
-Batches are expected every 250–500 ms.
+`POST /monitoring-sessions/{id}/frames` is multipart: a `run_id` form field, a
+`metadata` form field with `[{ "run_seq": 41, "capture_seconds": 2.733 }, …]` and
+one `frames` file part per JPEG, in the same order. Batches of 1–64 frames are
+expected every 250–500 ms.
 
-- `capture_seconds` is on a session-relative monotonic clock taken from the
-  browser (`requestVideoFrameCallback` metadata where available, otherwise
-  `performance.now()`), zeroed at the first captured frame.
-- Idempotent on `(session, seq)`: resending a batch after a network error is
-  safe. A conflicting payload for an existing `seq` returns 409.
-- Rejected: non-increasing timestamps, frames above a size cap, frames while the
-  session is not `running` (409, so the client stops uploading), and frames past
-  `max_seconds`.
-- The response returns the server watermark and the highest contiguous `seq`, so
-  the client can show upload lag and resend gaps.
+- A **capture run** is one continuous capture by one page, from Start or Resume
+  until it stops. The client picks a new `run_id` for each run, numbers frames
+  from `run_seq` 0 and measures `capture_seconds` from the run start on its own
+  monotonic clock (`requestVideoFrameCallback` metadata where available, otherwise
+  `performance.now()`). The client never needs the server's timeline.
+- The server places a run on the session timeline when its first frame arrives:
+  the first run starts at the current position; a later run starts after the
+  previous run's last frame by the time elapsed on the **server** clock since that
+  frame was received (at least one capture interval). This placement is a
+  server-side estimate; it is what keeps a reload or a long pause from making
+  frames minutes apart look adjacent.
+- Within a batch `run_seq` is consecutive and `capture_seconds` strictly increases.
+  Each frame must be a readable JPEG of at most 2 MiB and 4096 px per edge.
+  Consecutive frames of a run must be at least `0.5 / capture_fps` apart, which
+  bounds stored frames to twice the capture rate. Malformed batches, and batches
+  with more than 64 parts, return 422 before any frame is read; the request body is
+  capped at 64 × 2 MiB (413) before multipart parsing.
+- Idempotent on `(run_id, run_seq)`: a resent frame with identical time and bytes
+  is acknowledged without change, even after the session paused or a newer run
+  began, so client retries settle. Conflicts return 409: a stored `run_seq` with
+  other content, a new run not starting at `run_seq` 0, a batch that skips
+  `run_seq` values (the message names where to resend from), new frames for a run
+  superseded by a newer one, new frames while the session is not running, and
+  frames past `max_seconds`.
+- The response is `{accepted, run_seq_high, watermark_seconds, state}`.
 
 ### Watermark and gaps
 
-The worker treats the newest **contiguously received** `capture_seconds` as the
-session position; clients cannot send `position` or `seek` for live sessions (400).
-A missing `seq` range or a capture-time jump larger than `2 / capture_fps` becomes
-an explicit `ingest_gap` coverage row. A window overlapping a gap is skipped with
-that reason and has no prediction, so a capture failure never turns into an
-activity (including `other`).
+Each accepted batch sets the session position to its newest placed capture time;
+`position` and `seek` commands, and `restart` with an explicit position, return 409
+for live sessions. Before storing a batch the API runs one admission pass, so
+windows completed before a gap are scheduled first.
+
+Every new run, and any jump of more than `2 / capture_fps` within a run (also
+between frames of one batch, which is then ingested in parts; or from the grid
+origin to the first frame), writes one `skipped` coverage row with reason
+`ingest_gap` from the first unscheduled window start to the new frame, consumes one
+sequence number, and restarts the window grid at that frame. A single dropped
+frame (a jump of at most `2 / capture_fps`) is tolerated: preparation uses the
+nearest stored frame and records its actual capture time. No admitted window
+spans missing frames, and a capture failure never becomes an activity (including
+`other`). Pause/resume and reload/resume therefore always leave an explicit gap.
 
 Expiration keeps its meaning: a candidate expires when the watermark has moved
-more than `expiration_seconds` past its end. Server receive times are recorded per
-batch so that upload latency can be reported separately from inference lag; the
-two clocks are not assumed to agree.
+more than `expiration_seconds` past its end. Server receive times are stored per
+frame so upload latency can later be reported separately from inference lag.
 
 ### Preparation
 
-A new `prepare_frames` path reads the frame log for `[start, end]`, selects for
-each target timestamp the nearest frame **not after** the window end (the existing
-causal rule), and applies the existing center crop and resize. The output is an
-ordinary prepared bundle with its own preprocessing version (`…-live-frames`),
-actual capture timestamps, content hash and RGB/JPEG integrity, so jobs keep their
-input timestamps and configuration identity exactly as clip and replay jobs do.
+`prepare_frames` reads the frame log, selects for each sampled timestamp the
+nearest frame **not after** the window end (earlier frame on ties), verifies each
+stored JPEG against its recorded SHA-256, and applies the same center crop and
+resize as video preparation. A sampled timestamp without a frame within
+`2 / capture_fps` is a defensive `ingest_gap` skip, not a failure. The result is an
+ordinary prepared bundle with preprocessing version `pillow-live-frames-jpeg-v1`,
+actual capture times as `actual_seconds`, frame `seq` values as `source_pts`, and
+the usual RGB/JPEG integrity, so the worker's inference path is unchanged and jobs
+keep their input timestamps and configuration identity.
 
 ### Lifecycle
 
 - `start` / `resume`: the client starts capturing and uploading; admission follows
-  the server watermark.
+  the server watermark. Starting also resets the ingest timeout.
 - `pause`: the client stops uploading (frames are not buffered for later); the gap
   is recorded when capture resumes.
-- `stop`: as today. `restart`: new generation beginning at the current live edge;
-  explicit positions are rejected.
-- Reload, tab close or `getUserMedia` track end: the server sees no frames for
-  `expiration_seconds` while running, pauses the session with `capture_ended`, and
-  resume is explicit, matching replay's reload behavior.
+- `stop`: as today. `restart`: new generation beginning at the current live edge.
+- Reload, tab close, `getUserMedia` track end, or an upload outage: when a running
+  session receives no frames for `expiration_seconds`, the worker pauses it with
+  recovery reason `capture_ended`, but only once no window is pending or preparing,
+  because admitted windows already have their frames (as at playback end). The
+  client stops on the resulting 409 and frames captured meanwhile are discarded;
+  resume is explicit, matching replay's outage and reload behavior.
 - Process restart recovery is unchanged: running sessions recover paused.
 
 ## Storage, retention and privacy
@@ -135,8 +173,13 @@ input timestamps and configuration identity exactly as clip and replay jobs do.
 Camera frames are personal data of whoever is in view. Proposed defaults, all to
 be confirmed:
 
-- Frame logs live under `FALL_DETECTION_DATA_DIR/live/<session>/` (already
-  git-ignored via `data/`; never committed).
+- Frame logs live under `FALL_DETECTION_DATA_DIR/live/<source id>/` (already
+  git-ignored via `data/`; never committed). **Not yet implemented:** raw frames
+  are currently kept until the data directory is cleaned manually, and
+  `scripts/prune_media.py` does not touch `live/`. Until phase 3, use live
+  sessions only with test footage of yourself. Phase 3 must protect frames that
+  pending or preparing windows still need and coordinate deletion with frame-log
+  reads under the storage lock.
 - Raw frames older than `expiration_seconds + window width + margin` are deleted
   by the worker unless a prepared bundle for an admitted window references them.
   Prepared bundles referenced by jobs are retained, as for other sources, because
@@ -172,8 +215,8 @@ be confirmed:
 
 ## Phasing
 
-1. Backend: live source record, frame ingest endpoint, watermark/gap handling,
-   `prepare_frames`, schema migration, tests.
+1. Backend (done): live source, frame ingest endpoint, watermark/gap handling,
+   `prepare_frames`, schema migration (SQLite `user_version` 5), tests.
 2. Frontend: camera capture and upload loop, live viewer and rolling timeline,
    e2e tests with the fake camera.
 3. Retention for live frames and documentation updates (`monitoring.md`,

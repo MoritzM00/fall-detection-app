@@ -1,3 +1,4 @@
+import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -5,13 +6,20 @@ from typing import Annotated
 from uuid import uuid4
 
 import av
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile, status
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 
+from fall_detection import live
 from fall_detection.config import Settings
 from fall_detection.exports import ExperimentExports, csv_export, json_export
 from fall_detection.inference import InferenceClient, InferenceServiceError
+from fall_detection.live import (
+    FrameMeta,
+    IngestConflictError,
+    LiveSessionCreate,
+    ingest_frames,
+)
 from fall_detection.media import list_dataset_video_paths, resolve_dataset_video
 from fall_detection.models import (
     AnalysisJob,
@@ -57,7 +65,9 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
 
     app = FastAPI(title="Fall Detection API", version="0.1.0", lifespan=lifespan)
     app.add_middleware(
-        UploadBodyLimitMiddleware, upload_max_bytes=lambda: settings.upload_max_bytes
+        UploadBodyLimitMiddleware,
+        upload_max_bytes=lambda: settings.upload_max_bytes,
+        frame_batch_max_bytes=lambda: live.MAX_BATCH_FRAMES * live.MAX_FRAME_BYTES,
     )
     app.add_middleware(
         CORSMiddleware,
@@ -197,6 +207,8 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
             video = repository.get_video(request.video_id)
             if video is None:
                 raise HTTPException(status_code=404, detail="Video not found")
+            if video.source == "live":
+                raise HTTPException(status_code=422, detail="Live sources are monitoring-only")
             if video.source == "synthetic":
                 expected_end = request.start_seconds + (request.frame_count - 1) / request.fps
                 if abs(expected_end - request.end_seconds) > 0.001:
@@ -293,6 +305,8 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
             raise HTTPException(status_code=404, detail="Video not found")
         if video.source == "synthetic":
             raise HTTPException(status_code=422, detail="Synthetic sample has no decodable frames")
+        if video.source == "live":
+            raise HTTPException(status_code=422, detail="Live sources are monitoring-only")
         try:
             key = (video.id, request.start_seconds, request.frame_count, request.fps, request.size)
             return preparation_coordinator.run(
@@ -414,6 +428,50 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
             raise HTTPException(404, "Video not found") from exc
         except InferenceServiceError as exc:
             raise HTTPException(503, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @app.post("/monitoring-sessions/live", status_code=201)
+    def create_live_session(request: LiveSessionCreate) -> dict:
+        """Register a camera frame log and a paused session that follows it."""
+        try:
+            source = request.session(str(uuid4()))
+            config = monitoring_configuration(source)
+            with storage_lock(settings.data_dir, exclusive=False):
+                return Monitoring(repository).create(
+                    source, config, capture_fps=request.capture_fps
+                )
+        except InferenceServiceError as exc:
+            raise HTTPException(503, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @app.post("/monitoring-sessions/{session_id}/frames")
+    def ingest_live_frames(
+        session_id: str,
+        run_id: Annotated[str, Form()],
+        metadata: Annotated[str, Form()],
+        frames: Annotated[list[UploadFile], File()],
+    ) -> dict:
+        """Append an ordered, idempotent batch of one capture run's JPEG frames."""
+        try:
+            metas = [FrameMeta.model_validate(item) for item in json.loads(metadata)]
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(
+                422, "metadata must be a JSON list of {run_seq, capture_seconds}"
+            ) from exc
+        if not 1 <= len(frames) <= live.MAX_BATCH_FRAMES:
+            raise HTTPException(422, f"Send 1–{live.MAX_BATCH_FRAMES} frames per batch")
+        blobs = [frame.file.read(live.MAX_FRAME_BYTES + 1) for frame in frames]
+        try:
+            with storage_lock(settings.data_dir, exclusive=False):
+                return ingest_frames(
+                    repository, settings.data_dir, session_id, run_id, metas, blobs
+                )
+        except KeyError as exc:
+            raise HTTPException(404, "Session not found") from exc
+        except IngestConflictError as exc:
+            raise HTTPException(409, str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
 

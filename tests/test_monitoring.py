@@ -234,7 +234,7 @@ def test_migration_preserves_clip_snapshot_and_prediction(replay):
     repo.initialize()
     assert repo.get_job(clip.id) == before
     with repo._connect() as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 5
 
 
 def test_newest_sequence_remains_latest_after_out_of_order_completion(replay):
