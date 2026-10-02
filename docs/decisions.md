@@ -33,7 +33,7 @@ The local process arrangement, repository home, API isolation, bounded preparati
 
 - Window interval, tolerated delay, concurrency, queue expiry, and fairness between interactive and monitoring jobs.
 - First intended user and environment; numerical quality targets.
-- Camera protocol and browser playback approach.
+- Camera protocol and browser playback approach. Proposal: browser-sampled frames into a server-side frame log ([live camera](live-camera.md)); not yet agreed.
 - Multi-person expectations and crop policy.
 - Media/debug-output retention and deletion policy.
 - Whether and how predictions become events, notifications, or review tasks.
