@@ -76,6 +76,7 @@ export function useLiveCapture(sessionId: string | null, running: boolean, captu
     let runId = crypto.randomUUID();
     let start = performance.now();
     let nextSeq = 0;
+    let lastCapture = -Infinity;
     let queue: CapturedFrame[] = [];
     let inFlight = false;
     let ended = false;
@@ -93,6 +94,9 @@ export function useLiveCapture(sessionId: string | null, running: boolean, captu
     const capture = window.setInterval(() => {
       const video = preview.current;
       if (!context || !video || video.readyState < 2 || !video.videoWidth) return;
+      // Coalesced timer callbacks must not exceed the server's twice-the-capture-rate bound.
+      if (performance.now() - lastCapture < 750 / captureFps) return;
+      lastCapture = performance.now();
       const scale = Math.min(1, MAX_SHORT_EDGE / Math.min(video.videoWidth, video.videoHeight));
       canvas.width = Math.round(video.videoWidth * scale);
       canvas.height = Math.round(video.videoHeight * scale);
