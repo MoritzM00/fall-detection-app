@@ -310,14 +310,15 @@ const legend = [["done", "Non-fall activity"], ["alert", "Fall or fallen"], ["ac
 function CoverageTimeline({ windows, jobs, from, to, position, partial, onLoadOlder, seek }: { windows: MonitoringWindow[]; jobs: Record<string, AnalysisJob>; from: number; to: number; position: number; partial: boolean; onLoadOlder: () => void; seek: ReactNode }) {
   if (to <= from) return null;
   const pct = (value: number) => `${Math.min(100, Math.max(0, ((value - from) / (to - from)) * 100))}%`;
-  const tones = windows.map(window => { const job = window.job_id ? jobs[window.job_id] : undefined; return { window, job, tone: toneOf(job?.state ?? window.state, job), start: window.start_seconds }; });
+  // Bars and legend counts cover only the displayed span (a live timeline scrolls).
+  const tones = windows.filter(window => window.end_seconds > from).map(window => { const job = window.job_id ? jobs[window.job_id] : undefined; return { window, job, tone: toneOf(job?.state ?? window.state, job), start: window.start_seconds }; });
   const counts = Object.fromEntries(legend.map(([tone]) => [tone, tones.filter(item => item.tone === tone).length]));
   const loadedFrom = windows.length ? Math.min(...windows.map(window => window.start_seconds)) : to;
   return <div className="coverage">
     <div className="coverage-track">
       <div className="coverage-bar" aria-hidden="true">
         {partial && loadedFrom > 0 && <i data-tone="unloaded" style={{ left: 0, width: pct(loadedFrom) }} />}
-        {inPaintOrder(tones).filter(({ window }) => window.end_seconds > from).map(({ window, tone }) => <i key={window.id} data-tone={tone} style={{ left: pct(window.start_seconds), width: pct(from + window.end_seconds - Math.max(from, window.start_seconds)) }} />)}
+        {inPaintOrder(tones).map(({ window, tone }) => <i key={window.id} data-tone={tone} style={{ left: pct(window.start_seconds), width: pct(from + window.end_seconds - Math.max(from, window.start_seconds)) }} />)}
         <b style={{ left: pct(position) }} />
       </div>
       {seek}

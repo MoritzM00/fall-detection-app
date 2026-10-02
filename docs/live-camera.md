@@ -199,13 +199,15 @@ be confirmed:
   states.
 - The viewer shows the local camera stream with a **Live** marker while running.
   The coverage timeline is a rolling two-minute span ending at the live edge, with
-  no scrubber. The header clock, playhead and result lag follow the server
+  no scrubber; its legend counts only windows in that span. The header clock, playhead and result lag follow the server
   watermark.
 - Start, Resume and Restart connect the camera first if needed. Each running
   period is one capture run (`useLiveCapture`): frames are drawn to a canvas
   (short edge at most 720 px), JPEG-encoded synchronously so `run_seq` stays
   contiguous, and uploaded in ordered batches of up to 32 every 250 ms. Transient
-  upload errors back off and retry the same frames. A backlog over ten seconds, or
+  upload errors back off and retry the same frames. Frames still queued when the
+  session pauses or stops are discarded (the server refuses them once it is not
+  running); this is at most about half a second of capture. A backlog over ten seconds, or
   a lost-continuity conflict, abandons the run and starts a new one, so the server
   records the gap. "Not running", "superseded" and the length cap stop capture.
 - Status adds a **Camera** pill: off, connected, or achieved capture rate and upload
