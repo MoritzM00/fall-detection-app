@@ -16,6 +16,8 @@ export default defineConfig({
   use: {
     baseURL: webURL,
     browserName: "chromium",
+    // Deterministic fake camera for live monitoring; no hardware or permission prompt.
+    launchOptions: { args: ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"] },
     trace: "retain-on-failure",
   },
   webServer: {

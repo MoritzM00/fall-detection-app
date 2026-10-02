@@ -264,6 +264,18 @@ footer { padding: 20px 0 32px; display: flex; justify-content: space-between; ga
 .replay-placeholder { display: flex; flex-direction: column; align-items: center; gap: 6px; color: rgba(238, 242, 245, .55); font-size: 13px; }
 .replay-placeholder strong { color: #eef2f5; font: 500 clamp(28px, 4vw, 44px)/1 var(--mono); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
 
+/* Live camera */
+.source-mode { display: inline-flex; gap: 2px; margin-bottom: 14px; padding: 3px; border-radius: 10px; background: rgba(22, 32, 44, .06); }
+.source-mode button { border: 0; border-radius: 8px; padding: 6px 14px; background: transparent; color: var(--muted); font-size: 13px; font-weight: 500; cursor: pointer; }
+.source-mode button[aria-pressed="true"] { color: var(--ink); background: var(--surface); box-shadow: 0 1px 2px rgba(22, 32, 44, .12); }
+.replay-screen .live-feed { width: 100%; height: 100%; object-fit: contain; display: block; background: #000; }
+.replay-screen:has(> .replay-placeholder) .replay-placeholder .button { margin-top: 10px; }
+.live-indicator { position: absolute; top: 12px; left: 12px; display: flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 6px; background: rgba(0, 0, 0, .55); color: #fff; font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+.live-indicator::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--alert); animation: live-pulse 1.6s ease-in-out infinite; }
+@keyframes live-pulse { 50% { opacity: .35; } }
+.live-badge { background: var(--alert-soft); color: #a3291d; }
+@media (prefers-reduced-motion: reduce) { .live-indicator::before { animation: none; } }
+
 /* Coverage timeline: one bar per admitted window, drawn to scale over the recording. The seek input sits on top of it. */
 [data-tone] { --tone: var(--faint); }
 [data-tone="done"] { --tone: #7f95aa; }

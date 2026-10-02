@@ -16,7 +16,7 @@ test("selected run and complete session have working JSON and CSV downloads", as
   await page.getByRole("link", { name: "Download run CSV", exact: true }).click();
   expect(await readFile((await (await csvDownload).path())!, "utf8")).toContain("record_type");
   await page.getByRole("button", { name: "Monitoring", exact: true }).click();
-  const panel = page.getByRole("region", { name: "Recorded monitoring" });
+  const panel = page.getByRole("region", { name: "Monitoring", exact: true });
   await panel.getByRole("button", { name: "Use sample clip" }).click();
   await panel.getByRole("button", { name: "Create monitoring session" }).click();
   const sessionDownload = page.waitForEvent("download");
