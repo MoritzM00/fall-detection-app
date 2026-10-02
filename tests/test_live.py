@@ -64,12 +64,15 @@ def create(client, **overrides) -> dict:
     return response.json()
 
 
-def send(client, session_id, frames, blobs=None):
-    """Post frames given as (seq, capture_seconds) pairs."""
+def send(client, session_id, frames, blobs=None, run_id="run-a"):
+    """Post one capture run's frames given as (run_seq, run-relative seconds) pairs."""
     blobs = blobs or [jpeg(seq % 200) for seq, _ in frames]
     return client.post(
         f"/monitoring-sessions/{session_id}/frames",
-        data={"metadata": json.dumps([{"seq": s, "capture_seconds": t} for s, t in frames])},
+        data={
+            "run_id": run_id,
+            "metadata": json.dumps([{"run_seq": s, "capture_seconds": t} for s, t in frames]),
+        },
         files=[
             ("frames", (f"{s}.jpg", blob, "image/jpeg"))
             for (s, _), blob in zip(frames, blobs, strict=True)
@@ -105,7 +108,7 @@ def test_live_frames_flow_into_an_ordinary_prediction(live):
     assert accepted.status_code == 200, accepted.text
     assert accepted.json() == {
         "accepted": 9,
-        "highest_seq": 8,
+        "run_seq_high": 8,
         "watermark_seconds": 2.0,
         "state": "running",
     }
@@ -145,10 +148,49 @@ def test_ingest_is_idempotent_and_rejects_conflicts(live):
     assert send(client, session["id"], [(2, 0.5)], [b"not a jpeg"]).status_code == 422
     assert send(client, session["id"], [(2, 61.0)]).status_code == 409
 
+    fresh = send(client, session["id"], [(5, 0.0)], run_id="run-b")
+    assert fresh.status_code == 409 and "run_seq 0" in fresh.json()["detail"]
+
     run(client, session["id"], "pause")
     assert send(client, session["id"], [(2, 0.5)]).status_code == 409
     # A resend after pausing is still acknowledged, so client retries settle.
     assert send(client, session["id"], batch).status_code == 200
+
+
+def test_each_capture_run_is_placed_by_the_server_clock_after_a_gap(live):
+    client, settings, repository, clock = live
+    session = create(client)
+    run(client, session["id"], "start")
+    send(client, session["id"], [(i, i * 0.25) for i in range(5)], run_id="run-a")
+    Monitoring(repository).tick()
+    # After a reload the session has paused; the resumed page restarts its clock at
+    # zero, and the server, not the client, places the new run on the timeline.
+    clock[0] += timedelta(seconds=30)
+    Monitoring(repository).tick()
+    assert client.get(f"/monitoring-sessions/{session['id']}").json()["state"] == "paused"
+    run(client, session["id"], "resume")
+    placed = send(client, session["id"], [(i, i * 0.25) for i in range(5)], run_id="run-b")
+    assert placed.json()["watermark_seconds"] == 32.0
+    gap = next(row for row in history(client, session["id"]) if row["reason"] == "ingest_gap")
+    assert (gap["start_seconds"], gap["end_seconds"]) == (1, 31.0)
+    drain(settings, repository)
+    windows = [row for row in history(client, session["id"]) if row["job_id"]]
+    assert all(row["end_seconds"] <= 1 or row["start_seconds"] >= 31.0 for row in windows)
+    assert any(row["start_seconds"] == 31.0 for row in windows)
+    # The older run is finished: retries are acknowledged, new frames are refused.
+    assert send(client, session["id"], [(0, 0.0)], run_id="run-a").json()["accepted"] == 0
+    stale = send(client, session["id"], [(5, 1.25)], run_id="run-a")
+    assert stale.status_code == 409 and "superseded" in stale.json()["detail"]
+
+
+def test_an_immediate_new_run_is_still_a_gap(live):
+    client, _, _, _ = live
+    session = create(client)
+    run(client, session["id"], "start")
+    send(client, session["id"], [(i, i * 0.25) for i in range(5)], run_id="run-a")
+    send(client, session["id"], [(0, 0.0)], run_id="run-b")
+    gaps = [row for row in history(client, session["id"]) if row["reason"] == "ingest_gap"]
+    assert len(gaps) == 1 and gaps[0]["end_seconds"] == 1.25
 
 
 def test_capture_gap_is_explicit_coverage_and_rebases_windows(live):
@@ -285,6 +327,7 @@ def test_migration_adds_live_schema_to_existing_databases(tmp_path):
         for column in ("source_kind", "capture_fps", "last_frame_at"):
             db.execute(f"ALTER TABLE monitoring_sessions DROP COLUMN {column}")
         db.execute("DROP TABLE live_frames")
+        db.execute("DROP TABLE live_runs")
         db.execute("""CREATE TABLE videos_old (id TEXT PRIMARY KEY, filename TEXT NOT NULL,
             source TEXT NOT NULL CHECK (source IN ('upload', 'synthetic', 'dataset')),
             storage_key TEXT, duration_seconds REAL, created_at TEXT NOT NULL)""")

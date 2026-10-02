@@ -96,10 +96,14 @@ SCHEMA = (
         created_at TEXT NOT NULL, UNIQUE(session_id, generation, sequence))""",
     """CREATE UNIQUE INDEX IF NOT EXISTS one_pending_window
         ON monitoring_windows(session_id) WHERE state IN ('pending', 'preparing')""",
+    """CREATE TABLE IF NOT EXISTS live_runs (
+        video_id TEXT NOT NULL REFERENCES videos(id), run_id TEXT NOT NULL,
+        offset_seconds REAL NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(video_id, run_id))""",
     """CREATE TABLE IF NOT EXISTS live_frames (
         video_id TEXT NOT NULL REFERENCES videos(id), seq INTEGER NOT NULL,
+        run_id TEXT NOT NULL, run_seq INTEGER NOT NULL,
         capture_seconds REAL NOT NULL, sha256 TEXT NOT NULL, received_at TEXT NOT NULL,
-        PRIMARY KEY(video_id, seq))""",
+        PRIMARY KEY(video_id, seq), UNIQUE(video_id, run_id, run_seq))""",
 )
 
 

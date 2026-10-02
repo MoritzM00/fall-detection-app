@@ -448,20 +448,23 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
     @app.post("/monitoring-sessions/{session_id}/frames")
     def ingest_live_frames(
         session_id: str,
+        run_id: Annotated[str, Form()],
         metadata: Annotated[str, Form()],
         frames: Annotated[list[UploadFile], File()],
     ) -> dict:
-        """Append an ordered, idempotent batch of captured JPEG frames."""
+        """Append an ordered, idempotent batch of one capture run's JPEG frames."""
         try:
             metas = [FrameMeta.model_validate(item) for item in json.loads(metadata)]
         except (ValueError, TypeError) as exc:
             raise HTTPException(
-                422, "metadata must be a JSON list of {seq, capture_seconds}"
+                422, "metadata must be a JSON list of {run_seq, capture_seconds}"
             ) from exc
         blobs = [frame.file.read(MAX_FRAME_BYTES + 1) for frame in frames]
         try:
             with storage_lock(settings.data_dir, exclusive=False):
-                return ingest_frames(repository, settings.data_dir, session_id, metas, blobs)
+                return ingest_frames(
+                    repository, settings.data_dir, session_id, run_id, metas, blobs
+                )
         except KeyError as exc:
             raise HTTPException(404, "Session not found") from exc
         except IngestConflictError as exc:

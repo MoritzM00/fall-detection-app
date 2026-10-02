@@ -3,6 +3,7 @@
 import hashlib
 import io
 import json
+from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -69,9 +70,9 @@ class LiveSessionCreate(BaseModel):
 
 
 class FrameMeta(BaseModel):
-    """Client sequence and capture time of one uploaded JPEG."""
+    """Position of one uploaded JPEG within its capture run."""
 
-    seq: int = Field(ge=0)
+    run_seq: int = Field(ge=0)
     capture_seconds: float = Field(ge=0, allow_inf_nan=False)
 
 
@@ -111,20 +112,30 @@ def ingest_frames(
     repository: Repository,
     data_dir: Path,
     session_id: str,
+    run_id: str,
     metadata: list[FrameMeta],
     blobs: list[bytes],
 ) -> dict:
-    """Append one ordered batch and advance the live watermark.
+    """Append one ordered batch of a capture run and advance the live watermark.
 
-    Batches are idempotent on ``seq``: a resent frame must match what was stored. A
-    capture-time jump becomes one explicit ``ingest_gap`` coverage row, and the window
-    grid restarts after it so that no admitted window spans missing frames.
+    A run is one continuous capture by one client, from Start or Resume until it
+    stops. Its ``capture_seconds`` are relative to the run start; the server places
+    each run on the session timeline using only its own clock, so client clocks
+    never need to agree with it. A new run, or a capture-time jump within a run,
+    becomes one explicit ``ingest_gap`` coverage row and restarts the window grid,
+    so no admitted window spans missing frames. Batches are idempotent on
+    ``(run_id, run_seq)``.
     """
+    if not 1 <= len(run_id) <= 64:
+        raise ValueError("run_id must be 1–64 characters")
     if not 1 <= len(metadata) <= MAX_BATCH_FRAMES or len(metadata) != len(blobs):
         raise ValueError(f"Send 1–{MAX_BATCH_FRAMES} frames with one metadata entry each")
     for previous, current in zip(metadata, metadata[1:], strict=False):
-        if current.seq != previous.seq + 1 or current.capture_seconds <= previous.capture_seconds:
-            raise ValueError("Frames must have consecutive seq and increasing capture times")
+        if (
+            current.run_seq != previous.run_seq + 1
+            or current.capture_seconds <= previous.capture_seconds
+        ):
+            raise ValueError("Frames must have consecutive run_seq and increasing capture times")
     for blob in blobs:
         _check_jpeg(blob)
     digests = [hashlib.sha256(blob).hexdigest() for blob in blobs]
@@ -144,51 +155,88 @@ def ingest_frames(
         video = repository.get_video(session["video_id"])
         if video is None:
             raise ValueError("Live source is missing")
-        last = connection.execute(
-            "SELECT seq,capture_seconds FROM live_frames WHERE video_id=? ORDER BY seq DESC LIMIT 1",
-            (video.id,),
+        run = connection.execute(
+            "SELECT * FROM live_runs WHERE video_id=? AND run_id=?", (video.id, run_id)
         ).fetchone()
+        stored_high = (
+            connection.execute(
+                "SELECT MAX(run_seq) FROM live_frames WHERE video_id=? AND run_id=?",
+                (video.id, run_id),
+            ).fetchone()[0]
+            if run is not None
+            else None
+        )
         new: list[tuple[FrameMeta, bytes, str]] = []
         for meta, blob, digest in zip(metadata, blobs, digests, strict=True):
-            if last is not None and meta.seq <= last["seq"]:
+            if stored_high is not None and meta.run_seq <= stored_high:
                 stored = connection.execute(
-                    "SELECT capture_seconds,sha256 FROM live_frames WHERE video_id=? AND seq=?",
-                    (video.id, meta.seq),
+                    """SELECT capture_seconds,sha256 FROM live_frames
+                    WHERE video_id=? AND run_id=? AND run_seq=?""",
+                    (video.id, run_id, meta.run_seq),
                 ).fetchone()
                 if (
                     stored is None
                     or stored["sha256"] != digest
-                    or abs(stored["capture_seconds"] - meta.capture_seconds) > 1e-6
+                    or abs(
+                        stored["capture_seconds"] - (run["offset_seconds"] + meta.capture_seconds)
+                    )
+                    > 1e-6
                 ):
                     raise IngestConflictError(
-                        f"Frame {meta.seq} was already stored with other content"
+                        f"Frame {meta.run_seq} of this run was already stored with other content"
                     )
                 continue
             new.append((meta, blob, digest))
         if new:
             if session["state"] != "running":
                 raise IngestConflictError("Session is not running; stop uploading frames")
+            last = connection.execute(
+                """SELECT seq,run_id,capture_seconds,received_at FROM live_frames
+                WHERE video_id=? ORDER BY seq DESC LIMIT 1""",
+                (video.id,),
+            ).fetchone()
             first = new[0][0]
-            expected = 0 if last is None else last["seq"] + 1
-            if first.seq != expected:
-                raise IngestConflictError(
-                    f"Missing frames before seq {first.seq}; resend from {expected}"
-                )
-            if last is not None and first.capture_seconds <= last["capture_seconds"]:
-                raise IngestConflictError("Capture times must increase across batches")
-            if new[-1][0].capture_seconds > session["duration"]:
-                raise IngestConflictError("Frames exceed the maximum session length")
             timestamp = repository._timestamp()
-            for meta, blob, digest in new:
-                _write_atomic(_frame_path(data_dir, video, meta.seq), blob)
+            if run is None:
+                if first.run_seq != 0:
+                    raise IngestConflictError("A new capture run must start at run_seq 0")
+                if last is None:
+                    offset = session["position"]
+                else:
+                    # Server-clock estimate of the time since the previous run's last frame.
+                    elapsed = (
+                        repository._clock() - datetime.fromisoformat(last["received_at"])
+                    ).total_seconds()
+                    offset = last["capture_seconds"] + max(elapsed, 1 / session["capture_fps"])
                 connection.execute(
-                    "INSERT INTO live_frames VALUES (?,?,?,?,?)",
-                    (video.id, meta.seq, meta.capture_seconds, digest, timestamp),
+                    "INSERT INTO live_runs VALUES (?,?,?,?)", (video.id, run_id, offset, timestamp)
+                )
+            else:
+                if last is not None and last["run_id"] != run_id:
+                    raise IngestConflictError("This capture run was superseded by a newer one")
+                expected = stored_high + 1 if stored_high is not None else 0
+                if first.run_seq != expected:
+                    raise IngestConflictError(
+                        f"Missing frames before run_seq {first.run_seq}; resend from {expected}"
+                    )
+                offset = run["offset_seconds"]
+            times = [offset + meta.capture_seconds for meta, _, _ in new]
+            if last is not None and times[0] <= last["capture_seconds"]:
+                raise IngestConflictError("Capture times must increase within a run")
+            if times[-1] > session["duration"]:
+                raise IngestConflictError("Frames exceed the maximum session length")
+            seq = 0 if last is None else last["seq"] + 1
+            for index, ((meta, blob, digest), seconds) in enumerate(zip(new, times, strict=True)):
+                _write_atomic(_frame_path(data_dir, video, seq + index), blob)
+                connection.execute(
+                    "INSERT INTO live_frames VALUES (?,?,?,?,?,?,?)",
+                    (video.id, seq + index, run_id, meta.run_seq, seconds, digest, timestamp),
                 )
             origin, next_sequence = session["origin"], session["next_sequence"]
             # Before any frame, the grid's origin stands in for the previous capture.
             reference = session["origin"] if last is None else last["capture_seconds"]
-            if first.capture_seconds - reference > gap_tolerance(session["capture_fps"]):
+            new_run = last is not None and last["run_id"] != run_id
+            if new_run or times[0] - reference > gap_tolerance(session["capture_fps"]):
                 gap_start = origin + next_sequence * session["stride"]
                 connection.execute(
                     """INSERT INTO monitoring_windows
@@ -202,19 +250,19 @@ def ingest_frames(
                         next_sequence,
                         next_sequence,
                         session["segment_id"],
-                        min(gap_start, first.capture_seconds),
-                        first.capture_seconds,
+                        min(gap_start, times[0]),
+                        times[0],
                         session["position"],
                         timestamp,
                     ),
                 )
                 next_sequence += 1
-                origin = first.capture_seconds - next_sequence * session["stride"]
+                origin = times[0] - next_sequence * session["stride"]
             connection.execute(
                 """UPDATE monitoring_sessions SET position=?,origin=?,next_sequence=?,
                 last_frame_at=?,updated_at=? WHERE id=?""",
                 (
-                    min(new[-1][0].capture_seconds, session["duration"]),
+                    min(times[-1], session["duration"]),
                     origin,
                     next_sequence,
                     timestamp,
@@ -223,14 +271,14 @@ def ingest_frames(
                 ),
             )
         connection.commit()
-    current = monitor.get(session_id)
-    with repository._connect() as connection:
-        highest = connection.execute(
-            "SELECT MAX(seq) FROM live_frames WHERE video_id=?", (current["video_id"],)
+        run_high = connection.execute(
+            "SELECT MAX(run_seq) FROM live_frames WHERE video_id=? AND run_id=?",
+            (video.id, run_id),
         ).fetchone()[0]
+    current = monitor.get(session_id)
     return {
         "accepted": len(new),
-        "highest_seq": highest,
+        "run_seq_high": run_high,
         "watermark_seconds": current["position"],
         "state": current["state"],
     }

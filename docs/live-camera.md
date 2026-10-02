@@ -89,43 +89,51 @@ rather than a separate record, because jobs and sessions already reference
 
 ### Frame ingest
 
-`POST /monitoring-sessions/{id}/frames` is multipart: a `metadata` form field with
-`[{ "seq": 412, "capture_seconds": 27.466 }, …]` and one `frames` file part per
-JPEG, in the same order. Batches of 1–64 frames are expected every 250–500 ms.
+`POST /monitoring-sessions/{id}/frames` is multipart: a `run_id` form field, a
+`metadata` form field with `[{ "run_seq": 41, "capture_seconds": 2.733 }, …]` and
+one `frames` file part per JPEG, in the same order. Batches of 1–64 frames are
+expected every 250–500 ms.
 
-- `capture_seconds` is on a session-relative monotonic clock from the browser
-  (`requestVideoFrameCallback` metadata where available, otherwise
-  `performance.now()`), zeroed at the first captured frame.
-- Within a batch `seq` is consecutive and `capture_seconds` strictly increases.
+- A **capture run** is one continuous capture by one page, from Start or Resume
+  until it stops. The client picks a new `run_id` for each run, numbers frames
+  from `run_seq` 0 and measures `capture_seconds` from the run start on its own
+  monotonic clock (`requestVideoFrameCallback` metadata where available, otherwise
+  `performance.now()`). The client never needs the server's timeline.
+- The server places a run on the session timeline when its first frame arrives:
+  the first run starts at the current position; a later run starts after the
+  previous run's last frame by the time elapsed on the **server** clock since that
+  frame was received (at least one capture interval). This placement is a
+  server-side estimate; it is what keeps a reload or a long pause from making
+  frames minutes apart look adjacent.
+- Within a batch `run_seq` is consecutive and `capture_seconds` strictly increases.
   Each frame must be a readable JPEG of at most 2 MiB and 4096 px per edge.
   Malformed batches return 422.
-- Idempotent on `(source, seq)`: a resent frame with identical time and bytes is
-  acknowledged without change, even after the session paused, so client retries
-  settle. Conflicts return 409: a stored `seq` with other content, a batch that
-  skips `seq` values (the message names the `seq` to resend from), capture times
-  not increasing across batches, new frames while the session is not running, and
+- Idempotent on `(run_id, run_seq)`: a resent frame with identical time and bytes
+  is acknowledged without change, even after the session paused or a newer run
+  began, so client retries settle. Conflicts return 409: a stored `run_seq` with
+  other content, a new run not starting at `run_seq` 0, a batch that skips
+  `run_seq` values (the message names where to resend from), new frames for a run
+  superseded by a newer one, new frames while the session is not running, and
   frames past `max_seconds`.
-- The response is `{accepted, highest_seq, watermark_seconds, state}`.
+- The response is `{accepted, run_seq_high, watermark_seconds, state}`.
 
 ### Watermark and gaps
 
-Each accepted batch sets the session position to its newest `capture_seconds`;
+Each accepted batch sets the session position to its newest placed capture time;
 `position` and `seek` commands, and `restart` with an explicit position, return 409
 for live sessions. Before storing a batch the API runs one admission pass, so
 windows completed before a gap are scheduled first.
 
-When the first new frame is more than `2 / capture_fps` after the previous stored
-frame (or after the grid origin, for the first frame), the batch writes one
-`skipped` coverage row with reason `ingest_gap` from the first unscheduled window
-start to that frame, consumes one sequence number, and restarts the window grid at
-the frame. No admitted window spans missing frames, and a capture failure never
-becomes an activity (including `other`). A pause followed by resume produces the
-same explicit gap.
+Every new run, and any jump of more than `2 / capture_fps` within a run (or from
+the grid origin to the first frame), writes one `skipped` coverage row with reason
+`ingest_gap` from the first unscheduled window start to the new frame, consumes one
+sequence number, and restarts the window grid at that frame. No admitted window
+spans missing frames, and a capture failure never becomes an activity (including
+`other`). Pause/resume and reload/resume therefore always leave an explicit gap.
 
 Expiration keeps its meaning: a candidate expires when the watermark has moved
 more than `expiration_seconds` past its end. Server receive times are stored per
-frame so upload latency can later be reported separately from inference lag; the
-browser and server clocks are not assumed to agree.
+frame so upload latency can later be reported separately from inference lag.
 
 ### Preparation
 
