@@ -1,7 +1,7 @@
 export type VideoAsset = {
   id: string;
   filename: string;
-  source: "upload" | "synthetic" | "dataset";
+  source: "upload" | "synthetic" | "dataset" | "live";
   storage_key: string | null;
   duration_seconds: number | null;
   created_at: string;
@@ -60,6 +60,14 @@ export type GenerationSettings = { temperature: number; max_tokens: number };
 export type ExperimentSettings = { model: string; prompt_text: string; generation: GenerationSettings };
 export type Capabilities = { backend_kind: string; simulated: boolean; models: string[]; prompt_preset: { id: string; prompt: string }; generation: GenerationSettings; generation_limits: { min_max_tokens: number; max_max_tokens: number } };
 
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api${path}`, init);
   if (!response.ok) {
@@ -68,7 +76,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const message = typeof detail === "string" ? detail : Array.isArray(detail)
       ? detail.map((item) => typeof item?.msg === "string" ? item.msg : "").filter(Boolean).join("; ")
       : "";
-    throw new Error(message || `Request failed (${response.status})`);
+    throw new ApiError(message || `Request failed (${response.status})`, response.status);
   }
   return response.json() as Promise<T>;
 }
@@ -145,7 +153,7 @@ export type MonitoringSession = {
   generation: number; segment_id: string; position: number; duration: number;
   stride: number; expiration: number; recovery_reason: string | null;
   latest_job_id: string | null; configuration: NonNullable<AnalysisJob["configuration"]>;
-  created_at?: string;
+  created_at?: string; source_kind?: "recording" | "live"; capture_fps?: number | null;
 };
 export type MonitoringWindow = {
   id: string; cursor: number; generation: number; segment_id: string;
@@ -159,3 +167,15 @@ export const getSession = (id: string) => request<MonitoringSession>(`/monitorin
 export const getWindows = (id: string, before?: number) => request<MonitoringWindow[]>(`/monitoring-sessions/${id}/windows${before === undefined ? "" : `?before=${before}`}`);
 export const createSession = (settings: MonitoringSettings, duration: number) => request<MonitoringSession>("/monitoring-sessions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...settings, duration_seconds: duration }) });
 export const commandSession = (id: string, command: MonitoringCommand) => request<MonitoringSession>(`/monitoring-sessions/${id}/commands`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(command) });
+
+export type LiveSettings = ExperimentSettings & { frame_count: number; fps: number; size: number; capture_fps: number };
+export type CapturedFrame = { run_seq: number; capture_seconds: number; blob: Blob };
+export type FrameAck = { accepted: number; run_seq_high: number | null; watermark_seconds: number; state: MonitoringSession["state"] };
+export const createLiveSession = (settings: LiveSettings) => request<MonitoringSession>("/monitoring-sessions/live", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(settings) });
+export function postFrames(id: string, runId: string, frames: CapturedFrame[]): Promise<FrameAck> {
+  const body = new FormData();
+  body.append("run_id", runId);
+  body.append("metadata", JSON.stringify(frames.map(({ run_seq, capture_seconds }) => ({ run_seq, capture_seconds }))));
+  for (const frame of frames) body.append("frames", frame.blob, `${frame.run_seq}.jpg`);
+  return request(`/monitoring-sessions/${id}/frames`, { method: "POST", body });
+}

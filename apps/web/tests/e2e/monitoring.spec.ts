@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 test("recorded sample lifecycle retains old generations and recovers after reload", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Monitoring", exact: true }).click();
-  const panel = page.getByRole("region", { name: "Recorded monitoring" });
+  const panel = page.getByRole("region", { name: "Monitoring", exact: true });
   await panel.getByRole("button", { name: "Use sample clip" }).click();
   await panel.getByRole("button", { name: "Create monitoring session" }).click();
   await expect(panel.getByText("Simulated predictions", { exact: true })).toBeVisible();
@@ -83,7 +83,7 @@ test("monitoring exposes timed failure, coverage gaps, disconnect and restart re
     return route.fulfill({ json: job(id) });
   });
   await page.goto("/");
-  const panel = page.getByRole("region", { name: "Recorded monitoring" });
+  const panel = page.getByRole("region", { name: "Monitoring", exact: true });
   await expect(panel.locator(".result-label").first()).toHaveText("walk");
   releaseCapabilities();
   await panel.locator("summary").filter({ hasText: /Prompt & generation/ }).click();
@@ -118,7 +118,7 @@ test("real recording watermark follows media playback and recovers uploaded sour
   const clip = process.env.FALL_DETECTION_E2E_CLIP!;
   await page.goto("/");
   await page.getByRole("button", { name: "Monitoring", exact: true }).click();
-  const panel = page.getByRole("region", { name: "Recorded monitoring" });
+  const panel = page.getByRole("region", { name: "Monitoring", exact: true });
   await panel.locator('input[type="file"]').setInputFiles(clip);
   await panel.getByLabel("Monitoring frames").fill("4");
   await panel.getByLabel("Monitoring FPS").fill("2");
