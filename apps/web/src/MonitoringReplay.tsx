@@ -282,7 +282,7 @@ function CoverageTimeline({ windows, jobs, duration, position, partial, onLoadOl
       </div>
       {seek}
     </div>
-    <div className="window-track-scale"><span>0 s</span><span>{duration.toFixed(1)} s</span></div>
+    <div className="window-track-scale"><span>0 s</span><span className="seek-hint" aria-hidden="true">Click or drag the timeline to seek</span><span>{duration.toFixed(1)} s</span></div>
     <ul className="coverage-legend">{legend.filter(([tone]) => counts[tone] > 0).map(([tone, name]) => <li key={tone}><i data-tone={tone} aria-hidden="true" />{name} <span>{counts[tone]}</span></li>)}</ul>
     {partial && <p className="preview-note">Counts and bars cover the newest loaded windows only; earlier history is not loaded. <button className="text-button" onClick={onLoadOlder}>Load older history</button></p>}
   </div>;

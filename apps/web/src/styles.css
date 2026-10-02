@@ -280,7 +280,8 @@ footer { padding: 20px 0 32px; display: flex; justify-content: space-between; ga
 .coverage-bar i, .coverage-legend i, .coverage-history li > details > summary i { background: var(--tone); }
 .coverage-bar i[data-tone="gap"], .coverage-legend i[data-tone="gap"], .coverage-history li > details > summary i[data-tone="gap"] { background: repeating-linear-gradient(135deg, var(--faint) 0 2px, transparent 2px 5px); }
 .coverage-bar i[data-tone="failed"], .coverage-legend i[data-tone="failed"], .coverage-history li > details > summary i[data-tone="failed"] { background: var(--alert-soft); box-shadow: inset 0 0 0 1.5px var(--tone); }
-.coverage-track input[type="range"] { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; background: transparent; cursor: pointer; -webkit-appearance: none; appearance: none; }
+/* Extend by half a thumb on each side so the thumb centre spans exactly the bar's 0–100%. */
+.coverage-track input[type="range"] { position: absolute; top: 0; left: -6px; width: calc(100% + 12px); height: 100%; margin: 0; background: transparent; cursor: pointer; -webkit-appearance: none; appearance: none; }
 .coverage-track input[type="range"]:disabled { cursor: not-allowed; }
 .coverage-track input[type="range"]:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; border-radius: 8px; }
 .coverage-track input[type="range"]::-webkit-slider-runnable-track { height: 100%; background: transparent; }
@@ -292,6 +293,8 @@ footer { padding: 20px 0 32px; display: flex; justify-content: space-between; ga
 .coverage-legend i { width: 14px; height: 8px; border-radius: 2px; }
 .coverage-legend span { color: var(--ink); font-variant-numeric: tabular-nums; }
 .coverage .window-track-scale { margin-top: 4px; }
+.seek-hint { color: var(--muted); }
+.coverage-track:has(input:disabled) + .window-track-scale .seek-hint { visibility: hidden; }
 
 .replay-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
 .replay-controls .restart { margin-left: auto; }
