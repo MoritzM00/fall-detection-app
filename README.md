@@ -32,6 +32,7 @@ Both modes use the same prediction pipeline and preserve the 16-class taxonomy. 
 5. [Implementation milestones](docs/roadmap.md)
 6. [Decisions and open questions](docs/decisions.md)
 7. [Local mock inference](docs/mock-inference.md)
+8. [Live camera monitoring (proposal)](docs/live-camera.md)
 
 ## Run locally
 
