@@ -213,19 +213,6 @@ class Repository:
             row = connection.execute("SELECT * FROM videos WHERE id = ?", (video_id,)).fetchone()
         return self._video_from_row(row)
 
-    def create_live_source(self) -> VideoAsset:
-        """Register a camera frame log; its frames arrive later through ingest."""
-        video_id = str(uuid4())
-        with self._connect() as connection:
-            connection.execute(
-                """INSERT INTO videos
-                (id, filename, source, storage_key, duration_seconds, created_at)
-                VALUES (?, 'Live camera', 'live', ?, NULL, ?)""",
-                (video_id, f"live/{video_id}", utc_now()),
-            )
-            row = connection.execute("SELECT * FROM videos WHERE id = ?", (video_id,)).fetchone()
-        return self._video_from_row(row)
-
     def get_video(self, video_id: str) -> VideoAsset | None:
         """Read one asset without exposing its machine-local path."""
         with self._connect() as connection:

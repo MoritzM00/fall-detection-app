@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 from datetime import datetime
+from itertools import pairwise
 from pathlib import Path
 from uuid import uuid4
 
@@ -81,6 +82,11 @@ def gap_tolerance(capture_fps: float) -> float:
     return 2 / capture_fps
 
 
+def min_interval(capture_fps: float) -> float:
+    """Smallest capture interval accepted; bounds stored frames to twice the capture rate."""
+    return 0.5 / capture_fps - 1e-9
+
+
 def _frame_path(data_dir: Path, video: VideoAsset, seq: int) -> Path:
     if video.storage_key is None:
         raise ValueError("Live source has no frame log")
@@ -139,6 +145,34 @@ def ingest_frames(
     for blob in blobs:
         _check_jpeg(blob)
     digests = [hashlib.sha256(blob).hexdigest() for blob in blobs]
+    with repository._connect() as connection:
+        policy = connection.execute(
+            "SELECT source_kind,capture_fps FROM monitoring_sessions WHERE id=?", (session_id,)
+        ).fetchone()
+    if policy is None:
+        raise KeyError(session_id)
+    if policy["source_kind"] != "live":
+        raise ValueError("Only live sessions accept frames")
+    times = [meta.capture_seconds for meta in metadata]
+    if any(b - a < min_interval(policy["capture_fps"]) for a, b in pairwise(times)):
+        raise ValueError("Frames arrive faster than twice the capture rate")
+    split = next(
+        (
+            index
+            for index in range(1, len(times))
+            if times[index] - times[index - 1] > gap_tolerance(policy["capture_fps"])
+        ),
+        None,
+    )
+    if split is not None:
+        # A jump inside one batch is a gap like any other: ingest each side in turn.
+        head = ingest_frames(
+            repository, data_dir, session_id, run_id, metadata[:split], blobs[:split]
+        )
+        tail = ingest_frames(
+            repository, data_dir, session_id, run_id, metadata[split:], blobs[split:]
+        )
+        return {**tail, "accepted": head["accepted"] + tail["accepted"]}
 
     monitor = Monitoring(repository)
     # Admit windows completed before this batch, so a gap cannot swallow them.
@@ -223,6 +257,12 @@ def ingest_frames(
             times = [offset + meta.capture_seconds for meta, _, _ in new]
             if last is not None and times[0] <= last["capture_seconds"]:
                 raise IngestConflictError("Capture times must increase within a run")
+            if (
+                last is not None
+                and last["run_id"] == run_id
+                and times[0] - last["capture_seconds"] < min_interval(session["capture_fps"])
+            ):
+                raise ValueError("Frames arrive faster than twice the capture rate")
             if times[-1] > session["duration"]:
                 raise IngestConflictError("Frames exceed the maximum session length")
             seq = 0 if last is None else last["seq"] + 1
