@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { commandSession, createSession, getJob, getSession, getVideo, getWindows, listSessions } from "./api";
 import type { AnalysisJob, Capabilities, MonitoringCommand, MonitoringSession, MonitoringWindow, VideoAsset } from "./api";
 import { inPaintOrder } from "./coverage";
@@ -189,11 +190,14 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
   const windowSeconds = session ? (session.configuration.preprocessing.frames - 1) / session.configuration.preprocessing.fps : (frames - 1) / fps;
   const stale = !connected || (updated > 0 && now - updated > 3000);
   const systemState = connected ? session?.state ?? "recovering" : "disconnected";
+  const backend = session?.configuration.backend_kind === "mock" || (!session && capabilities?.simulated) ? "Simulated predictions" : session || capabilities ? "Online vLLM" : "Backend unavailable";
+  const seek = <input aria-label="Seek recording" type="range" min="0" max={duration} step="0.1" value={position} disabled={busy || !session || !connected} onChange={event => { media.current?.pause(); void send({ action: "seek", position_seconds: Number(event.target.value) }).then(next => { if (next && current.current?.id === next.id && current.current.generation === next.generation && current.current.segment_id === next.segment_id && current.current.state === "running") { const playbackFence = fence.current; void media.current?.play().catch(() => { if (playbackFence === fence.current) { setError("Playback was blocked. Press Resume to try again."); void send({ action: "pause" }); } }); } }); }} />;
   return <section className="monitoring" aria-label="Recorded monitoring">
-    <div className="intro"><div><h1>Recorded monitoring</h1><p>Replay a recording as if it were live. Each prediction describes the first part of its input window; completion time is processing metadata.</p></div><span className="mock-badge">{session?.configuration.backend_kind === "mock" || (!session && capabilities?.simulated) ? "Simulated predictions" : session || capabilities ? "Online vLLM" : "Backend unavailable"}</span></div>
+    <div className="intro"><div><h1>Recorded monitoring</h1><p>Replay a recording as if it were live. Each prediction describes the first part of its input window; completion time is processing metadata.</p></div></div>
     <div className="session-bar">
       <label className="session-picker"><span>Session</span><select aria-label="Saved monitoring session" value={id} onChange={event => select(event.target.value)}><option value="">New session</option>{sessions.map(item => <option key={item.id} value={item.id}>{sessionName(item)}</option>)}</select></label>
-      {session && <p className="download-links"><a href={`/api/monitoring-sessions/${session.id}/export?format=json`} download>Download complete session JSON</a><a href={`/api/monitoring-sessions/${session.id}/export?format=csv`} download>Download complete session CSV</a></p>}
+      <span className="mock-badge">{backend}</span>
+      {session && <p className="download-links"><span>Export session</span><a aria-label="Download complete session JSON" href={`/api/monitoring-sessions/${session.id}/export?format=json`} download>JSON</a><a aria-label="Download complete session CSV" href={`/api/monitoring-sessions/${session.id}/export?format=csv`} download>CSV</a></p>}
     </div>
     <div className="workspace">
       <div className="viewer-panel">
@@ -201,17 +205,17 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
           <div className="panel-heading"><h2>{video?.filename ?? "Recovering recording…"}</h2><p className="playback-clock">Playback {seconds(Math.min(position, duration))} / {seconds(duration)}</p></div>
           <div className="replay-screen">
             {video?.source !== "synthetic" && video && <video ref={media} src={`/api/videos/${video.id}/media`} onLoadedMetadata={event => { event.currentTarget.currentTime = current.current?.position ?? 0; }} onEnded={event => { const saved = current.current; void send({ action: "position", position_seconds: saved?.duration ?? event.currentTarget.currentTime }); }} onError={() => { setError("Recording playback unavailable"); void send({ action: "pause" }); }} />}
-            {video?.source === "synthetic" && <p className="replay-placeholder">Synthetic recording · simulated playback clock</p>}
+            {video?.source === "synthetic" && <div className="replay-placeholder"><strong>{seconds(Math.min(position, duration))}</strong><span>Synthetic recording · simulated playback clock</span></div>}
           </div>
-          {session && <CoverageTimeline windows={windows.filter(window => window.generation === session.generation)} jobs={jobs} duration={duration} position={position} partial={windows.length >= 100 && !historyComplete} onLoadOlder={() => void older()} />}
-          <label className="seek-control">Seek recording <input aria-label="Seek recording" type="range" min="0" max={duration} step="0.1" value={position} disabled={busy || !session || !connected} onChange={event => { media.current?.pause(); void send({ action: "seek", position_seconds: Number(event.target.value) }).then(next => { if (next && current.current?.id === next.id && current.current.generation === next.generation && current.current.segment_id === next.segment_id && current.current.state === "running") { const playbackFence = fence.current; void media.current?.play().catch(() => { if (playbackFence === fence.current) { setError("Playback was blocked. Press Resume to try again."); void send({ action: "pause" }); } }); } }); }} /></label>
+          {session && <CoverageTimeline windows={windows.filter(window => window.generation === session.generation)} jobs={jobs} duration={duration} position={position} partial={windows.length >= 100 && !historyComplete} onLoadOlder={() => void older()} seek={seek} />}
           <div className="replay-controls"><button className="button primary" disabled={busy || !session || !connected || session.state === "running" || session.state === "stopped"} onClick={() => void send({ action: session?.position === 0 ? "start" : "resume" })}>{session?.position === 0 ? "Start" : "Resume"}</button><button className="button secondary" disabled={busy || session?.state !== "running"} onClick={() => { media.current?.pause(); void send({ action: "pause" }); }}>Pause</button><button className="button secondary" disabled={busy || !session || session.state === "stopped"} onClick={() => { media.current?.pause(); void send({ action: "stop" }); }}>Stop</button><button className="button secondary restart" disabled={busy || !session || !connected} onClick={() => void send({ action: "restart", position_seconds: 0 })}>Restart / retry inference</button></div>
           <div className="replay-status">
             <p role="status" data-tone={toneOf(systemState)}>System: {systemState}{busy ? " · updating" : ""}{session?.recovery_reason ? ` · ${session.recovery_reason}` : ""}</p>
             <p role="status" data-tone={toneOf(inferenceState)}>Inference: {inferenceState}{newestWindow?.reason ? ` · ${newestWindow.reason}` : ""}</p>
             <p data-tone={stale ? "failed" : "idle"}>Result lag: {latest ? seconds(Math.max(0, position - latest.end_seconds)) : "no prediction yet"}{stale ? " · stale status" : ""}</p>
           </div>
-          <p className="preview-note">Window {windowSeconds.toFixed(2)} s, stride {session?.stride} s, expiration {session?.expiration} s. Status is polled every second; coverage gaps and system failures are never reported as activities.</p>
+          <p className="preview-note">Window {windowSeconds.toFixed(2)} s · stride {session?.stride} s · expiration {session?.expiration} s · polled every second. Coverage gaps and system failures are never reported as activities.</p>
+          {session && <History windows={windows} jobs={jobs} session={session} more={windows.length >= 100 && !historyComplete} onLoadOlder={() => void older()} />}
         </>}
       </div>
       <aside className="analysis-panel">
@@ -227,7 +231,23 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
         <details className="plain-details"><summary>All 16 activity labels</summary><p>{labels.join(", ")}</p></details>
       </aside>
     </div>
-    {session && <section className="coverage-history"><h2>Coverage and prediction history</h2>{windows.length === 0 && <p className="preview-note">Windows appear here as playback passes them.</p>}<ul>{windows.map(window => { const state = window.job_id ? jobs[window.job_id]?.state ?? window.state : window.state; const job = window.job_id ? jobs[window.job_id] : undefined; return <li key={window.id}><details><summary><i data-tone={toneOf(state, job)} aria-hidden="true" /><span className="history-range">{seconds(window.start_seconds)}–{seconds(window.end_seconds)}</span><span className="history-meta">Generation {window.generation} · #{window.sequence}{window.sequence_end !== window.sequence ? `–${window.sequence_end}` : ""} · {state}{window.reason ? ` ${window.reason}` : ""}{session && (window.generation !== session.generation || window.segment_id !== session.segment_id) ? " · historical" : ""}</span>{job?.prediction && <strong className={isAlert(job) ? "alert" : ""}>{job.prediction.label.replaceAll("_", " ")}</strong>}</summary><p className="preview-note">Segment {window.segment_id.slice(0, 8)} · {window.reason ?? "No coverage gap recorded"}</p>{job && <Result job={job} />}</details></li>; })}</ul>{windows.length >= 100 && !historyComplete && <button className="text-button" onClick={() => void older()}>Load older history</button>}</section>}
+  </section>;
+}
+
+function History({ windows, jobs, session, more, onLoadOlder }: { windows: MonitoringWindow[]; jobs: Record<string, AnalysisJob>; session: MonitoringSession; more: boolean; onLoadOlder: () => void }) {
+  return <section className="coverage-history"><h2>Coverage and prediction history</h2>
+    {windows.length === 0 && <p className="preview-note">Windows appear here as playback passes them.</p>}
+    <ul>{windows.map(window => {
+      const job = window.job_id ? jobs[window.job_id] : undefined;
+      const state = job?.state ?? window.state;
+      const historical = window.generation !== session.generation || window.segment_id !== session.segment_id;
+      return <li key={window.id} className={historical ? "historical" : ""}><details>
+        <summary><i data-tone={toneOf(state, job)} aria-hidden="true" /><span className="history-range">{seconds(window.start_seconds)}–{seconds(window.end_seconds)}</span><span className="history-meta">Generation {window.generation} · #{window.sequence}{window.sequence_end !== window.sequence ? `–${window.sequence_end}` : ""} · {state}{window.reason ? ` ${window.reason}` : ""}{historical ? " · historical" : ""}</span>{job?.prediction && <strong className={isAlert(job) ? "alert" : ""}>{job.prediction.label.replaceAll("_", " ")}</strong>}</summary>
+        <p className="preview-note">Segment {window.segment_id.slice(0, 8)} · {window.reason ?? "No coverage gap recorded"}</p>
+        {job && <Result job={job} />}
+      </details></li>;
+    })}</ul>
+    {more && <button className="text-button" onClick={onLoadOlder}>Load older history</button>}
   </section>;
 }
 
@@ -245,20 +265,24 @@ function sessionName(item: MonitoringSession) {
   return `${created} · ${item.state} · ${item.id.slice(0, 8)}`;
 }
 
-const legend = [["done", "Other activity"], ["alert", "Fall or fallen"], ["active", "In progress"], ["gap", "Not covered"], ["failed", "Failed"]] as const;
-function CoverageTimeline({ windows, jobs, duration, position, partial, onLoadOlder }: { windows: MonitoringWindow[]; jobs: Record<string, AnalysisJob>; duration: number; position: number; partial: boolean; onLoadOlder: () => void }) {
+const legend = [["done", "Non-fall activity"], ["alert", "Fall or fallen"], ["active", "In progress"], ["gap", "Not covered"], ["failed", "Failed"]] as const;
+// The seek input is layered over the bar so the coverage timeline is also the scrubber.
+function CoverageTimeline({ windows, jobs, duration, position, partial, onLoadOlder, seek }: { windows: MonitoringWindow[]; jobs: Record<string, AnalysisJob>; duration: number; position: number; partial: boolean; onLoadOlder: () => void; seek: ReactNode }) {
   if (!duration) return null;
   const pct = (value: number) => `${Math.min(100, Math.max(0, (value / duration) * 100))}%`;
   const tones = windows.map(window => { const job = window.job_id ? jobs[window.job_id] : undefined; return { window, job, tone: toneOf(job?.state ?? window.state, job), start: window.start_seconds }; });
   const counts = Object.fromEntries(legend.map(([tone]) => [tone, tones.filter(item => item.tone === tone).length]));
   const loadedFrom = windows.length ? Math.min(...windows.map(window => window.start_seconds)) : duration;
   return <div className="coverage">
-    <div className="coverage-bar" aria-hidden="true">
-      {partial && loadedFrom > 0 && <i data-tone="unloaded" style={{ left: 0, width: pct(loadedFrom) }} />}
-      {inPaintOrder(tones).map(({ window, job, tone }) => <i key={window.id} data-tone={tone} style={{ left: pct(window.start_seconds), width: pct(window.end_seconds - window.start_seconds) }} title={`${seconds(window.start_seconds)}–${seconds(window.end_seconds)} · ${job?.prediction?.label ?? job?.state ?? window.state}${window.reason ? ` (${window.reason})` : ""}`} />)}
-      <b style={{ left: pct(position) }} />
+    <div className="coverage-track">
+      <div className="coverage-bar" aria-hidden="true">
+        {partial && loadedFrom > 0 && <i data-tone="unloaded" style={{ left: 0, width: pct(loadedFrom) }} />}
+        {inPaintOrder(tones).map(({ window, job, tone }) => <i key={window.id} data-tone={tone} style={{ left: pct(window.start_seconds), width: pct(window.end_seconds - window.start_seconds) }} />)}
+        <b style={{ left: pct(position) }} />
+      </div>
+      {seek}
     </div>
-    <div className="window-track-scale"><span>0 s</span><span>{duration.toFixed(1)} s</span></div>
+    <div className="window-track-scale"><span>0 s</span><span className="seek-hint" aria-hidden="true">Click or drag the timeline to seek</span><span>{duration.toFixed(1)} s</span></div>
     <ul className="coverage-legend">{legend.filter(([tone]) => counts[tone] > 0).map(([tone, name]) => <li key={tone}><i data-tone={tone} aria-hidden="true" />{name} <span>{counts[tone]}</span></li>)}</ul>
     {partial && <p className="preview-note">Counts and bars cover the newest loaded windows only; earlier history is not loaded. <button className="text-button" onClick={onLoadOlder}>Load older history</button></p>}
   </div>;
@@ -271,16 +295,17 @@ function Result({ job }: { job: AnalysisJob }) {
     <div className="result-overline"><span>System state: {job.state}{job.error ? ` · ${job.error}` : ""}</span>{prediction?.backend_kind === "mock" && <span>Simulated</span>}</div>
     {prediction && <>
       <strong className={`result-label ${isAlert(job) ? "alert" : ""}`}>{prediction.label.replaceAll("_", " ")}</strong>
-      <p className="simulation-note">Describes the first part of the input window.{prediction.backend_kind === "mock" && <> Simulated by fixture <span title={prediction.fixture_version ?? undefined}>{shortId(prediction.fixture_version)}</span>.</>}</p>
+      <p className="simulation-note">Describes the first part of the input window.</p>
       <dl>
         <div><dt>Input interval</dt><dd>{seconds(job.start_seconds)}–{seconds(job.end_seconds)}</dd></div>
-        <div><dt>Request time</dt><dd>{prediction.request_duration_ms.toFixed(0)} ms</dd></div>
-        <div><dt>Pipeline time</dt><dd>{prediction.total_duration_ms.toFixed(0)} ms</dd></div>
+        <div><dt>Request · pipeline</dt><dd>{prediction.request_duration_ms.toFixed(0)} ms · {prediction.total_duration_ms.toFixed(0)} ms</dd></div>
         <div><dt>Completed</dt><dd title={prediction.completed_at}>{completed && !Number.isNaN(completed.getTime()) ? completed.toLocaleTimeString() : prediction.completed_at}</dd></div>
       </dl>
-      <p className="frame-times">Actual frame timestamps: {prediction.sampled_timestamps.map(seconds).join(", ")}</p>
-      {prediction.backend_kind === "mock" && <p className="simulation-note">Local timings include the mock's injected delay; they are not GPU throughput measurements.</p>}
     </>}
-    <details className="result-details"><summary>Immutable input and configuration</summary><p className="raw-response">Job {job.id} · configuration {job.configuration_id} · prepared input {job.prepared_input_id ?? "synthetic"}</p><pre className="saved-prompt">{JSON.stringify(job.configuration, null, 2)}</pre></details>
+    <details className="result-details"><summary>Frames, input and configuration</summary>
+      {prediction && <p className="frame-times">Actual frame timestamps: {prediction.sampled_timestamps.map(seconds).join(", ")}</p>}
+      {prediction?.backend_kind === "mock" && <p className="simulation-note">Simulated by fixture <span title={prediction.fixture_version ?? undefined}>{shortId(prediction.fixture_version)}</span>. Local timings include the mock's injected delay; they are not GPU throughput measurements.</p>}
+      <p className="raw-response">Job {job.id} · configuration {job.configuration_id} · prepared input {job.prepared_input_id ?? "synthetic"}</p><pre className="saved-prompt">{JSON.stringify(job.configuration, null, 2)}</pre>
+    </details>
   </div>;
 }
