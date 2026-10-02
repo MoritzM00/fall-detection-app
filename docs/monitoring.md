@@ -5,6 +5,9 @@ recorded-monitoring UI consumes these polling APIs. SQLite schema version 3 adds
 version 1 session/window records without rewriting clip jobs/configurations.
 Model responses retain all 16 labels; failed/skipped coverage has no prediction.
 
+Live camera sessions reuse this machinery with a server-derived watermark; see
+[live camera monitoring](live-camera.md).
+
 ## API and playback availability
 
 `POST /monitoring-sessions` creates a **paused** session. Supply `video_id`,
