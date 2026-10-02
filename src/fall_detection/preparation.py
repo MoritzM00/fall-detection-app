@@ -95,7 +95,11 @@ def _selected_frames(
 
 
 def _crop_rgb(frame: av.VideoFrame, size: int) -> np.ndarray:
-    source = Image.fromarray(frame.to_ndarray(format="rgb24"))
+    return crop_image(Image.fromarray(frame.to_ndarray(format="rgb24")), size)
+
+
+def crop_image(source: Image.Image, size: int) -> np.ndarray:
+    """Center-crop one RGB image exactly as every prepared input is cropped."""
     width, height = source.size
     if min(width, height) == 0:
         raise ValueError("Decoded frame has invalid dimensions")
@@ -179,16 +183,44 @@ def _prepare_video_unlocked(
     selected = _selected_frames(media_path, timestamps, end_seconds if causal else None)
     if _sha256_file(media_path) != source_sha256:
         raise ValueError("Video changed during preparation")
+    return write_bundle(
+        data_dir,
+        prepared_id,
+        [(_crop_rgb(frame, request.size), actual, pts) for frame, actual, pts in selected],
+        timestamps,
+        {
+            "video_id": video.id,
+            "source_sha256": source_sha256,
+            "start_seconds": request.start_seconds,
+            "end_seconds": end_seconds,
+            "frame_count": request.frame_count,
+            "fps": request.fps,
+            "size": request.size,
+            "preprocessing_version": version,
+        },
+        inspection_pngs,
+    )
+
+
+def write_bundle(
+    data_dir: Path,
+    prepared_id: str,
+    selected: list[tuple[np.ndarray, float, int]],
+    timestamps: list[float],
+    manifest: dict[str, object],
+    inspection_pngs: bool,
+) -> PreparedInput:
+    """Publish cropped RGB frames, transport JPEGs and their manifest atomically."""
+    target = preparation_path(data_dir, prepared_id)
     parent = target.parent
     parent.mkdir(parents=True, exist_ok=True)
     temporary = Path(mkdtemp(prefix=".preparing-", dir=parent))
     try:
         arrays: list[np.ndarray] = []
         frames: list[PreparedFrame] = []
-        for index, ((source_frame, actual, pts), requested) in enumerate(
+        for index, ((rgb, actual, pts), requested) in enumerate(
             zip(selected, timestamps, strict=True)
         ):
-            rgb = _crop_rgb(source_frame, request.size)
             arrays.append(rgb)
             image = Image.fromarray(rgb)
             if inspection_pngs:
@@ -207,19 +239,13 @@ def _prepare_video_unlocked(
             )
         stack = np.stack(arrays)
         np.save(temporary / "frames.npy", stack, allow_pickle=False)
-        bundle_sha256 = hashlib.sha256(stack.tobytes()).hexdigest()
-        prepared = PreparedInput(
-            id=prepared_id,
-            video_id=video.id,
-            source_sha256=source_sha256,
-            start_seconds=request.start_seconds,
-            end_seconds=end_seconds,
-            frame_count=request.frame_count,
-            fps=request.fps,
-            size=request.size,
-            preprocessing_version=version,
-            bundle_sha256=bundle_sha256,
-            frames=frames,
+        prepared = PreparedInput.model_validate(
+            {
+                **manifest,
+                "id": prepared_id,
+                "bundle_sha256": hashlib.sha256(stack.tobytes()).hexdigest(),
+                "frames": frames,
+            }
         )
         (temporary / "manifest.json").write_text(prepared.model_dump_json(), encoding="utf-8")
         if target.exists():
