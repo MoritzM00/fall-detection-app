@@ -10,11 +10,11 @@ from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile, statu
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 
+from fall_detection import live
 from fall_detection.config import Settings
 from fall_detection.exports import ExperimentExports, csv_export, json_export
 from fall_detection.inference import InferenceClient, InferenceServiceError
 from fall_detection.live import (
-    MAX_FRAME_BYTES,
     FrameMeta,
     IngestConflictError,
     LiveSessionCreate,
@@ -65,7 +65,9 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
 
     app = FastAPI(title="Fall Detection API", version="0.1.0", lifespan=lifespan)
     app.add_middleware(
-        UploadBodyLimitMiddleware, upload_max_bytes=lambda: settings.upload_max_bytes
+        UploadBodyLimitMiddleware,
+        upload_max_bytes=lambda: settings.upload_max_bytes,
+        frame_batch_max_bytes=lambda: live.MAX_BATCH_FRAMES * live.MAX_FRAME_BYTES,
     )
     app.add_middleware(
         CORSMiddleware,
@@ -433,12 +435,11 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
     def create_live_session(request: LiveSessionCreate) -> dict:
         """Register a camera frame log and a paused session that follows it."""
         try:
-            # Resolve serving identity first, so an unavailable backend leaves no source behind.
-            config = monitoring_configuration(request.session("pending"))
+            source = request.session(str(uuid4()))
+            config = monitoring_configuration(source)
             with storage_lock(settings.data_dir, exclusive=False):
-                video = repository.create_live_source()
                 return Monitoring(repository).create(
-                    request.session(video.id), config, capture_fps=request.capture_fps
+                    source, config, capture_fps=request.capture_fps
                 )
         except InferenceServiceError as exc:
             raise HTTPException(503, str(exc)) from exc
@@ -459,7 +460,9 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
             raise HTTPException(
                 422, "metadata must be a JSON list of {run_seq, capture_seconds}"
             ) from exc
-        blobs = [frame.file.read(MAX_FRAME_BYTES + 1) for frame in frames]
+        if not 1 <= len(frames) <= live.MAX_BATCH_FRAMES:
+            raise HTTPException(422, f"Send 1–{live.MAX_BATCH_FRAMES} frames per batch")
+        blobs = [frame.file.read(live.MAX_FRAME_BYTES + 1) for frame in frames]
         try:
             with storage_lock(settings.data_dir, exclusive=False):
                 return ingest_frames(

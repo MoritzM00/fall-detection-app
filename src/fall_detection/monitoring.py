@@ -163,21 +163,34 @@ class Monitoring:
     ) -> dict:
         """Create a paused session and its immutable initial configuration segment.
 
-        A ``capture_fps`` makes it a live session: its bound is the maximum session
-        length and its watermark follows ingested frames instead of playback.
+        A ``capture_fps`` makes it a live session: ``request.video_id`` names a new
+        frame-log source, created in the same transaction so a failure leaves no
+        orphan. Its bound is the maximum session length and its watermark follows
+        ingested frames instead of playback.
         """
         session_id, segment = str(uuid4()), str(uuid4())
         timestamp = self.repository._timestamp()
         with self.repository._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            if (
+            if capture_fps is not None:
+                connection.execute(
+                    """INSERT INTO videos
+                    (id, filename, source, storage_key, duration_seconds, created_at)
+                    VALUES (?, 'Live camera', 'live', ?, NULL, ?)""",
+                    (request.video_id, f"live/{request.video_id}", timestamp),
+                )
+                video = None
+            elif (
                 connection.execute(
                     "SELECT id FROM videos WHERE id=?", (request.video_id,)
                 ).fetchone()
                 is None
             ):
                 raise KeyError(request.video_id)
-            video = self.repository.get_video(request.video_id)
+            else:
+                video = self.repository.get_video(request.video_id)
+                if video is not None and video.source == "live":
+                    raise ValueError("Live sources require a live session")
             if (
                 video is not None
                 and video.duration_seconds is not None
@@ -213,8 +226,6 @@ class Monitoring:
                     timestamp,
                 ),
             )
-            if (video is not None and video.source == "live") != (capture_fps is not None):
-                raise ValueError("Live sources require a live session")
             if capture_fps is not None:
                 connection.execute(
                     """UPDATE monitoring_sessions SET source_kind='live',capture_fps=?,
@@ -466,6 +477,8 @@ class Monitoring:
             if row is None:
                 connection.commit()
                 return
+            # Like playback end, a lost camera pauses only once admitted windows, whose
+            # frames are already stored, have been prepared or have expired normally.
             if (
                 row["source_kind"] == "live"
                 and row["last_frame_at"] is not None
@@ -473,11 +486,12 @@ class Monitoring:
                     self.repository._clock() - datetime.fromisoformat(row["last_frame_at"])
                 ).total_seconds()
                 > row["expiration"]
-            ):
-                connection.execute(
-                    "UPDATE monitoring_windows SET state='skipped',reason='capture_ended' WHERE session_id=? AND state='pending'",
+                and connection.execute(
+                    "SELECT 1 FROM monitoring_windows WHERE session_id=? AND state IN ('pending','preparing')",
                     (row["id"],),
-                )
+                ).fetchone()
+                is None
+            ):
                 connection.execute(
                     """UPDATE monitoring_sessions SET state='paused',recovery_reason='capture_ended',
                     updated_at=? WHERE id=?""",

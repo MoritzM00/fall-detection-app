@@ -107,7 +107,10 @@ expected every 250–500 ms.
   frames minutes apart look adjacent.
 - Within a batch `run_seq` is consecutive and `capture_seconds` strictly increases.
   Each frame must be a readable JPEG of at most 2 MiB and 4096 px per edge.
-  Malformed batches return 422.
+  Consecutive frames of a run must be at least `0.5 / capture_fps` apart, which
+  bounds stored frames to twice the capture rate. Malformed batches, and batches
+  with more than 64 parts, return 422 before any frame is read; the request body is
+  capped at 64 × 2 MiB (413) before multipart parsing.
 - Idempotent on `(run_id, run_seq)`: a resent frame with identical time and bytes
   is acknowledged without change, even after the session paused or a newer run
   began, so client retries settle. Conflicts return 409: a stored `run_seq` with
@@ -124,10 +127,13 @@ Each accepted batch sets the session position to its newest placed capture time;
 for live sessions. Before storing a batch the API runs one admission pass, so
 windows completed before a gap are scheduled first.
 
-Every new run, and any jump of more than `2 / capture_fps` within a run (or from
-the grid origin to the first frame), writes one `skipped` coverage row with reason
+Every new run, and any jump of more than `2 / capture_fps` within a run (also
+between frames of one batch, which is then ingested in parts; or from the grid
+origin to the first frame), writes one `skipped` coverage row with reason
 `ingest_gap` from the first unscheduled window start to the new frame, consumes one
-sequence number, and restarts the window grid at that frame. No admitted window
+sequence number, and restarts the window grid at that frame. A single dropped
+frame (a jump of at most `2 / capture_fps`) is tolerated: preparation uses the
+nearest stored frame and records its actual capture time. No admitted window
 spans missing frames, and a capture failure never becomes an activity (including
 `other`). Pause/resume and reload/resume therefore always leave an explicit gap.
 
@@ -154,10 +160,12 @@ keep their input timestamps and configuration identity.
 - `pause`: the client stops uploading (frames are not buffered for later); the gap
   is recorded when capture resumes.
 - `stop`: as today. `restart`: new generation beginning at the current live edge.
-- Reload, tab close or `getUserMedia` track end: when a running session receives no
-  frames for `expiration_seconds`, the worker pauses it with recovery reason
-  `capture_ended` and skips its unprepared candidate. Resume is explicit, matching
-  replay's reload behavior.
+- Reload, tab close, `getUserMedia` track end, or an upload outage: when a running
+  session receives no frames for `expiration_seconds`, the worker pauses it with
+  recovery reason `capture_ended`, but only once no window is pending or preparing,
+  because admitted windows already have their frames (as at playback end). The
+  client stops on the resulting 409 and frames captured meanwhile are discarded;
+  resume is explicit, matching replay's outage and reload behavior.
 - Process restart recovery is unchanged: running sessions recover paused.
 
 ## Storage, retention and privacy
@@ -169,7 +177,9 @@ be confirmed:
   git-ignored via `data/`; never committed). **Not yet implemented:** raw frames
   are currently kept until the data directory is cleaned manually, and
   `scripts/prune_media.py` does not touch `live/`. Until phase 3, use live
-  sessions only with test footage of yourself.
+  sessions only with test footage of yourself. Phase 3 must protect frames that
+  pending or preparing windows still need and coordinate deletion with frame-log
+  reads under the storage lock.
 - Raw frames older than `expiration_seconds + window width + margin` are deleted
   by the worker unless a prepared bundle for an admitted window references them.
   Prepared bundles referenced by jobs are retained, as for other sources, because

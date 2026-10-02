@@ -11,10 +11,11 @@ from PIL import Image
 
 import apps.worker.main as worker
 from apps.api.main import create_app
+from fall_detection import live as live_module
 from fall_detection.config import Settings
 from fall_detection.inference import InferenceClient
 from fall_detection.live import LIVE_PREPROCESSING_VERSION, IngestGapError, prepare_frames
-from fall_detection.models import PreparationRequest
+from fall_detection.models import PreparationRequest, RunConfiguration
 from fall_detection.monitoring import Monitoring
 from fall_detection.pipeline import PipelineResult
 from fall_detection.preparation import load_prepared_input
@@ -162,7 +163,7 @@ def test_each_capture_run_is_placed_by_the_server_clock_after_a_gap(live):
     session = create(client)
     run(client, session["id"], "start")
     send(client, session["id"], [(i, i * 0.25) for i in range(5)], run_id="run-a")
-    Monitoring(repository).tick()
+    drain(settings, repository)
     # After a reload the session has paused; the resumed page restarts its clock at
     # zero, and the server, not the client, places the new run on the timeline.
     clock[0] += timedelta(seconds=30)
@@ -338,8 +339,76 @@ def test_migration_adds_live_schema_to_existing_databases(tmp_path):
         db.commit()
     repository.initialize()
     assert repository.get_video(video.id) == video
-    assert repository.create_live_source().source == "live"
+    with repository._connect() as db:
+        db.execute("INSERT INTO videos VALUES ('cam','Live camera','live','live/cam',NULL,'t')")
+    camera = repository.get_video("cam")
+    assert camera is not None and camera.source == "live"
     with repository._connect() as db:
         assert db.execute("PRAGMA user_version").fetchone()[0] == 5
         old = db.execute("SELECT * FROM monitoring_sessions WHERE id='old'").fetchone()
         assert (old["source_kind"], old["capture_fps"]) == ("recording", None)
+
+
+def test_a_gap_inside_one_batch_is_still_explicit(live):
+    client, settings, repository, _ = live
+    session = create(client)
+    run(client, session["id"], "start")
+    frames = [(i, i * 0.25) for i in range(5)] + [(5 + i, 3.0 + i * 0.25) for i in range(5)]
+    assert send(client, session["id"], frames).json()["accepted"] == 10
+    drain(settings, repository)
+    rows = history(client, session["id"])
+    assert any(row["reason"] == "ingest_gap" and row["end_seconds"] == 3.0 for row in rows)
+    windows = [row for row in rows if row["job_id"]]
+    assert windows and all(
+        row["end_seconds"] <= 1 or row["start_seconds"] >= 3.0 for row in windows
+    )
+
+
+def test_a_lost_camera_still_prepares_windows_it_already_admitted(live):
+    client, settings, repository, clock = live
+    session = create(client)
+    run(client, session["id"], "start")
+    send(client, session["id"], [(i, i * 0.25) for i in range(5)])
+    clock[0] += timedelta(seconds=1)
+    Monitoring(repository).tick()
+    assert any(row["state"] == "pending" for row in history(client, session["id"]))
+    clock[0] += timedelta(seconds=1.5)  # Frames are stale; the admitted window is not.
+    Monitoring(repository).tick()
+    assert client.get(f"/monitoring-sessions/{session['id']}").json()["state"] == "running"
+    drain(settings, repository)
+    assert any(row["job_id"] for row in history(client, session["id"]))
+    Monitoring(repository).tick()
+    ended = client.get(f"/monitoring-sessions/{session['id']}").json()
+    assert (ended["state"], ended["recovery_reason"]) == ("paused", "capture_ended")
+
+
+def test_frame_rate_batch_size_and_body_are_bounded(live, monkeypatch):
+    client, _, _, _ = live
+    session = create(client)
+    run(client, session["id"], "start")
+    too_fast = send(client, session["id"], [(0, 0.0), (1, 0.01)])
+    assert too_fast.status_code == 422 and "twice the capture rate" in too_fast.json()["detail"]
+    send(client, session["id"], [(0, 0.0)])
+    assert send(client, session["id"], [(1, 0.05)]).status_code == 422
+    many = [(i, i * 0.25) for i in range(1, 66)]
+    assert send(client, session["id"], many, [jpeg(1)] * 65).status_code == 422
+    monkeypatch.setattr(live_module, "MAX_FRAME_BYTES", 1000)
+    oversized = client.post(
+        f"/monitoring-sessions/{session['id']}/frames",
+        data={"run_id": "run-a", "metadata": "[]"},
+        files=[("frames", ("big.jpg", b"x" * 200_000, "image/jpeg"))],
+    )
+    assert oversized.status_code == 413
+
+
+def test_failed_session_creation_leaves_no_live_source(live, monkeypatch):
+    client, _, repository, _ = live
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("segment write failed")
+
+    monkeypatch.setattr(RunConfiguration, "model_dump_json", broken)
+    with pytest.raises(RuntimeError):
+        client.post("/monitoring-sessions/live", json={"capture_fps": 15})
+    with repository._connect() as db:
+        assert db.execute("SELECT COUNT(*) FROM videos WHERE source='live'").fetchone()[0] == 0
