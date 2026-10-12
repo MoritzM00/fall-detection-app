@@ -1,6 +1,7 @@
 import { MonitoringReplay } from "./MonitoringReplay";
 import { useEffect, useState } from "react";
 import { createJob, getCapabilities } from "./api";
+import { contextWindowError } from "./context";
 import { FramePreview } from "./FramePreview";
 import { ExperimentControls } from "./ExperimentControls";
 import { RunComparison } from "./RunComparison";
@@ -32,6 +33,7 @@ export default function App() {
   const experimentValid = experiment !== null && Boolean(experiment.prompt_text.trim()) && experiment.prompt_text.length <= 16000
     && Number.isFinite(experiment.generation.temperature) && experiment.generation.temperature >= 0 && experiment.generation.temperature <= 2
     && Number.isInteger(experiment.generation.max_tokens) && experiment.generation.max_tokens >= (capabilities?.generation_limits.min_max_tokens ?? 16) && experiment.generation.max_tokens <= (capabilities?.generation_limits.max_max_tokens ?? 4096);
+  const contextError = experiment && contextWindowError(capabilities, sampling.frameCount, sampling.size, experiment.prompt_text, experiment.generation.max_tokens);
   const { visiblePrepared, preparing, preparationError, retryPreparation } = usePreparation(
     source.video, sampling.startSeconds, sampling.frameCount, sampling.fps,
     sampling.size, rangeValid,
@@ -45,7 +47,7 @@ export default function App() {
   }, []);
 
   async function analyze() {
-    if (!source.video || activeJob || !historyReady || !experiment || !experimentValid) return;
+    if (!source.video || activeJob || !historyReady || !experiment || !experimentValid || contextError) return;
     setAnalysisBusy(true);
     setError(null);
     try {
@@ -155,8 +157,9 @@ export default function App() {
 
         {capabilities && experiment && <ExperimentControls capabilities={capabilities} settings={experiment} busy={busy} onChange={setExperiment} />}
         {experiment && !experimentValid && <p className="error-message" role="alert">Enter a nonblank prompt, temperature from 0 to 2, and an integer token limit from {capabilities?.generation_limits.min_max_tokens ?? 16} to {capabilities?.generation_limits.max_max_tokens ?? 4096}.</p>}
+        {experimentValid && contextError && <p className="error-message" role="alert">{contextError}</p>}
 
-        <button className="analyze-button" disabled={!historyReady || !capabilities || !experimentValid || !source.video || !rangeValid || busy || Boolean(activeJob) || (source.video.source !== "synthetic" && (!visiblePrepared || preparing)) || (source.video.source === "synthetic" && !simulated)} onClick={analyze}>
+        <button className="analyze-button" disabled={!historyReady || !capabilities || !experimentValid || Boolean(contextError) || !source.video || !rangeValid || busy || Boolean(activeJob) || (source.video.source !== "synthetic" && (!visiblePrepared || preparing)) || (source.video.source === "synthetic" && !simulated)} onClick={analyze}>
           {activeJob ? <><i className="spinner" /> {activeJob.state === "queued" ? "Queued" : "Analyzing"}</> : busy ? "Please wait…" : job?.prediction && job.video_id === source.video?.id ? "Run again" : "Run analysis"}
         </button>
 

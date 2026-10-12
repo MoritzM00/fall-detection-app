@@ -60,6 +60,7 @@ def serve() -> None:
             "0.0.0.0",
             "--port",
             str(PORT),
+            # Keep FALL_DETECTION_MAX_MODEL_LEN in deploy/modal.env equal to this value.
             "--max-model-len",
             "5120",
             "--max-num-seqs",
