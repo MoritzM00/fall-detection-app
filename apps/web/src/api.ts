@@ -91,6 +91,23 @@ export function getCapabilities(): Promise<Capabilities> {
   return request("/capabilities");
 }
 
+export type ServingState = "simulated" | "unmonitored" | "unknown" | "idle" | "running" | "warming" | "ready";
+export type ServingStatus = {
+  state: ServingState;
+  containers: number | null;
+  backlog: number | null;
+  detail: string | null;
+  warmup: { state: "idle" | "warming" | "ready" | "failed"; seconds: number | null; error: string | null };
+};
+
+export function getServingStatus(): Promise<ServingStatus> {
+  return request("/serving-status");
+}
+
+export function warmUpServing(): Promise<ServingStatus> {
+  return request("/serving-status/warmup", { method: "POST" });
+}
+
 export function listDatasetVideos(): Promise<DatasetVideoOption[]> {
   return request("/dataset-videos");
 }
