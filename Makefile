@@ -1,4 +1,4 @@
-.PHONY: setup dev dev-gpu check browser-test demo gpu-warm
+.PHONY: setup dev dev-gpu check browser-test demo gpu-warm gpu-stop
 
 # Committed non-secret GPU settings, then the Git-ignored token in .env.
 GPU_ENV = set -a; . deploy/modal.env; [ ! -f .env ] || . ./.env; set +a;
@@ -32,3 +32,6 @@ demo:
 
 gpu-warm:
 	$(GPU_ENV) UV_CACHE_DIR=.uv-cache uv run python scripts/warm_gpu.py
+
+gpu-stop:
+	$(GPU_ENV) UV_CACHE_DIR=.uv-cache uv run python scripts/stop_gpu.py
