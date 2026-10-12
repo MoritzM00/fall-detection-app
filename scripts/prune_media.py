@@ -31,6 +31,16 @@ def session_summary(report: PruneReport) -> list[str]:
     return lines
 
 
+def evaluation_warnings(report: PruneReport) -> list[str]:
+    """Warn about eligible sessions whose real predictions an evaluation may still need."""
+    return [
+        f"warning: session {session_id} has real (vLLM) predictions; after pruning, its "
+        "export reports input_status unavailable and cannot feed a real evaluation report. "
+        "Export its manifest first, or use --keep-sessions while evaluation is pending."
+        for session_id in report.evaluated_sessions
+    ]
+
+
 def main() -> None:
     """Run a dry-run by default and require --apply for removal."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -69,7 +79,7 @@ def main() -> None:
             f"eligible {candidate.kind}: {candidate.path} ({candidate.reason}; "
             f"{candidate.file_count} files, {_megabytes(candidate.size_bytes)})"
         )
-    for line in session_summary(report):
+    for line in [*session_summary(report), *evaluation_warnings(report)]:
         print(line)
     total = sum(candidate.size_bytes for candidate in report.candidates)
     print(

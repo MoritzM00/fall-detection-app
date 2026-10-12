@@ -16,6 +16,8 @@ from PIL import Image
 import apps.worker.main as worker
 from apps.api.main import create_app
 from fall_detection.config import Settings
+from fall_detection.evaluation import evaluate
+from fall_detection.exports import ExperimentExports
 from fall_detection.live import prepare_frames
 from fall_detection.models import PreparationRequest
 from fall_detection.monitoring import Monitoring, SessionCommand, SessionCreate
@@ -23,7 +25,7 @@ from fall_detection.prediction import InferenceClient, PipelineResult
 from fall_detection.preparation import preparation_path
 from fall_detection.repository import Repository
 from fall_detection.retention import prune_media
-from scripts.prune_media import session_summary
+from scripts.prune_media import evaluation_warnings, session_summary
 
 DAY = timedelta(days=1)
 
@@ -192,7 +194,9 @@ def recorded_session(root: Path, repository: Repository, video_id: str, **window
     """A stopped session with one window, aged by rewriting its timestamps."""
     monitor = Monitoring(repository)
     request = SessionCreate(video_id=video_id, duration_seconds=10)
-    session = monitor.create(request, monitor.configuration(request, "model", "mock", "sample-v1"))
+    backend = window.get("backend", "mock")
+    fixture = "sample-v1" if backend == "mock" else None
+    session = monitor.create(request, monitor.configuration(request, "model", backend, fixture))
     monitor.command(session["id"], SessionCommand(action="stop"))
     current = monitor.get(session["id"])
     with sqlite3.connect(root / "app.sqlite3") as db:
@@ -236,6 +240,85 @@ def job_for(repository: Repository, video_id: str, bundle: Path, state: str) -> 
     with sqlite3.connect(repository._database_path) as db:
         db.execute("UPDATE jobs SET state=? WHERE id=?", (state, job.id))
     return job.id
+
+
+def predicted_job(repository: Repository, video_id: str, bundle: Path, backend: str) -> str:
+    """A finished window job with a stored prediction from the given backend."""
+    fixture = "sample-v1" if backend == "mock" else None
+    job = repository.create_job(
+        video_id,
+        0,
+        1,
+        model="model",
+        prepared_input_id=bundle.name,
+        backend_kind=backend,
+        fixture_version=fixture,
+    )
+    claimed = repository.claim_next_job()
+    assert claimed is not None and claimed.claim_token is not None
+    assert repository.complete_job(
+        job.id,
+        PipelineResult("walk", "walk", [0, 0.5], 1, 2),
+        backend_kind=backend,
+        model="model",
+        fixture_version=fixture,
+        claim_token=claimed.claim_token,
+    )
+    return job.id
+
+
+def test_pruned_vllm_session_cannot_feed_a_real_report_and_preview_warns(storage):
+    """Intended outcome: a pruned recorded session loses its recorded input for good."""
+    root, repository, video_id = storage
+    database = root / "app.sqlite3"
+    mock_bundle = disposable_bundle(root, video_id)
+    mock_session = recorded_session(
+        root,
+        repository,
+        video_id,
+        prepared_input_id=mock_bundle.name,
+        job_id=predicted_job(repository, video_id, mock_bundle, "mock"),
+    )
+    assert evaluation_warnings(prune_media(root, database, now=NOW)) == []
+
+    bundle = disposable_bundle(root, video_id)
+    job = predicted_job(repository, video_id, bundle, "vllm")
+    session = recorded_session(
+        root, repository, video_id, prepared_input_id=bundle.name, job_id=job, backend="vllm"
+    )
+    exports = ExperimentExports(repository, root)
+    assert exports.snapshot("session", session)["runs"][0]["input_status"] == "recorded"
+
+    preview = prune_media(root, database, now=NOW)
+    assert {c.session_ids for c in preview.candidates} == {(mock_session,), (session,)}
+    assert preview.evaluated_sessions == (session,)
+    (warning,) = evaluation_warnings(preview)
+    assert session in warning and "--keep-sessions" in warning
+    assert not prune_media(root, database, now=NOW, session_age=None).evaluated_sessions
+
+    assert bundle in prune_media(root, database, now=NOW, apply=True).removed
+    snapshot = exports.snapshot("session", session)
+    (run,) = snapshot["runs"]
+    assert run["input_status"] == "unavailable" and run["prepared_input"] is None
+    assert run["prediction"]["backend_kind"] == "vllm"
+    truth = {
+        "schema_version": 1,
+        "dataset_id": "disposable",
+        "split_id": "fixture",
+        "purpose": "final",
+        "annotation_version": "manual-v1",
+        "sources": [
+            {
+                "source_id": video_id,
+                "source_sha256": "b" * 64,
+                "timebase": "source_relative_seconds",
+                "observations": [{"start_seconds": 0, "end_seconds": 1}],
+                "annotations": [{"start_seconds": 0, "end_seconds": 1, "label": "walk"}],
+            }
+        ],
+    }
+    with pytest.raises(ValueError, match="online provenance and recorded input"):
+        evaluate(truth, [snapshot])
 
 
 @pytest.mark.parametrize("job_state", ["succeeded", "failed", "cancelled", "skipped"])

@@ -50,6 +50,10 @@ class PruneReport:
     candidates: tuple[PruneCandidate, ...]
     removed: tuple[Path, ...]
     skipped: tuple[Path, ...]
+    # Eligible sessions with real (non-mock) predictions: pruning their inputs
+    # leaves exports at ``input_status: unavailable``, which a real evaluation
+    # report rejects.
+    evaluated_sessions: tuple[str, ...] = ()
 
 
 def _signature(path: Path, root: Path, *, directory: bool) -> Signature | None:
@@ -114,6 +118,23 @@ def _ended_sessions(
     return {
         row["id"]: dict(row) for row in rows if _created_before(row["updated_at"], session_cutoff)
     }
+
+
+def _evaluated_sessions(
+    connection: sqlite3.Connection, candidates: tuple[PruneCandidate, ...]
+) -> tuple[str, ...]:
+    """Sessions among the candidates whose windows have real (non-mock) predictions."""
+    session_ids = sorted({sid for candidate in candidates for sid in candidate.session_ids})
+    if not session_ids:
+        return ()
+    rows = connection.execute(
+        f"""SELECT DISTINCT w.session_id FROM monitoring_windows w
+        JOIN predictions p ON p.job_id = w.job_id
+        WHERE p.backend_kind <> 'mock' AND w.session_id IN ({",".join("?" * len(session_ids))})
+        ORDER BY w.session_id""",
+        session_ids,
+    ).fetchall()
+    return tuple(row["session_id"] for row in rows)
 
 
 def _live_candidates(
@@ -323,7 +344,8 @@ def prune_media(
     (``None`` keeps all session data). Every removed file must also be older than
     ``min_age``. Prepared input IDs, hashes and ``live_frames`` rows stay in the
     database, so provenance survives and exports report pruned inputs as
-    ``unavailable``.
+    ``unavailable``; such exports can no longer feed a real evaluation report, so
+    the report lists eligible sessions with real predictions.
     """
     if min_age <= timedelta(0):
         raise ValueError("minimum age must be positive")
@@ -350,9 +372,10 @@ def prune_media(
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("BEGIN IMMEDIATE" if apply else "BEGIN")
         candidates = _collect_candidates(root, connection, cutoff, session_cutoff)
+        evaluated = _evaluated_sessions(connection, candidates)
         if not apply:
             connection.rollback()
-            return PruneReport(candidates, (), ())
+            return PruneReport(candidates, (), (), evaluated)
 
         removed: list[Path] = []
         skipped: list[Path] = []
@@ -387,4 +410,4 @@ def prune_media(
                 continue
             candidate.path.unlink()
             removed.append(candidate.path)
-        return PruneReport(candidates, tuple(removed), tuple(skipped))
+        return PruneReport(candidates, tuple(removed), tuple(skipped), evaluated)

@@ -13,7 +13,7 @@ The command reads `FALL_DETECTION_DATA_DIR` and `FALL_DETECTION_DATABASE_PATH` u
 .venv/bin/python scripts/prune_media.py --min-age-hours 720 --session-age-days 90 --apply
 ```
 
-`--keep-sessions` leaves all monitoring session data in place, which restores the behavior before ended-session pruning. The preview lists each eligible resource with its file count and size, one summary line per ended session (prepared bundles and live frames with their sizes), and the total.
+`--keep-sessions` leaves all monitoring session data in place, which restores the behavior before ended-session pruning. The preview lists each eligible resource with its file count and size, one summary line per ended session (prepared bundles and live frames with their sizes), a warning for each eligible session with real (vLLM) predictions, and the total.
 
 ## Unreferenced uploads and bundles
 
@@ -35,7 +35,7 @@ It never touches:
 
 Every removed file must also be older than `--min-age-hours`. A frame log containing anything but regular files (subdirectories or symlinks) is left alone. Monitoring jobs cannot be retried, so a finished window never needs its input again.
 
-Provenance stays in the database: windows and jobs keep their prepared input IDs, configurations keep their preprocessing settings, and the `live_frames` rows keep each frame's sequence number, capture time and SHA-256. Run and session exports then report `input_status: unavailable` for a pruned input. Because the frame-log rows remain, a restarted live session continues the sequence numbering, and preparation that would need a pruned frame fails with a reason instead of reading other pixels. Removal runs under the exclusive storage lock, which frame ingest and preparation also take (shared), so no frame is read or written while it is deleted.
+Provenance stays in the database: windows and jobs keep their prepared input IDs, configurations keep their preprocessing settings, and the `live_frames` rows keep each frame's sequence number, capture time and SHA-256. Run and session exports then report `input_status: unavailable` for a pruned input. This is permanent for evaluation: a pruned session can no longer feed a real [evaluation](evaluation.md) report, which requires online provenance and `input_status: recorded`, and the bundles cannot be recovered. An export taken before pruning keeps the manifests and still qualifies, so export the session ([exports](exports.md)) before `--apply`, or use `--keep-sessions` while evaluation is pending. The preview prints a warning for each eligible session with real (vLLM) predictions; mock-only sessions are not flagged. Because the frame-log rows remain, a restarted live session continues the sequence numbering, and preparation that would need a pruned frame fails with a reason instead of reading other pixels. Removal runs under the exclusive storage lock, which frame ingest and preparation also take (shared), so no frame is read or written while it is deleted.
 
 ## RGB arrays in prepared bundles
 
