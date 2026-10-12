@@ -171,12 +171,24 @@ def test_seek_falls_back_when_landing_after_window(tmp_path, monkeypatch):
 
         def seek(self, offset, **kwargs):
             seeks.append(offset)
-            return original_seek(self._inner, offset + 90, **kwargs)
+            # Land 3 s late in the stream's own time base (MP4 raises it to 1/15360), so
+            # the backward seek reaches a keyframe inside the window, not before it.
+            late = offset + round(3 / kwargs["stream"].time_base)
+            return original_seek(self._inner, late, **kwargs)
+
+    scans: list[bool] = []
+    original_scan = preparation._scan_frames
+
+    def spy(*args, seek):
+        scans.append(seek)
+        return original_scan(*args, seek=seek)
 
     real_open = av.open
     monkeypatch.setattr(av, "open", lambda *a, **k: Late(real_open(*a, **k)))
+    monkeypatch.setattr(preparation, "_scan_frames", spy)
     assert _signature(_selected_frames(path, stamps)) == full
     assert seeks  # The seek was tried and rejected, then the full scan decided.
+    assert scans == [True, False]
 
 
 @pytest.mark.parametrize("seek", [True, False])
