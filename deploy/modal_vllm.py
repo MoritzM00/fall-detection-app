@@ -22,7 +22,12 @@ GPU = "L4"
 PORT = 8000
 MINUTES = 60
 
-image = modal.Image.debian_slim(python_version="3.12").uv_pip_install(f"vllm=={VLLM_VERSION}")
+image = (
+    modal.Image.debian_slim(python_version="3.12")
+    .uv_pip_install(f"vllm=={VLLM_VERSION}")
+    # The FlashInfer sampler JIT-compiles CUDA kernels, but the slim image has no nvcc.
+    .env({"VLLM_USE_FLASHINFER_SAMPLER": "0"})
+)
 
 # Weights (~17 GB) and compilation artifacts persist across cold starts.
 hf_cache = modal.Volume.from_name("fall-detection-hf-cache", create_if_missing=True)
