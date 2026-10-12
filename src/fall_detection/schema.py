@@ -164,7 +164,8 @@ MONITORING_SCHEMA = (
         ON monitoring_windows(session_id) WHERE state IN ('pending', 'preparing')""",
     """CREATE TABLE IF NOT EXISTS live_runs (
         video_id TEXT NOT NULL REFERENCES videos(id), run_id TEXT NOT NULL,
-        offset_seconds REAL NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(video_id, run_id))""",
+        offset_seconds REAL NOT NULL, created_at TEXT NOT NULL, run_order INTEGER,
+        PRIMARY KEY(video_id, run_id))""",
     """CREATE TABLE IF NOT EXISTS live_frames (
         video_id TEXT NOT NULL REFERENCES videos(id), seq INTEGER NOT NULL,
         run_id TEXT NOT NULL, run_seq INTEGER NOT NULL,
@@ -187,3 +188,7 @@ def _migrate_monitoring(connection: sqlite3.Connection) -> None:
         connection.execute("ALTER TABLE monitoring_sessions ADD COLUMN capture_fps REAL")
     if "last_frame_at" not in columns:
         connection.execute("ALTER TABLE monitoring_sessions ADD COLUMN last_frame_at TEXT")
+    # Client-chosen run ordinal; NULL for runs stored before clients sent one.
+    run_columns = {row[1] for row in connection.execute("PRAGMA table_info(live_runs)")}
+    if "run_order" not in run_columns:
+        connection.execute("ALTER TABLE live_runs ADD COLUMN run_order INTEGER")
