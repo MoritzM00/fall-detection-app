@@ -29,19 +29,23 @@ uvx modal setup                              # once: authenticate the Modal CLI
 uvx modal deploy deploy/modal_vllm.py        # prints the endpoint URL
 ```
 
-Create a proxy auth token in the Modal dashboard (Settings → Proxy Auth Tokens), then run the app against the endpoint:
+Configuration is split by sensitivity:
+
+| File | Committed | Contents |
+| --- | --- | --- |
+| [`modal.env`](modal.env) | yes | Backend kind, endpoint URL, Modal app name, request timeout |
+| [`.env.example`](../.env.example) | yes | Names of the required secrets, with placeholders |
+| `.env` | no (Git-ignored) | Your Modal proxy auth token |
+
+The endpoint URL is public in this repository. That is harmless: without the token, Modal rejects requests at its edge before any container starts. Create a proxy auth token in the Modal dashboard (Settings → Proxy Auth Tokens), put it in `.env`, and start the app against the endpoint:
 
 ```sh
-export FALL_DETECTION_BACKEND_KIND=vllm
-export FALL_DETECTION_INFERENCE_BASE_URL=https://<workspace>--fall-detection-vllm-serve.modal.run/v1
-export FALL_DETECTION_INFERENCE_PROXY_KEY=wk-...
-export FALL_DETECTION_INFERENCE_PROXY_SECRET=ws-...
-export FALL_DETECTION_REQUEST_TIMEOUT_SECONDS=600
-export FALL_DETECTION_MODAL_APP=fall-detection-vllm   # GPU status badge
-make dev
+cp .env.example .env    # then fill in the token
+make dev-gpu            # web UI, API and worker against the Modal GPU
+make gpu-warm           # optional: wake the GPU and print how long it took
 ```
 
-Keep these lines in a Git-ignored file such as `.env` and load it with `source .env`; never commit the token. `make gpu-warm` loads `.env` itself, wakes the endpoint and prints how long it took to become ready. To take the endpoint down entirely, run `uvx modal app stop fall-detection-vllm`.
+Both targets load `modal.env` first and `.env` second, so a value in `.env` overrides the committed one, for example to point at a different deployment. Plain `make dev` keeps using the mock. If you redeploy under a different app or workspace name, update `modal.env`. To take the endpoint down entirely, run `uvx modal app stop fall-detection-vllm`.
 
 ### GPU status in the web UI
 
