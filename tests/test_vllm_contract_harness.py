@@ -1,5 +1,7 @@
 """Self-test for the opt-in live validator; this is not GPU validation."""
 
+import json
+
 import httpx
 import pytest
 
@@ -8,7 +10,9 @@ from scripts.validate_vllm_contract import validate
 
 
 @pytest.mark.parametrize("prompt", [THESIS_BASELINE_PROMPT, "Custom smoke-test prompt"])
-def test_validator_exercises_success_and_failure_without_gpu(monkeypatch, prompt) -> None:
+def test_validator_exercises_success_and_failure_without_gpu(
+    monkeypatch, route_inference, prompt
+) -> None:
     def fake_get(url, **_kwargs):
         if url.endswith("/version"):
             return httpx.Response(
@@ -18,9 +22,9 @@ def test_validator_exercises_success_and_failure_without_gpu(monkeypatch, prompt
             200, json={"data": [{"id": "served-model"}]}, request=httpx.Request("GET", url)
         )
 
-    def fake_post(url, **_kwargs):
-        assert _kwargs["json"]["messages"][0]["content"][0]["text"] == prompt
-        if url.startswith("http://127.0.0.1:"):
+    def fake_post(request):
+        assert json.loads(request.content)["messages"][0]["content"][0]["text"] == prompt
+        if request.url.host == "127.0.0.1":
             raise httpx.ConnectError("fixture connection refused")
         return httpx.Response(
             200,
@@ -28,11 +32,10 @@ def test_validator_exercises_success_and_failure_without_gpu(monkeypatch, prompt
                 "id": "fixture-completion",
                 "choices": [{"message": {"content": "The best answer is: walk"}}],
             },
-            request=httpx.Request("POST", url),
         )
 
     monkeypatch.setattr(httpx, "get", fake_get)
-    monkeypatch.setattr(httpx, "post", fake_post)
+    route_inference(fake_post)
     report = validate(
         "https://gpu.example/v1", "served-model", "fixture-processor", 1, prompt_text=prompt
     )
