@@ -53,6 +53,7 @@ button:disabled { cursor: not-allowed; }
 .system-state[class*="serving-"] { flex-wrap: wrap; justify-content: flex-end; text-align: right; }
 .warm-button { border: 1px solid var(--line); border-radius: 99px; background: var(--field); color: var(--ink); font: inherit; font-size: 12px; padding: 3px 10px; cursor: pointer; }
 .warm-button:hover { border-color: var(--muted); }
+.serving-error { flex-basis: 100%; color: var(--alert); font-size: 12px; }
 @keyframes serving-pulse { 50% { opacity: .45; } }
 @media (prefers-reduced-motion: reduce) { .system-state.serving-busy i { animation: none; } }
 

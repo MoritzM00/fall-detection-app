@@ -1,4 +1,5 @@
 import json
+import subprocess
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -40,7 +41,7 @@ from fall_detection.preparation import load_prepared_input, preparation_path, pr
 from fall_detection.preparation_queue import PreparationBusyError, PreparationCoordinator
 from fall_detection.prompts import PRESET_ID, THESIS_BASELINE_PROMPT
 from fall_detection.repository import Repository
-from fall_detection.serving_status import ServingStatus, StatusSnapshot
+from fall_detection.serving_status import ServingStatus, ShutdownBlockedError, StatusSnapshot
 from fall_detection.storage_lock import storage_lock
 from fall_detection.taxonomy import ACTIVITY_LABELS
 from fall_detection.upload_limit import UploadBodyLimitMiddleware
@@ -110,6 +111,16 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
             return serving_status.start_warmup()
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/serving-status/shutdown")
+    def shut_down_serving() -> StatusSnapshot:
+        """Stop the GPU containers now; the next request starts a new one."""
+        try:
+            return serving_status.shutdown()
+        except (ValueError, ShutdownBlockedError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise HTTPException(status_code=502, detail=f"Modal CLI failed: {exc}") from exc
 
     @app.post("/videos/sample", response_model=VideoAsset)
     def create_sample_video() -> VideoAsset:

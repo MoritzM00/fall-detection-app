@@ -1,3 +1,4 @@
+import subprocess
 import threading
 import time
 from dataclasses import replace
@@ -9,7 +10,13 @@ from fastapi.testclient import TestClient
 from apps.api.main import create_app
 from fall_detection import serving_status
 from fall_detection.config import Settings
-from fall_detection.serving_status import ContainerStats, ServingStatus, wait_until_healthy
+from fall_detection.serving_status import (
+    ContainerStats,
+    ServingStatus,
+    ShutdownBlockedError,
+    modal_stop_containers,
+    wait_until_healthy,
+)
 
 
 @pytest.fixture
@@ -140,3 +147,74 @@ def test_api_reports_simulated_status_and_refuses_mock_warmup(settings):
     with TestClient(create_app(replace(settings, backend_kind="mock"))) as client:
         assert client.get("/serving-status").json()["state"] == "simulated"
         assert client.post("/serving-status/warmup").status_code == 409
+
+
+def test_shutdown_stops_containers_and_clears_readiness(settings):
+    containers = [1]
+    stopped = []
+
+    def stop(app_name):
+        stopped.append(app_name)
+        containers[0] = 0
+        return 1
+
+    status = ServingStatus(
+        settings,
+        stats_reader=lambda _app: ContainerStats(containers=containers[0], backlog=0),
+        warm=lambda _settings: 3.0,
+        stop=stop,
+        cache_seconds=0,
+    )
+    status._run_warmup()
+    assert status.snapshot()["state"] == "ready"
+    snapshot = status.shutdown()
+    assert stopped == ["fall-detection-vllm"]
+    assert snapshot["state"] == "idle"
+    assert snapshot["warmup"]["state"] == "idle"
+
+
+@pytest.mark.parametrize(("running", "backlog"), [(1, 0), (0, 2)])
+def test_shutdown_refuses_while_requests_are_in_flight(settings, running, backlog):
+    stopped = []
+    status = ServingStatus(
+        settings,
+        stats_reader=lambda _app: ContainerStats(
+            containers=1, backlog=backlog, running_inputs=running
+        ),
+        stop=lambda app_name: stopped.append(app_name) or 0,
+    )
+    with pytest.raises(ShutdownBlockedError, match="in flight"):
+        status.shutdown()
+    assert stopped == []
+
+
+def test_shutdown_needs_a_monitored_vllm_backend(settings):
+    with pytest.raises(ValueError, match="FALL_DETECTION_MODAL_APP"):
+        ServingStatus(replace(settings, modal_app=None)).shutdown()
+
+
+def test_modal_stop_uses_the_cli_for_this_app_only(monkeypatch):
+    calls = []
+
+    def fake_run(command, **_kwargs):
+        calls.append(command[3:])
+        listing = (
+            '[{"container_id": "ta-1", "app_name": "fall-detection-vllm"},'
+            ' {"container_id": "ta-2", "app_name": "other-app"}]'
+        )
+        return subprocess.CompletedProcess(command, 0, stdout=listing if "list" in command else "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert modal_stop_containers("fall-detection-vllm") == 1
+    assert calls == [["container", "list", "--json"], ["container", "stop", "--yes", "ta-1"]]
+
+
+def test_api_maps_blocked_shutdown_to_conflict(settings, monkeypatch):
+    def blocked(_self):
+        raise ShutdownBlockedError("1 request(s) in flight")
+
+    monkeypatch.setattr(ServingStatus, "shutdown", blocked)
+    with TestClient(create_app(settings)) as client:
+        response = client.post("/serving-status/shutdown")
+    assert response.status_code == 409
+    assert "in flight" in response.json()["detail"]

@@ -1,5 +1,8 @@
-"""GPU serving status that never wakes a scale-to-zero endpoint, plus explicit warm-up."""
+"""GPU serving status that never wakes a scale-to-zero endpoint, plus explicit warm-up and shutdown."""
 
+import json
+import subprocess
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -41,6 +44,11 @@ class ContainerStats:
 
     containers: int
     backlog: int
+    running_inputs: int = 0
+
+
+class ShutdownBlockedError(RuntimeError):
+    """Raised when stopping containers now would cancel requests and restart the GPU."""
 
 
 def modal_container_stats(app_name: str, function_name: str = "serve") -> ContainerStats:
@@ -48,7 +56,36 @@ def modal_container_stats(app_name: str, function_name: str = "serve") -> Contai
     import modal
 
     stats = modal.Function.from_name(app_name, function_name).get_current_stats()
-    return ContainerStats(containers=stats.num_total_runners, backlog=stats.backlog)
+    return ContainerStats(
+        containers=stats.num_total_runners,
+        backlog=stats.backlog,
+        running_inputs=stats.num_running_inputs,
+    )
+
+
+def modal_stop_containers(app_name: str) -> int:
+    """Stop every running container of the app; the app stays deployed and can scale up again.
+
+    The Modal SDK has no public call for this, so it uses the Modal CLI with the local login.
+    """
+
+    def modal_cli(*args: str) -> str:
+        return subprocess.run(
+            [sys.executable, "-m", "modal", "container", *args],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        ).stdout
+
+    containers = [
+        item["container_id"]
+        for item in json.loads(modal_cli("list", "--json"))
+        if item.get("app_name") == app_name
+    ]
+    for container_id in containers:
+        modal_cli("stop", "--yes", container_id)
+    return len(containers)
 
 
 def wait_until_healthy(
@@ -95,12 +132,14 @@ class ServingStatus:
         settings: Settings,
         stats_reader: Callable[[str], ContainerStats] = modal_container_stats,
         warm: Callable[[Settings], float] = wait_until_healthy,
+        stop: Callable[[str], int] = modal_stop_containers,
         cache_seconds: float = 5,
     ) -> None:
         """Configure where status comes from; nothing is contacted until asked."""
         self._settings = settings
         self._stats_reader = stats_reader
         self._warm = warm
+        self._stop = stop
         self._cache_seconds = cache_seconds
         self._lock = threading.Lock()
         self._stats: ContainerStats | None = None
@@ -151,6 +190,28 @@ class ServingStatus:
                 self._warmup_seconds = None
                 self._warmup_error = None
                 threading.Thread(target=self._run_warmup, daemon=True).start()
+        return self.snapshot()
+
+    def shutdown(self) -> StatusSnapshot:
+        """Stop the GPU containers now instead of waiting for the idle scale-down."""
+        app_name = self._settings.modal_app
+        if self._settings.backend_kind != "vllm" or app_name is None:
+            raise ValueError("Shutdown needs the vllm backend and FALL_DETECTION_MODAL_APP")
+        with self._lock:
+            if self._warmup == "warming":
+                raise ShutdownBlockedError("A warm-up is in progress")
+        # Read fresh counts: Modal reschedules cancelled requests on a new container.
+        stats = self._stats_reader(app_name)
+        in_flight = stats.running_inputs + stats.backlog
+        if in_flight:
+            raise ShutdownBlockedError(
+                f"{in_flight} request(s) in flight; stopping now would restart them on a new GPU"
+            )
+        self._stop(app_name)
+        with self._lock:
+            self._warmup, self._warmup_seconds, self._warmup_error = "idle", None, None
+            self._ready_at = float("-inf")
+            self._stats_read_at = float("-inf")
         return self.snapshot()
 
     def _run_warmup(self) -> None:
