@@ -1,6 +1,8 @@
 """Proposed recorded replay behavior; independent of research inference policy."""
 
 import json
+import sqlite3
+from datetime import datetime
 from typing import Literal
 from uuid import uuid4
 
@@ -66,6 +68,30 @@ class SessionCommand(BaseModel):
     position_seconds: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     configuration: SessionConfiguration | None = None
     command_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+LIVE_LENGTH_REACHED = "This live session has reached its maximum length; start a new session."
+
+
+def live_edge(
+    repository: Repository, connection: sqlite3.Connection, session: sqlite3.Row
+) -> float:
+    """Timeline position where a live session's next capture run would begin.
+
+    Before any frame this is the session position. Afterwards it is the previous
+    run's last frame plus the time elapsed on the server clock since that frame was
+    received, and at least one capture interval, so pauses and stops stay real gaps
+    and count against the session's maximum length.
+    """
+    last = connection.execute(
+        """SELECT capture_seconds,received_at FROM live_frames
+        WHERE video_id=? ORDER BY seq DESC LIMIT 1""",
+        (session["video_id"],),
+    ).fetchone()
+    if last is None:
+        return session["position"]
+    elapsed = (repository._clock() - datetime.fromisoformat(last["received_at"])).total_seconds()
+    return last["capture_seconds"] + max(elapsed, 1 / session["capture_fps"])
 
 
 class Monitoring(ReplayScheduler):
@@ -186,27 +212,34 @@ class Monitoring(ReplayScheduler):
 
     def get(self, session_id: str) -> dict:
         """Read lifecycle and the newest eligible result; preserve all history separately."""
+        sessions = self._read_sessions("WHERE s.id=?", (session_id,))
+        if not sessions:
+            raise KeyError(session_id)
+        return sessions[0]
+
+    def recent(self, limit: int = 100) -> list[dict]:
+        """Read the newest sessions like `get`, with one statement on one connection."""
+        return self._read_sessions("ORDER BY s.created_at DESC LIMIT ?", (limit,))
+
+    def _read_sessions(self, clause: str, parameters: tuple) -> list[dict]:
         with self.repository._connect() as connection:
-            connection.execute("BEGIN")
-            row = connection.execute(
-                "SELECT * FROM monitoring_sessions WHERE id=?", (session_id,)
-            ).fetchone()
-            if row is None:
-                raise KeyError(session_id)
-            result = dict(row)
-            latest = connection.execute(
-                """SELECT w.job_id FROM monitoring_windows w
-                JOIN jobs j ON j.id=w.job_id WHERE w.session_id=? AND w.generation=?
-                AND w.segment_id=? AND j.state='succeeded' ORDER BY w.sequence DESC LIMIT 1""",
-                (session_id, row["generation"], row["segment_id"]),
-            ).fetchone()
-            segment = connection.execute(
-                "SELECT * FROM monitoring_segments WHERE id=?", (row["segment_id"],)
-            ).fetchone()
-            result["configuration"] = json.loads(segment["configuration_json"])
-            result["latest_job_id"] = latest["job_id"] if latest else None
-            connection.commit()
-        return result
+            rows = connection.execute(
+                f"""SELECT s.*, seg.configuration_json AS _configuration_json,
+                (SELECT w.job_id FROM monitoring_windows w JOIN jobs j ON j.id=w.job_id
+                    WHERE w.session_id=s.id AND w.generation=s.generation
+                    AND w.segment_id=s.segment_id AND j.state='succeeded'
+                    ORDER BY w.sequence DESC LIMIT 1) AS _latest_job_id
+                FROM monitoring_sessions s
+                LEFT JOIN monitoring_segments seg ON seg.id=s.segment_id {clause}""",
+                parameters,
+            ).fetchall()
+        sessions = []
+        for row in rows:
+            session = dict(row)
+            session["configuration"] = json.loads(session.pop("_configuration_json"))
+            session["latest_job_id"] = session.pop("_latest_job_id")
+            sessions.append(session)
+        return sessions
 
     def history(self, session_id: str, limit: int = 100, before: int | None = None) -> list[dict]:
         """Page immutable intervals, skipped coverage and input/job references."""
@@ -284,6 +317,13 @@ class Monitoring(ReplayScheduler):
                 and command.configuration.fps > row["capture_fps"]
             ):
                 raise ValueError("Sampling FPS cannot exceed the capture FPS")
+            if (
+                live
+                and action in {"start", "resume", "restart"}
+                and live_edge(self.repository, connection, row) >= row["duration"]
+            ):
+                # Every frame of a new run would exceed the cap; say so before capture starts.
+                raise ValueError(LIVE_LENGTH_REACHED)
             if command.position_seconds is not None:
                 if command.position_seconds > row["duration"]:
                     raise ValueError("Position exceeds playback bound")

@@ -10,6 +10,7 @@ import { ExperimentControls, baselineExperiment, experimentValid, isBaselineExpe
 import { BASELINE_SAMPLING, SettingsDialog, SettingsSummary, isBaselineSampling, samplingSummary } from "./SettingsDialog";
 import { useSourceSelection } from "./useSourceSelection";
 import { useLiveCapture } from "./useLiveCapture";
+import { contextWindowError } from "./context";
 import type { ExperimentSettings } from "./api";
 
 const labels = ["walk", "fall", "fallen", "sit_down", "sitting", "lie_down", "lying", "stand_up", "standing", "other", "kneel_down", "kneeling", "squat_down", "squatting", "crawl", "jump"];
@@ -200,16 +201,18 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
   const maxTokens = capabilities?.generation_limits.max_max_tokens ?? 4096;
   const maxFps = live || (!id && sourceMode === "camera") ? captureFps : 30;
   const settingsValid = settings !== null && experimentValid(settings, capabilities) && frames >= 2 && frames <= 32 && Number.isInteger(frames) && fps > 0 && fps <= maxFps && (frames - 1) / fps <= 30;
+  const contextError = settingsValid ? contextWindowError(capabilities, frames, size, settings.prompt_text, settings.generation.max_tokens) : null;
+  const configValid = settingsValid && !contextError;
   function configuration(videoId: string) { return { ...settings!, video_id: videoId, frame_count: frames, fps, size }; }
   async function create() {
-    if (!source.video || !source.duration || !settingsValid) return;
+    if (!source.video || !source.duration || !configValid) return;
     setBusy(true);
     try { const next = await createSession(configuration(source.video.id), source.duration); select(next.id); }
     catch (cause) { setError(message(cause)); }
     finally { setBusy(false); }
   }
   async function createLive() {
-    if (!settingsValid) return;
+    if (!configValid) return;
     setBusy(true);
     try { const next = await createLiveSession({ ...settings!, frame_count: frames, fps, size, capture_fps: LIVE_CAPTURE_FPS }); select(next.id); }
     catch (cause) { setError(message(cause)); }
@@ -258,7 +261,7 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
     if (capabilities) setSettings(baselineExperiment(capabilities));
   }
   const cameraPreview = capture.stream ? <video className="live-feed" ref={capture.attach} autoPlay muted playsInline /> : <div className="replay-placeholder"><span>Camera off</span><button className="button primary" disabled={busy} onClick={() => void capture.connect()}>Connect camera</button></div>;
-  const summary = <SettingsSummary baseline={baseline} invalid={!session && settings !== null && !settingsValid} detail={summarySettings ? samplingSummary(...summarySampling) : "Backend settings unavailable"} disabled={!settings} onEdit={() => setSettingsOpen(true)} />;
+  const summary = <SettingsSummary baseline={baseline} invalid={!session && settings !== null && !configValid} detail={summarySettings ? samplingSummary(...summarySampling) : "Backend settings unavailable"} disabled={!settings} onEdit={() => setSettingsOpen(true)} />;
   return <section className="monitoring" aria-label="Monitoring" data-generation={session?.generation}>
     <h1 className="sr-only">Monitoring</h1>
     <div className="session-bar">
@@ -305,8 +308,8 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
         </> : <>
           {summary}
           {sourceMode === "recording"
-            ? <button className="analyze-button" disabled={busy || !source.video || !source.duration || !settingsValid} onClick={() => void create()}>Create monitoring session</button>
-            : <button className="analyze-button" disabled={busy || !capture.stream || !settingsValid} onClick={() => void createLive()}>Create live session</button>}
+            ? <button className="analyze-button" disabled={busy || !source.video || !source.duration || !configValid} onClick={() => void create()}>Create monitoring session</button>
+            : <button className="analyze-button" disabled={busy || !capture.stream || !configValid} onClick={() => void createLive()}>Create live session</button>}
           <p className="preview-note">Each prediction describes the first part of its input window. Coverage gaps and failures are shown separately and never reported as an activity.</p>
         </>}
       </aside>
@@ -314,7 +317,7 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
     <SettingsDialog open={settingsOpen} title={session ? "Session settings" : "Monitoring settings"} onClose={() => closeSettings(true)} footer={<>
       <button type="button" className="text-button" disabled={busy} onClick={resetSettings}>Reset to thesis baseline</button>
       {session
-        ? <button type="button" className="button primary" disabled={busy || !connected || !settingsValid || unchanged} onClick={() => { closeSettings(false); void send({ action: "configure", configuration: configuration(session.video_id) }); }}>Apply new configuration segment</button>
+        ? <button type="button" className="button primary" disabled={busy || !connected || !configValid || unchanged} onClick={() => { closeSettings(false); void send({ action: "configure", configuration: configuration(session.video_id) }); }}>Apply new configuration segment</button>
         : <button type="button" className="button primary" onClick={() => closeSettings(false)}>Done</button>}
     </>}>
       {session && <p className="preview-note">Changes apply from now on as a new configuration segment. Earlier predictions keep the settings they were made with.</p>}
@@ -328,6 +331,7 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
       </section>
       {capabilities && settings && <ExperimentControls capabilities={capabilities} settings={settings} busy={busy} onChange={setSettings} />}
       {settings && !settingsValid && <p className="error-message" role="alert">Use 2–32 frames, a sampling FPS above 0 and up to {maxFps}, a window of at most 30 s, a nonblank prompt, temperature from 0 to 2, and an integer token limit from {minTokens} to {maxTokens}.</p>}
+      {contextError && <p className="error-message" role="alert">{contextError}</p>}
       {session && <section className="settings-section">
         <h3>Running segment</h3>
         <div className="setting-row"><span>Generation · segment</span><strong>{session.generation} · {session.segment_id.slice(0, 8)}</strong></div>

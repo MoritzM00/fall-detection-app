@@ -1,3 +1,4 @@
+import math
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -16,6 +17,51 @@ class VideoAsset(BaseModel):
     storage_key: str | None = None
     duration_seconds: float | None = None
     created_at: str
+
+
+# Proposed application behavior, not research-verified: a conservative upper bound of the
+# context one request needs on the served Qwen3-VL model, checked at submission so an
+# impossible configuration fails with 422 instead of a 400 from the GPU after a cold start.
+# Qwen3-VL turns every 2 frames into one temporal patch of (side / 32)² tokens (16 px
+# patches, 2 × 2 merge), with the side rounded up. The processor may upscale small frames,
+# so the side counts as at least 12 merged patches (384 px). Each temporal patch also carries a
+# timestamp and vision markers (budgeted at 16 tokens), the chat template adds a few
+# tokens, and prompt text is counted as one token per UTF-8 byte, which bounds any
+# byte-level BPE tokenizer from above.
+_PATCH_PIXELS = 32
+_MIN_PATCH_SIDE = 12
+_FRAMES_PER_TEMPORAL_PATCH = 2
+_TOKENS_PER_TEMPORAL_PATCH_OVERHEAD = 16
+_CHAT_TEMPLATE_TOKENS = 32
+
+
+class ContextWindowError(ValueError):
+    """Raised when a configuration cannot fit the served model's context window."""
+
+
+def estimate_request_tokens(frame_count: int, size: int, prompt_text: str, max_tokens: int) -> int:
+    """Return a conservative upper bound of prompt plus completion tokens for one request."""
+    side = max(math.ceil(size / _PATCH_PIXELS), _MIN_PATCH_SIDE)
+    temporal_patches = math.ceil(frame_count / _FRAMES_PER_TEMPORAL_PATCH)
+    visual = temporal_patches * (side * side + _TOKENS_PER_TEMPORAL_PATCH_OVERHEAD)
+    text = len(prompt_text.encode()) + _CHAT_TEMPLATE_TOKENS
+    return visual + text + max_tokens
+
+
+def check_context_window(
+    frame_count: int, size: int, prompt_text: str, max_tokens: int, max_model_len: int | None
+) -> None:
+    """Reject a configuration whose estimated request exceeds the served context window."""
+    if max_model_len is None:
+        return
+    estimate = estimate_request_tokens(frame_count, size, prompt_text, max_tokens)
+    if estimate > max_model_len:
+        raise ContextWindowError(
+            f"This configuration may need up to {estimate} tokens ({frame_count} frames at "
+            f"{size} px, prompt and {max_tokens} max tokens), but the served model's context "
+            f"window is {max_model_len} tokens. Use fewer frames, a smaller crop, a shorter "
+            "prompt or fewer max tokens."
+        )
 
 
 class GenerationConfiguration(BaseModel):

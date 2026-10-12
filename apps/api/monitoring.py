@@ -10,13 +10,18 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fall_detection import live
 from fall_detection.config import Settings
 from fall_detection.live import FrameMeta, IngestConflictError, LiveSessionCreate, ingest_frames
+from fall_detection.models import ContextWindowError, check_context_window
 from fall_detection.monitoring import (
     Monitoring,
     SessionCommand,
     SessionConfiguration,
     SessionCreate,
 )
-from fall_detection.prediction import InferenceClient, InferenceServiceError
+from fall_detection.prediction import (
+    THESIS_BASELINE_PROMPT,
+    InferenceClient,
+    InferenceServiceError,
+)
 from fall_detection.repository import Repository
 from fall_detection.storage import storage_lock
 
@@ -28,6 +33,17 @@ def monitoring_router(settings: Settings, repository: Repository) -> APIRouter:
     def monitoring_configuration(request: SessionConfiguration):
         if request.model is not None and request.model != settings.inference_model:
             raise ValueError("Choose a model advertised by capabilities")
+        try:
+            check_context_window(
+                request.frame_count,
+                request.size,
+                request.prompt_text or THESIS_BASELINE_PROMPT,
+                request.generation.max_tokens if request.generation else 32,
+                settings.max_model_len,
+            )
+        except ContextWindowError as exc:
+            # 422 for every route, including configure, which reports other errors as 409.
+            raise HTTPException(422, str(exc)) from exc
         fixture = None
         if settings.backend_kind == "mock":
             fixture = InferenceClient(
@@ -82,6 +98,7 @@ def monitoring_router(settings: Settings, repository: Repository) -> APIRouter:
         run_id: Annotated[str, Form()],
         metadata: Annotated[str, Form()],
         frames: Annotated[list[UploadFile], File()],
+        run_order: Annotated[int | None, Form(ge=0)] = None,
     ) -> dict:
         """Append an ordered, idempotent batch of one capture run's JPEG frames."""
         try:
@@ -96,7 +113,7 @@ def monitoring_router(settings: Settings, repository: Repository) -> APIRouter:
         try:
             with storage_lock(settings.data_dir, exclusive=False):
                 return ingest_frames(
-                    repository, settings.data_dir, session_id, run_id, metas, blobs
+                    repository, settings.data_dir, session_id, run_id, metas, blobs, run_order
                 )
         except KeyError as exc:
             raise HTTPException(404, "Session not found") from exc
@@ -108,15 +125,7 @@ def monitoring_router(settings: Settings, repository: Repository) -> APIRouter:
     @router.get("/monitoring-sessions")
     def list_monitoring_sessions() -> list[dict]:
         """List retained sessions for refresh recovery."""
-        with repository._connect() as connection:
-            ids = [
-                row[0]
-                for row in connection.execute(
-                    "SELECT id FROM monitoring_sessions ORDER BY created_at DESC LIMIT 100"
-                )
-            ]
-        monitor = Monitoring(repository)
-        return [monitor.get(identity) for identity in ids]
+        return Monitoring(repository).recent(100)
 
     @router.get("/monitoring-sessions/{session_id}")
     def get_monitoring_session(session_id: str) -> dict:
