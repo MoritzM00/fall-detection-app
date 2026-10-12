@@ -2,6 +2,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+LOOPBACK_HOSTS = ("127.0.0.1", "localhost")
+
 
 @dataclass(frozen=True, slots=True)
 class Settings:
@@ -28,6 +30,8 @@ class Settings:
     inference_api_key: str | None = field(default=None, repr=False)
     inference_proxy_key: str | None = field(default=None, repr=False)
     inference_proxy_secret: str | None = field(default=None, repr=False)
+    # Host names the API answers to; anything else gets 400 (DNS rebinding defense).
+    allowed_hosts: tuple[str, ...] = LOOPBACK_HOSTS
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -61,6 +65,12 @@ class Settings:
             inference_api_key=os.getenv("FALL_DETECTION_INFERENCE_API_KEY") or None,
             inference_proxy_key=os.getenv("FALL_DETECTION_INFERENCE_PROXY_KEY") or None,
             inference_proxy_secret=os.getenv("FALL_DETECTION_INFERENCE_PROXY_SECRET") or None,
+            allowed_hosts=LOOPBACK_HOSTS
+            + tuple(
+                host.strip()
+                for host in os.getenv("FALL_DETECTION_ALLOWED_HOSTS", "").split(",")
+                if host.strip()
+            ),
         )
 
     def inference_auth_headers(self) -> dict[str, str]:

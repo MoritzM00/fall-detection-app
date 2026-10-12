@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { commandSession, createLiveSession, createSession, getJob, getSession, getVideo, getWindows, listSessions } from "./api";
+import { CLIENT_HEADERS, commandSession, createLiveSession, createSession, getJob, getSession, getVideo, getWindows, listSessions } from "./api";
 import type { AnalysisJob, Capabilities, MonitoringCommand, MonitoringSession, MonitoringWindow, VideoAsset } from "./api";
 import { inPaintOrder } from "./coverage";
 import { formatTokenUsage } from "./tokens";
@@ -122,7 +122,7 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
     function pauseOnExit() {
       const leaving = current.current;
       if (leaving?.state !== "running") return;
-      void fetch(`/api/monitoring-sessions/${leaving.id}/commands`, { method: "POST", keepalive: true, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "pause", command_id: crypto.randomUUID() }) }).catch(() => {});
+      void fetch(`/api/monitoring-sessions/${leaving.id}/commands`, { method: "POST", keepalive: true, headers: { ...CLIENT_HEADERS, "Content-Type": "application/json" }, body: JSON.stringify({ action: "pause", command_id: crypto.randomUUID() }) }).catch(() => {});
     }
     window.addEventListener("pagehide", pauseOnExit);
     return () => window.removeEventListener("pagehide", pauseOnExit);

@@ -8,10 +8,13 @@ from fastapi.testclient import TestClient
 
 import apps.worker.main as worker
 from apps.api.main import create_app
+from apps.api.request_guards import CLIENT_HEADERS
 from fall_detection.config import Settings
 from fall_detection.monitoring import Monitoring, SessionCommand, SessionCreate
 from fall_detection.prediction import PipelineResult
 from fall_detection.repository import Repository
+
+LOCAL_API = "http://127.0.0.1"
 
 
 @pytest.fixture
@@ -133,7 +136,9 @@ def test_config_segments_and_single_running_session(replay):
 
 def test_second_running_session_conflict_is_readable(replay):
     second = replay[2].create(replay[4], replay[5])
-    with TestClient(create_app(replay[0], replay[1])) as client:
+    with TestClient(
+        create_app(replay[0], replay[1]), base_url=LOCAL_API, headers=CLIENT_HEADERS
+    ) as client:
         command(replay, "start")
         response = client.post(
             f"/monitoring-sessions/{second['id']}/commands", json={"action": "start"}
@@ -148,7 +153,9 @@ def test_recovery_only_on_api_startup(replay):
     another = Repository(replay[0].database_path)
     another.initialize()
     assert replay[2].get(replay[3]["id"])["state"] == "running"
-    with TestClient(create_app(replay[0], replay[1])) as client:
+    with TestClient(
+        create_app(replay[0], replay[1]), base_url=LOCAL_API, headers=CLIENT_HEADERS
+    ) as client:
         result = client.get("/monitoring-sessions/" + replay[3]["id"]).json()
         assert result["state"] == "paused" and result["recovery_reason"] == "process_restart"
         assert result["position"] == 1
@@ -311,7 +318,9 @@ def test_invalid_monitoring_input_precedes_serving_discovery(replay, monkeypatch
         raise AssertionError("invalid requests must not contact serving")
 
     monkeypatch.setattr(worker.InferenceClient, "discover_mock_identity", unavailable)
-    with TestClient(create_app(replay[0], replay[1])) as client:
+    with TestClient(
+        create_app(replay[0], replay[1]), base_url=LOCAL_API, headers=CLIENT_HEADERS
+    ) as client:
         payload = replay[4].model_dump(mode="json")
         assert (
             client.post("/monitoring-sessions", json={**payload, "video_id": "missing"}).status_code
@@ -407,7 +416,9 @@ def test_session_list_reads_every_session_with_one_connection(replay, monkeypatc
         "connect",
         lambda *args, **kwargs: opened.append(1) or connect(*args, **kwargs),
     )
-    with TestClient(create_app(replay[0], replay[1])) as client:
+    with TestClient(
+        create_app(replay[0], replay[1]), base_url=LOCAL_API, headers=CLIENT_HEADERS
+    ) as client:
         expected = [replay[2].get(second["id"]), replay[2].get(replay[3]["id"])]
         opened.clear()
         listed = client.get("/monitoring-sessions").json()

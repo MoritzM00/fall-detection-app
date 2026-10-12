@@ -10,10 +10,10 @@ from uuid import uuid4
 import av
 import httpx
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile, status
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 
 from apps.api.monitoring import monitoring_router
+from apps.api.request_guards import install_request_guards
 from apps.api.upload_limit import UploadBodyLimitMiddleware
 from fall_detection import live
 from fall_detection.config import Settings
@@ -99,13 +99,8 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
         upload_max_bytes=lambda: settings.upload_max_bytes,
         frame_batch_max_bytes=lambda: live.MAX_BATCH_FRAMES * live.MAX_FRAME_BYTES,
     )
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
-        allow_credentials=False,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    # No CORS: the web UI reaches the API through the same-origin Vite proxy.
+    install_request_guards(app, settings.allowed_hosts)
 
     @app.get("/health")
     def health() -> dict[str, str]:
