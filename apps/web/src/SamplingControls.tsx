@@ -1,3 +1,5 @@
+import { isBaselineSampling } from "./SettingsDialog";
+
 type WindowProps = {
   startSeconds: number;
   endSeconds: number;
@@ -7,26 +9,18 @@ type WindowProps = {
   valid: boolean;
   busy: boolean;
   onRangeChange: (start: number, end: number) => void;
-  onChangeSource: () => void;
 };
-
-function formatTime(seconds: number): string {
-  const minutes = Math.floor(seconds / 60);
-  const remainder = seconds - minutes * 60;
-  return `${String(minutes).padStart(2, "0")}:${remainder.toFixed(3).padStart(6, "0")}`;
-}
 
 function trackPosition(seconds: number, duration: number): string {
   return `${Math.min(100, Math.max(0, (seconds / duration) * 100))}%`;
 }
 
 export function WindowControls({
-  startSeconds, endSeconds, frameCount, fps, duration, valid, busy,
-  onRangeChange, onChangeSource,
+  startSeconds, endSeconds, frameCount, fps, duration, valid, busy, onRangeChange,
 }: WindowProps) {
   return <>
     <div className="clip-controls">
-      <div><span className="control-label">Analysis window</span><strong>{formatTime(startSeconds)} — {formatTime(endSeconds)}</strong></div>
+      <div><span className="control-label">Analysis window</span><strong>{(endSeconds - startSeconds).toFixed(2)} s</strong></div>
       <div className="range-fields">
         <label>Start (s) <input disabled={busy} aria-invalid={!valid} type="number" min="0" step="0.1" value={startSeconds} onChange={(event) => {
           const next = event.currentTarget.valueAsNumber;
@@ -38,7 +32,6 @@ export function WindowControls({
           if (Number.isFinite(next)) onRangeChange(startSeconds, next);
         }} /></label>
       </div>
-      <button className="text-button" disabled={busy} onClick={onChangeSource}>Change source</button>
     </div>
     {duration !== null && duration > 0 && <div className="window-track" aria-hidden="true">
       <div className="window-track-bar">
@@ -56,7 +49,6 @@ type SettingsProps = {
   fps: number;
   size: number;
   rangeDuration: number;
-  isBaselineWindow: boolean;
   busy: boolean;
   onFrameCountChange: (count: number) => void;
   onFpsChange: (fps: number) => void;
@@ -64,10 +56,11 @@ type SettingsProps = {
 };
 
 export function SamplingSettings({
-  frameCount, fps, size, rangeDuration, isBaselineWindow, busy,
+  frameCount, fps, size, rangeDuration, busy,
   onFrameCountChange, onFpsChange, onSizeChange,
 }: SettingsProps) {
-  return <>
+  return <section className="settings-section">
+    <h3>Sampling {!isBaselineSampling(frameCount, fps, size) && <small className="experimental">Experimental</small>}</h3>
     <div className="setting-row"><label htmlFor="frame-count">Frames</label><input id="frame-count" type="number" min="2" max="32" step="1" value={frameCount} disabled={busy} onChange={(event) => {
       const next = event.currentTarget.valueAsNumber;
       if (Number.isInteger(next) && next >= 2 && next <= 32) onFrameCountChange(next);
@@ -77,8 +70,7 @@ export function SamplingSettings({
       if (Number.isFinite(next) && next > 0 && next <= 30) onFpsChange(next);
     }} /></div>
     <div className="setting-row"><label htmlFor="frame-size">Crop size</label><select id="frame-size" value={size} disabled={busy} onChange={(event) => onSizeChange(Number(event.currentTarget.value))}><option value={224}>224 × 224</option><option value={336}>336 × 336</option><option value={448}>448 × 448</option><option value={672}>672 × 672</option></select></div>
-    <div className="setting-row"><span>Sampling preset</span><strong>{isBaselineWindow && fps === 7.5 && frameCount === 16 && size === 448 ? "Thesis baseline v1" : "Experimental"}</strong></div>
-    <div className="setting-row"><span>Window</span><strong>{rangeDuration.toFixed(2)} s {(!isBaselineWindow || fps !== 7.5 || frameCount !== 16 || size !== 448) && <small className="experimental">Experimental</small>}</strong></div>
+    <div className="setting-row"><span>Window length</span><strong>{rangeDuration.toFixed(2)} s</strong></div>
     <p className="preview-note">Frame count and FPS set the window length. Editing the end time recalculates FPS.</p>
-  </>;
+  </section>;
 }

@@ -1,4 +1,12 @@
 import { expect, test } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
+
+/** Sampling, model and prompt controls live in the settings dialog. */
+async function editSettings(scope: Page | Locator, edit: () => Promise<void>, close = "Done") {
+  await scope.getByRole("button", { name: "Settings", exact: true }).click();
+  await edit();
+  await scope.getByRole("button", { name: close, exact: true }).click();
+}
 
 test("recorded sample lifecycle retains old generations and recovers after reload", async ({ page }) => {
   await page.goto("/");
@@ -6,7 +14,7 @@ test("recorded sample lifecycle retains old generations and recovers after reloa
   const panel = page.getByRole("region", { name: "Monitoring", exact: true });
   await panel.getByRole("button", { name: "Use sample clip" }).click();
   await panel.getByRole("button", { name: "Create monitoring session" }).click();
-  await expect(panel.getByText("Simulated predictions", { exact: true })).toBeVisible();
+  await expect(page.getByText("Local simulation", { exact: true })).toBeVisible();
   await panel.getByRole("button", { name: "Start", exact: true }).click();
   await expect(panel.getByText(/System: running/)).toBeVisible();
   await expect(panel.locator("summary").filter({ hasText: /running/ })).toBeVisible({ timeout: 20000 });
@@ -23,10 +31,10 @@ test("recorded sample lifecycle retains old generations and recovers after reloa
   await expect(panel.getByRole("alert")).toContainText("temporary seek failure");
   await expect(panel.getByText(/System: paused/)).toBeVisible();
   await panel.getByRole("button", { name: "Retry connection / command" }).click();
-  await expect(panel.getByText(/Current generation 1/)).toBeVisible();
+  await expect(panel).toHaveAttribute("data-generation", "1");
   expect(seekIds).toHaveLength(2);
   expect(seekIds[1]).toBe(seekIds[0]);
-  await expect(panel.getByText("No completed prediction in the current generation and segment.")).toBeVisible();
+  await expect(panel.getByText("No prediction yet.", { exact: true })).toBeVisible();
   await expect(panel.getByText(/System: paused/)).toBeVisible();
   await panel.getByRole("button", { name: "Resume", exact: true }).click();
   await expect(panel.getByText(/System: running/)).toBeVisible();
@@ -37,16 +45,22 @@ test("recorded sample lifecycle retains old generations and recovers after reloa
   await panel.getByRole("button", { name: "Stop", exact: true }).click();
   await expect(panel.getByText(/System: stopped/)).toBeVisible();
   await panel.getByRole("button", { name: "Restart / retry inference" }).click();
-  await expect(panel.getByText(/Current generation 3/)).toBeVisible();
+  await expect(panel).toHaveAttribute("data-generation", "3");
   await panel.getByRole("button", { name: "Pause", exact: true }).click();
+  await panel.getByRole("button", { name: "Settings", exact: true }).click();
+  // Applying unchanged settings would only create an identical segment.
+  await expect(panel.getByRole("button", { name: "Apply new configuration segment" })).toBeDisabled();
   await panel.getByLabel("Monitoring frames").fill("8");
   await panel.getByRole("button", { name: "Apply new configuration segment" }).click();
+  await expect(panel.locator(".settings-summary")).toContainText("8 frames");
+  await expect(panel.locator(".settings-summary")).toContainText("Custom settings");
   await expect(panel.getByLabel("Monitoring frames")).toHaveValue("8");
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(panel.getByRole("button", { name: "Restart / retry inference" })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
   await page.getByRole("button", { name: "Clip analysis", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Clip analysis", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Clip analysis", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("button", { name: "Use sample clip" })).toBeVisible();
 });
 
 test("monitoring exposes timed failure, coverage gaps, disconnect and restart recovery separately from activity", async ({ page }) => {
@@ -86,8 +100,14 @@ test("monitoring exposes timed failure, coverage gaps, disconnect and restart re
   const panel = page.getByRole("region", { name: "Monitoring", exact: true });
   await expect(panel.locator(".result-label").first()).toHaveText("walk");
   releaseCapabilities();
-  await panel.locator("summary").filter({ hasText: /Prompt & generation/ }).click();
+  await panel.getByRole("button", { name: "Settings", exact: true }).click();
   await expect(panel.getByLabel("Resolved prompt")).toHaveValue("first part");
+  // Unapplied edits are discarded on close, so the summary keeps describing the running segment.
+  await panel.getByLabel("Resolved prompt").fill("unapplied");
+  await panel.getByRole("button", { name: "Close settings" }).click();
+  await panel.getByRole("button", { name: "Settings", exact: true }).click();
+  await expect(panel.getByLabel("Resolved prompt")).toHaveValue("first part");
+  await panel.getByRole("button", { name: "Close settings" }).click();
   await page.waitForTimeout(2200); // Observe multiple polls of the same terminal identity.
   expect(jobRequests["job-1"]).toBe(1);
   session = { ...session, latest_job_id: "job-2" };
@@ -96,11 +116,11 @@ test("monitoring exposes timed failure, coverage gaps, disconnect and restart re
   await expect(panel.locator(".result-label.alert").first()).toHaveText("fallen");
   expect(jobRequests["job-1"]).toBe(1);
   expect(jobRequests["job-2"]).toBe(1);
-  await expect(panel.locator("summary").filter({ hasText: /Generation 0/ })).toHaveCount(4);
+  await expect(panel.locator(".coverage-history li > details > summary")).toHaveCount(4);
   await expect(panel.getByText(/Actual frame timestamps/).first()).toContainText("0.000 s, 1.000 s, 2.000 s");
   await expect(panel.locator("summary").filter({ hasText: /superseded/ })).toBeVisible();
   failure = true; session = { ...session, latest_job_id: null };
-  await expect(panel.getByText("No completed prediction in the current generation and segment.")).toBeVisible();
+  await expect(panel.getByText("No prediction yet.", { exact: true })).toBeVisible();
   await panel.locator("summary").filter({ hasText: /failed/ }).click();
   await expect(panel.getByText(/System state: failed.*timed out/)).toBeVisible();
   disconnected = true;
@@ -108,7 +128,7 @@ test("monitoring exposes timed failure, coverage gaps, disconnect and restart re
   disconnected = false; session = { ...session, recovery_reason: "process_restart" };
   await expect(panel.getByText(/System: paused · process_restart/)).toBeVisible();
   await panel.getByRole("button", { name: "Restart / retry inference" }).click();
-  await expect(panel.getByText(/Current generation 1/)).toBeVisible();
+  await expect(panel).toHaveAttribute("data-generation", "1");
   await expect(panel.locator("summary").filter({ hasText: /historical/ }).first()).toBeVisible();
   await panel.getByRole("button", { name: "Pause", exact: true }).click();
 });
@@ -120,8 +140,10 @@ test("real recording watermark follows media playback and recovers uploaded sour
   await page.getByRole("button", { name: "Monitoring", exact: true }).click();
   const panel = page.getByRole("region", { name: "Monitoring", exact: true });
   await panel.locator('input[type="file"]').setInputFiles(clip);
-  await panel.getByLabel("Monitoring frames").fill("4");
-  await panel.getByLabel("Monitoring FPS").fill("2");
+  await editSettings(panel, async () => {
+    await panel.getByLabel("Monitoring frames").fill("4");
+    await panel.getByLabel("Monitoring FPS").fill("2");
+  });
   await panel.getByRole("button", { name: "Create monitoring session" }).click();
   await expect.poll(() => panel.locator("video").evaluate((video: HTMLVideoElement) => video.duration)).toBeGreaterThan(2);
   const watermark = page.waitForRequest(request => request.url().endsWith("commands") && request.postDataJSON().action === "position");
@@ -140,10 +162,10 @@ test("real recording watermark follows media playback and recovers uploaded sour
     }) : play();
   });
   await panel.getByLabel("Seek recording").fill("0.2");
-  await expect(panel.getByText(/Current generation 1/)).toBeVisible();
+  await expect(panel).toHaveAttribute("data-generation", "1");
   await expect.poll(() => page.evaluate(() => typeof (window as unknown as { rejectSeekPlayback?: () => void }).rejectSeekPlayback)).toBe("function");
   await panel.getByRole("button", { name: "Restart / retry inference" }).click();
-  await expect(panel.getByText(/Current generation 2/)).toBeVisible();
+  await expect(panel).toHaveAttribute("data-generation", "2");
   await page.evaluate(() => (window as unknown as { rejectSeekPlayback: () => void }).rejectSeekPlayback());
   await page.waitForTimeout(200); // Let the obsolete play rejection settle.
   expect(pauseRequests).toBe(0);
