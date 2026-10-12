@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { getServingStatus, warmUpServing } from "./api.ts";
+import { getServingStatus, shutDownServing, warmUpServing } from "./api.ts";
 import type { ServingStatus } from "./api";
 
 /** Poll serving status from the API, which reads Modal's control plane and never wakes the GPU. */
 export function useServingStatus(enabled: boolean) {
   const [status, setStatus] = useState<ServingStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const warming = status?.state === "warming";
 
   useEffect(() => {
@@ -23,10 +24,13 @@ export function useServingStatus(enabled: boolean) {
     return () => { cancelled = true; window.clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
   }, [enabled, warming]);
 
-  const warmUp = useCallback(() => {
-    warmUpServing().then((next) => { setStatus(next); setError(null); })
-      .catch((cause) => setError(cause instanceof Error ? cause.message : "Warm-up failed"));
+  const act = useCallback((action: () => Promise<ServingStatus>, fallback: string) => {
+    setActionError(null);
+    action().then((next) => { setStatus(next); setError(null); })
+      .catch((cause) => setActionError(cause instanceof Error ? cause.message : fallback));
   }, []);
+  const warmUp = useCallback(() => act(warmUpServing, "Warm-up failed"), [act]);
+  const shutDown = useCallback(() => act(shutDownServing, "Shutdown failed"), [act]);
 
-  return { status, error, warmUp };
+  return { status, error, actionError, warmUp, shutDown };
 }

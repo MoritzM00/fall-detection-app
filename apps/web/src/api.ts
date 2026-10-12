@@ -108,6 +108,10 @@ export function warmUpServing(): Promise<ServingStatus> {
   return request("/serving-status/warmup", { method: "POST" });
 }
 
+export function shutDownServing(): Promise<ServingStatus> {
+  return request("/serving-status/shutdown", { method: "POST" });
+}
+
 export function listDatasetVideos(): Promise<DatasetVideoOption[]> {
   return request("/dataset-videos");
 }

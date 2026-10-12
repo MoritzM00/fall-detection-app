@@ -7,10 +7,14 @@ const status = (overrides: Partial<ServingStatus>): ServingStatus => ({
   state: "idle", containers: 0, backlog: 0, detail: null, warmup: { state: "idle", seconds: null, error: null }, ...overrides,
 });
 
-test("serving view offers warm-up only when the GPU is not known to be ready", () => {
+test("serving view offers warm-up when not known ready and shutdown when a container is up", () => {
   assert.deepEqual(
     ["simulated", "warming", "ready", "running", "idle", "unmonitored", "unknown"].map((state) => describeServing(status({ state: state as ServingStatus["state"] })).canWarm),
     [false, false, false, true, true, true, true],
+  );
+  assert.deepEqual(
+    ["simulated", "warming", "ready", "running", "idle", "unmonitored", "unknown"].map((state) => describeServing(status({ state: state as ServingStatus["state"] })).canStop),
+    [false, false, true, true, false, false, false],
   );
   assert.equal(describeServing(null).text, "GPU status loading");
 });
