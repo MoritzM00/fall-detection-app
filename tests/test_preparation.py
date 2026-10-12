@@ -13,6 +13,7 @@ from PIL import Image
 
 import apps.api.main as api
 import apps.worker.main as worker
+from apps.api.request_guards import CLIENT_HEADERS
 from fall_detection.config import Settings
 from fall_detection.models import PreparationRequest
 from fall_detection.prediction import InferenceResponse, PipelineResult
@@ -24,6 +25,8 @@ from fall_detection.preparation import (
     to_vllm_jpeg_data_url,
 )
 from fall_detection.repository import Repository
+
+LOCAL_API = "http://127.0.0.1"
 
 
 def make_video(path: Path) -> None:
@@ -90,7 +93,9 @@ def test_job_references_prepared_input_and_worker_sends_selected_frames(
     settings = replace(
         Settings.from_env(), data_dir=data_dir, database_path=data_dir / "app.sqlite3"
     )
-    with TestClient(api.create_app(settings, repository)) as client:
+    with TestClient(
+        api.create_app(settings, repository), base_url=LOCAL_API, headers=CLIENT_HEADERS
+    ) as client:
         prepared_response = client.post(
             "/prepared-inputs",
             json={

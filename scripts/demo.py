@@ -13,6 +13,7 @@ from tempfile import TemporaryDirectory
 
 import httpx
 
+from apps.api.request_guards import CLIENT_HEADERS
 from scripts.dev import stop_processes
 from scripts.validate_vllm_contract import _generate_clip
 
@@ -123,7 +124,9 @@ def scenario(name: str, directory: Path) -> dict:
         mock, _, endpoint = stack.server("apps.mock_inference.main:app")
         stack.environment["FALL_DETECTION_INFERENCE_BASE_URL"] = endpoint + "/v1"
         api, api_socket, api_url = stack.server("apps.api.main:app")
-        with httpx.Client(base_url=api_url, timeout=10, trust_env=False) as client:
+        with httpx.Client(
+            base_url=api_url, headers=CLIENT_HEADERS, timeout=10, trust_env=False
+        ) as client:
             clip = directory / "generated" / "clip.mp4"
             _generate_clip(clip)
             with clip.open("rb") as media:

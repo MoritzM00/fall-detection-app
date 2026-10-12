@@ -11,6 +11,7 @@ from PIL import Image
 
 import apps.worker.main as worker
 from apps.api.main import create_app
+from apps.api.request_guards import CLIENT_HEADERS
 from fall_detection import live as live_module
 from fall_detection.config import Settings
 from fall_detection.live import LIVE_PREPROCESSING_VERSION, IngestGapError, prepare_frames
@@ -19,6 +20,8 @@ from fall_detection.monitoring import Monitoring
 from fall_detection.prediction import InferenceClient, PipelineResult
 from fall_detection.preparation import load_prepared_input
 from fall_detection.repository import Repository
+
+LOCAL_API = "http://127.0.0.1"
 
 
 def jpeg(shade: int = 128, size: tuple[int, int] = (64, 48)) -> bytes:
@@ -44,7 +47,9 @@ def live(tmp_path, monkeypatch):
         "run_pipeline",
         lambda **kw: PipelineResult("walk", "walk", kw["sampled_timestamps"], 1, 2),
     )
-    with TestClient(create_app(settings, repository)) as client:
+    with TestClient(
+        create_app(settings, repository), base_url=LOCAL_API, headers=CLIENT_HEADERS
+    ) as client:
         yield client, settings, repository, clock
 
 

@@ -19,6 +19,7 @@ from PIL import Image
 import apps.api.main as api
 import apps.mock_inference.main as mock
 import apps.worker.main as worker
+from apps.api.request_guards import CLIENT_HEADERS
 from apps.mock_inference.scenarios import (
     Manifest,
     Scenario,
@@ -36,6 +37,8 @@ from fall_detection.prediction import (
 )
 from fall_detection.preparation import prepare_video
 from fall_detection.repository import Repository
+
+LOCAL_API = "http://127.0.0.1"
 
 
 def payload(color="red"):
@@ -213,7 +216,9 @@ def prepared_job(tmp_path, endpoint, manifest):
         PreparationRequest(video_id=video.id, start_seconds=0, frame_count=6, fps=5, size=224),
         tmp_path,
     )
-    with TestClient(api.create_app(settings, repository)) as client:
+    with TestClient(
+        api.create_app(settings, repository), base_url=LOCAL_API, headers=CLIENT_HEADERS
+    ) as client:
         response = client.post(
             "/analysis-jobs",
             json={
@@ -316,7 +321,9 @@ def test_discovery_unavailable_rejects_submission(tmp_path, monkeypatch):
         raise InferenceServiceError("Fixture service unavailable")
 
     monkeypatch.setattr(InferenceClient, "discover_mock_identity", unavailable)
-    with TestClient(api.create_app(settings, repository)) as client:
+    with TestClient(
+        api.create_app(settings, repository), base_url=LOCAL_API, headers=CLIENT_HEADERS
+    ) as client:
         video = client.post("/videos/sample").json()
         result = client.post("/analysis-jobs", json={"video_id": video["id"]})
         assert result.status_code == 503
@@ -501,7 +508,9 @@ def test_discovery_does_not_hold_storage_lock(tmp_path, monkeypatch):
         return "sample-v1"
 
     monkeypatch.setattr(InferenceClient, "discover_mock_identity", discover)
-    with TestClient(api.create_app(settings, repository)) as client:
+    with TestClient(
+        api.create_app(settings, repository), base_url=LOCAL_API, headers=CLIENT_HEADERS
+    ) as client:
         video = client.post("/videos/sample").json()
         assert client.post("/analysis-jobs", json={"video_id": video["id"]}).status_code == 202
 
@@ -526,7 +535,9 @@ def test_invalid_submission_preserves_errors_when_mock_unavailable(
         raise InferenceServiceError("Fixture service unavailable")
 
     monkeypatch.setattr(InferenceClient, "discover_mock_identity", unavailable)
-    with TestClient(api.create_app(settings, repository)) as client:
+    with TestClient(
+        api.create_app(settings, repository), base_url=LOCAL_API, headers=CLIENT_HEADERS
+    ) as client:
         video = client.post("/videos/sample").json()
         response = client.post("/analysis-jobs", json={"video_id": video["id"], **changes})
         assert response.status_code == status
@@ -547,7 +558,9 @@ def test_submission_revalidates_storage_after_discovery(tmp_path, monkeypatch):
         return "sample-v1"
 
     monkeypatch.setattr(InferenceClient, "discover_mock_identity", discover)
-    with TestClient(api.create_app(settings, repository)) as client:
+    with TestClient(
+        api.create_app(settings, repository), base_url=LOCAL_API, headers=CLIENT_HEADERS
+    ) as client:
         video = client.post("/videos/sample").json()
         response = client.post("/analysis-jobs", json={"video_id": video["id"]})
         assert response.status_code == 404

@@ -8,12 +8,15 @@ import pytest
 from fastapi.testclient import TestClient
 
 from apps.api.main import create_app
+from apps.api.request_guards import CLIENT_HEADERS
 from fall_detection.config import Settings
 from fall_detection.exports import ExperimentExports, csv_export, json_export
 from fall_detection.models import PreparedFrame, PreparedInput
 from fall_detection.monitoring import Monitoring, SessionCreate
 from fall_detection.prediction import ACTIVITY_LABELS, PipelineResult
 from fall_detection.repository import Repository
+
+LOCAL_API = "http://127.0.0.1"
 
 
 @pytest.fixture
@@ -211,7 +214,9 @@ def test_download_endpoints_validation_and_secret_exclusion(store, tmp_path):
         inference_base_url="https://user:password@secret/v1",
     )
     job = repository.create_job(video.id, 0, 2)
-    with TestClient(create_app(settings, repository)) as client:
+    with TestClient(
+        create_app(settings, repository), base_url=LOCAL_API, headers=CLIENT_HEADERS
+    ) as client:
         for output_format, content_type in [("json", "application/json"), ("csv", "text/csv")]:
             response = client.get(f"/analysis-jobs/{job.id}/export?format={output_format}")
             assert response.status_code == 200

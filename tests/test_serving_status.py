@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from apps.api.main import create_app
+from apps.api.request_guards import CLIENT_HEADERS
 from fall_detection import serving_status
 from fall_detection.config import Settings
 from fall_detection.serving_status import (
@@ -17,6 +18,8 @@ from fall_detection.serving_status import (
     modal_stop_containers,
     wait_until_healthy,
 )
+
+LOCAL_API = "http://127.0.0.1"
 
 
 @pytest.fixture
@@ -144,7 +147,11 @@ def test_status_without_modal_app_is_unmonitored(settings):
 
 
 def test_api_reports_simulated_status_and_refuses_mock_warmup(settings):
-    with TestClient(create_app(replace(settings, backend_kind="mock"))) as client:
+    with TestClient(
+        create_app(replace(settings, backend_kind="mock")),
+        base_url=LOCAL_API,
+        headers=CLIENT_HEADERS,
+    ) as client:
         assert client.get("/serving-status").json()["state"] == "simulated"
         assert client.post("/serving-status/warmup").status_code == 409
 
@@ -214,7 +221,7 @@ def test_api_maps_blocked_shutdown_to_conflict(settings, monkeypatch):
         raise ShutdownBlockedError("1 request(s) in flight")
 
     monkeypatch.setattr(ServingStatus, "shutdown", blocked)
-    with TestClient(create_app(settings)) as client:
+    with TestClient(create_app(settings), base_url=LOCAL_API, headers=CLIENT_HEADERS) as client:
         response = client.post("/serving-status/shutdown")
     assert response.status_code == 409
     assert "in flight" in response.json()["detail"]
@@ -222,9 +229,13 @@ def test_api_maps_blocked_shutdown_to_conflict(settings, monkeypatch):
 
 def test_capabilities_name_the_inference_host_without_credentials(settings):
     remote = replace(settings, inference_base_url="https://user:pw@gpu.modal.run/v1")
-    with TestClient(create_app(remote)) as client:
+    with TestClient(create_app(remote), base_url=LOCAL_API, headers=CLIENT_HEADERS) as client:
         body = client.get("/capabilities").json()
     assert (body["inference_host"], body["inference_encrypted"]) == ("gpu.modal.run", True)
     assert "pw" not in str(body)
-    with TestClient(create_app(replace(settings, backend_kind="mock"))) as client:
+    with TestClient(
+        create_app(replace(settings, backend_kind="mock")),
+        base_url=LOCAL_API,
+        headers=CLIENT_HEADERS,
+    ) as client:
         assert client.get("/capabilities").json()["inference_host"] is None

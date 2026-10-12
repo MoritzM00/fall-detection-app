@@ -5,10 +5,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 import apps.api.main as api
+from apps.api.request_guards import CLIENT_HEADERS
 from apps.api.upload_limit import MULTIPART_OVERHEAD_BYTES
 from fall_detection.config import Settings
 from fall_detection.prediction import PRESET_ID, THESIS_BASELINE_PROMPT, InferenceResponse
 from fall_detection.repository import Repository
+
+LOCAL_API = "http://127.0.0.1"
 
 
 @pytest.fixture(autouse=True)
@@ -43,7 +46,7 @@ def api_instance(make_api):
 @pytest.fixture
 def client(api_instance):
     app, _, _ = api_instance
-    with TestClient(app) as test_client:
+    with TestClient(app, base_url=LOCAL_API, headers=CLIENT_HEADERS) as test_client:
         yield test_client
 
 
@@ -173,7 +176,10 @@ def test_app_instances_keep_settings_and_storage_isolated(make_api):
     assert not first_data_dir.exists()
     assert not second_data_dir.exists()
 
-    with TestClient(first_app) as first_client, TestClient(second_app) as second_client:
+    with (
+        TestClient(first_app, base_url=LOCAL_API, headers=CLIENT_HEADERS) as first_client,
+        TestClient(second_app, base_url=LOCAL_API, headers=CLIENT_HEADERS) as second_client,
+    ):
         assert first_client.get("/capabilities").json()["models"] == ["model-a"]
         assert second_client.get("/capabilities").json()["models"] == ["model-b"]
         uploaded = first_client.post("/videos", files={"file": ("clip.mp4", b"video", "video/mp4")})
@@ -199,7 +205,7 @@ def test_api_rejects_non_finite_timestamps(client, value):
 
 def test_upload_limit_and_failed_metadata_leave_no_orphans(make_api, monkeypatch):
     small_app, _, small_data_dir = make_api("small", upload_max_bytes=3)
-    with TestClient(small_app) as client:
+    with TestClient(small_app, base_url=LOCAL_API, headers=CLIENT_HEADERS) as client:
         oversized = client.post("/videos", files={"file": ("clip.mp4", b"1234", "video/mp4")})
     assert oversized.status_code == 413
     assert list((small_data_dir / "media").iterdir()) == []
@@ -210,7 +216,10 @@ def test_upload_limit_and_failed_metadata_leave_no_orphans(make_api, monkeypatch
         raise RuntimeError("database unavailable")
 
     monkeypatch.setattr(repository, "create_uploaded_video", fail_metadata)
-    with TestClient(app) as client, pytest.raises(RuntimeError, match="database unavailable"):
+    with (
+        TestClient(app, base_url=LOCAL_API, headers=CLIENT_HEADERS) as client,
+        pytest.raises(RuntimeError, match="database unavailable"),
+    ):
         client.post("/videos", files={"file": ("clip.mp4", b"123", "video/mp4")})
     assert list((data_dir / "media").iterdir()) == []
 
@@ -239,7 +248,12 @@ def _stream_upload(
         "raw_path": b"/videos",
         "query_string": b"",
         "root_path": "",
-        "headers": [(b"content-type", b"multipart/form-data; boundary=clip-boundary"), *headers],
+        "headers": [
+            (b"host", b"127.0.0.1"),
+            (b"x-requested-with", b"fall-detection"),
+            (b"content-type", b"multipart/form-data; boundary=clip-boundary"),
+            *headers,
+        ],
         "client": ("testclient", 12345),
         "server": ("testserver", 80),
     }
@@ -268,7 +282,7 @@ def _stream_upload(
 def test_upload_ingress_limit_counts_streamed_bytes_without_trusting_length(make_api, headers):
     app, _, data_dir = make_api(upload_max_bytes=8)
     body = _multipart_body(b"x" * MULTIPART_OVERHEAD_BYTES)
-    with TestClient(app):
+    with TestClient(app, base_url=LOCAL_API, headers=CLIENT_HEADERS):
         messages, received = _stream_upload(app, [body[:1024], body[1024:], b"unread"], headers)
 
     assert messages[0]["status"] == 413
@@ -279,7 +293,7 @@ def test_upload_ingress_limit_counts_streamed_bytes_without_trusting_length(make
 def test_upload_ingress_limit_allows_valid_file_despite_high_length_header(make_api):
     app, _, data_dir = make_api(upload_max_bytes=4)
     body = _multipart_body(b"1234")
-    with TestClient(app):
+    with TestClient(app, base_url=LOCAL_API, headers=CLIENT_HEADERS):
         messages, received = _stream_upload(
             app, [body[:80], body[80:]], [(b"content-length", b"999999")]
         )
@@ -292,7 +306,7 @@ def test_upload_ingress_limit_allows_valid_file_despite_high_length_header(make_
 def test_interrupted_upload_leaves_no_persistent_media(make_api):
     app, _, data_dir = make_api()
     body = _multipart_body(b"partial video")
-    with TestClient(app):
+    with TestClient(app, base_url=LOCAL_API, headers=CLIENT_HEADERS):
         messages, received = _stream_upload(app, [body[:80]], [], disconnect=True)
 
     assert messages[0]["status"] == 400
@@ -306,7 +320,7 @@ def test_dataset_video_registration_rejects_media_outside_data_dir(make_api, tmp
     inside = data_dir / "omnifall" / "videos" / relative
     inside.parent.mkdir(parents=True)
     inside.write_bytes(b"not decoded during registration")
-    with TestClient(app) as test_client:
+    with TestClient(app, base_url=LOCAL_API, headers=CLIENT_HEADERS) as test_client:
         assert [item["path"] for item in test_client.get("/dataset-videos").json()] == [relative]
         created = test_client.post("/videos/dataset", json={"path": relative})
         assert created.status_code == 200
@@ -318,8 +332,77 @@ def test_dataset_video_registration_rejects_media_outside_data_dir(make_api, tmp
     app, _, data_dir = make_api("linked")
     (data_dir / "omnifall").mkdir(parents=True)
     (data_dir / "omnifall" / "videos").symlink_to(external)
-    with TestClient(app) as test_client:
+    with TestClient(app, base_url=LOCAL_API, headers=CLIENT_HEADERS) as test_client:
         assert test_client.get("/dataset-videos").json() == []
         rejected = test_client.post("/videos/dataset", json={"path": relative})
         assert rejected.status_code == 400
         assert "inside the data directory" in rejected.json()["detail"]
+
+
+@pytest.mark.parametrize("host", ["evil.example", "evil.example:8000", "127.0.0.1.evil.example"])
+def test_unknown_host_is_rejected_to_block_dns_rebinding(api_instance, host):
+    app, _, _ = api_instance
+    with TestClient(app, base_url=LOCAL_API) as test_client:
+        video = test_client.post("/videos/sample", headers=CLIENT_HEADERS).json()
+        for path in ["/health", f"/videos/{video['id']}/media"]:
+            assert test_client.get(path, headers={"Host": host}).status_code == 400
+
+
+@pytest.mark.parametrize("base_url", ["http://127.0.0.1:8000", "http://localhost:5173"])
+def test_loopback_hosts_are_accepted_on_any_port(api_instance, base_url):
+    app, _, _ = api_instance
+    with TestClient(app, base_url=base_url) as test_client:
+        assert test_client.get("/health").status_code == 200
+
+
+def test_configured_extra_host_is_accepted(make_api, monkeypatch):
+    monkeypatch.setenv("FALL_DETECTION_ALLOWED_HOSTS", " laptop.tail1234.ts.net , ")
+    hosts = Settings.from_env().allowed_hosts
+    assert hosts == ("127.0.0.1", "localhost", "laptop.tail1234.ts.net")
+    app, _, _ = make_api(allowed_hosts=hosts)
+    with TestClient(app, base_url="https://laptop.tail1234.ts.net") as test_client:
+        assert test_client.get("/health").status_code == 200
+        assert test_client.get("/health", headers={"Host": "evil.example"}).status_code == 400
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        ("POST", "/serving-status/warmup", {}),
+        ("POST", "/serving-status/shutdown", {}),
+        ("POST", "/videos/sample", {}),
+        ("POST", "/videos", {"files": {"file": ("clip.mp4", b"x", "video/mp4")}}),
+        ("POST", "/analysis-jobs/missing/retry", {}),
+        ("POST", "/monitoring-sessions/missing/frames", {"data": {"run": "1"}}),
+        ("POST", "/analysis-jobs", {"json": {"video_id": "missing"}}),
+        ("PUT", "/videos/missing", {}),
+        ("PATCH", "/videos/missing", {}),
+        ("DELETE", "/videos/missing", {}),
+    ],
+)
+@pytest.mark.parametrize("headers", [{}, {"X-Requested-With": "XMLHttpRequest"}])
+def test_state_changing_request_without_client_header_is_forbidden(
+    api_instance, method, path, body, headers
+):
+    app, _, data_dir = api_instance
+    with TestClient(app, base_url=LOCAL_API) as test_client:
+        response = test_client.request(method, path, headers=headers, **body)
+    assert response.status_code == 403
+    assert "X-Requested-With" in response.json()["detail"]
+    assert not (data_dir / "media").exists()
+
+
+def test_reads_need_no_client_header_and_no_cors_is_granted(api_instance):
+    app, _, _ = api_instance
+    with TestClient(app, base_url=LOCAL_API) as test_client:
+        video = test_client.post("/videos/sample", headers=CLIENT_HEADERS).json()
+        assert test_client.get(f"/videos/{video['id']}").status_code == 200
+        preflight = test_client.options(
+            "/serving-status/warmup",
+            headers={
+                "Origin": "https://evil.example",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "x-requested-with",
+            },
+        )
+    assert "access-control-allow-origin" not in preflight.headers
