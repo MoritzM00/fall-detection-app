@@ -131,6 +131,17 @@ def test_config_segments_and_single_running_session(replay):
         replay[2].command(second["id"], SessionCommand(action="start"))
 
 
+def test_second_running_session_conflict_is_readable(replay):
+    second = replay[2].create(replay[4], replay[5])
+    with TestClient(create_app(replay[0], replay[1])) as client:
+        command(replay, "start")
+        response = client.post(
+            f"/monitoring-sessions/{second['id']}/commands", json={"action": "start"}
+        )
+    assert response.status_code == 409
+    assert response.json()["detail"].startswith("Another monitoring session is running")
+
+
 def test_recovery_only_on_api_startup(replay):
     command(replay, "start", 1)
     replay[2].tick()

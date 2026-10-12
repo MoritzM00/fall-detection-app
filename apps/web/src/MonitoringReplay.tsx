@@ -115,6 +115,17 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
     return () => { clearInterval(timer); fence.current++; media.current?.pause(); const leaving = current.current; if (leaving?.id === id && leaving.state === "running") void commandSession(leaving.id, { action: "pause", command_id: crypto.randomUUID() }).catch(() => {}); };
   }, [id]); // Each selection invalidates every previous asynchronous response.
 
+  useEffect(() => {
+    // Closing the tab skips React cleanup; an orphaned running session would block every other session.
+    function pauseOnExit() {
+      const leaving = current.current;
+      if (leaving?.state !== "running") return;
+      void fetch(`/api/monitoring-sessions/${leaving.id}/commands`, { method: "POST", keepalive: true, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "pause", command_id: crypto.randomUUID() }) }).catch(() => {});
+    }
+    window.addEventListener("pagehide", pauseOnExit);
+    return () => window.removeEventListener("pagehide", pauseOnExit);
+  }, []);
+
   async function send(command: MonitoringCommand, isRetry = false, preserveRetry = false) {
     const saved = current.current;
     if (!saved) return;
