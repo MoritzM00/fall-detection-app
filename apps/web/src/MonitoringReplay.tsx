@@ -178,7 +178,10 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
   const newestWindow = windows.find(window => window.generation === session?.generation && window.segment_id === session?.segment_id);
   const inferenceState = newestWindow?.job_id ? jobs[newestWindow.job_id]?.state ?? newestWindow.state : newestWindow?.state ?? "waiting for playback";
   const latest = session?.latest_job_id ? jobs[session.latest_job_id] : null;
-  const settingsValid = settings && settings.prompt_text.trim() && Number.isInteger(settings.generation.max_tokens) && settings.prompt_text.length <= 16000 && settings.generation.max_tokens >= 16 && settings.generation.max_tokens <= 4096 && settings.generation.temperature >= 0 && settings.generation.temperature <= 2 && frames >= 2 && frames <= 32 && Number.isInteger(frames) && fps > 0 && fps <= (live || (!id && sourceMode === "camera") ? captureFps : 30) && (frames - 1) / fps <= 30;
+  const minTokens = capabilities?.generation_limits.min_max_tokens ?? 16;
+  const maxTokens = capabilities?.generation_limits.max_max_tokens ?? 4096;
+  const maxFps = live || (!id && sourceMode === "camera") ? captureFps : 30;
+  const settingsValid = settings && settings.prompt_text.trim() && Number.isInteger(settings.generation.max_tokens) && settings.prompt_text.length <= 16000 && settings.generation.max_tokens >= minTokens && settings.generation.max_tokens <= maxTokens && settings.generation.temperature >= 0 && settings.generation.temperature <= 2 && frames >= 2 && frames <= 32 && Number.isInteger(frames) && fps > 0 && fps <= maxFps && (frames - 1) / fps <= 30;
   function configuration(videoId: string) { return { ...settings!, video_id: videoId, frame_count: frames, fps, size }; }
   async function create() {
     if (!source.video || !source.duration || !settingsValid) return;
@@ -265,9 +268,10 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
         <section className="monitor-config"><h2>Configuration</h2>
           <label className="setting-row"><span>Frames</span><input aria-label="Monitoring frames" type="number" value={frames} min="2" max="32" onChange={event => setFrames(Number(event.target.value))} /></label>
           {(live || (!id && sourceMode === "camera")) && <div className="setting-row"><span>Capture FPS</span><strong>{captureFps}</strong></div>}
-          <label className="setting-row"><span>Sampling FPS</span><input aria-label="Monitoring FPS" type="number" value={fps} min="0.1" max={live || (!id && sourceMode === "camera") ? captureFps : 30} step="0.1" onChange={event => setFps(Number(event.target.value))} /></label>
+          <label className="setting-row"><span>Sampling FPS</span><input aria-label="Monitoring FPS" type="number" value={fps} min="0.1" max={maxFps} step="0.1" onChange={event => setFps(Number(event.target.value))} /></label>
           <label className="setting-row"><span>Crop size</span><select aria-label="Monitoring crop" value={size} onChange={event => setSize(Number(event.target.value))}><option value={224}>224 × 224</option><option value={448}>448 × 448</option><option value={672}>672 × 672</option></select></label>
           {capabilities && settings && <ExperimentControls capabilities={capabilities} settings={settings} busy={busy} onChange={setSettings} />}
+          {settings && !settingsValid && <p className="error-message" role="alert">Use 2–32 frames, a sampling FPS above 0 and up to {maxFps}, a window of at most 30 s, a nonblank prompt, temperature from 0 to 2, and an integer token limit from {minTokens} to {maxTokens}.</p>}
           {session && <><button className="button secondary wide" disabled={busy || !connected || !settingsValid} onClick={() => void send({ action: "configure", configuration: configuration(session.video_id) })}>Apply new configuration segment</button><p className="preview-note">Current generation {session.generation} · segment {session.segment_id.slice(0, 8)}</p><details className="plain-details"><summary>Saved segment settings</summary><pre className="saved-prompt">{JSON.stringify(session.configuration, null, 2)}</pre></details></>}
         </section>
         <details className="plain-details"><summary>All 16 activity labels</summary><p>{labels.join(", ")}</p></details>
