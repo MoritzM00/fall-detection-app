@@ -209,6 +209,8 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
   }
 
   const duration = session?.duration ?? 0;
+  // Resuming a finished recording would restart the media element at 0 while the session stays at its end.
+  const ended = Boolean(session && !live && session.position >= session.duration);
   const windowSeconds = session ? (session.configuration.preprocessing.frames - 1) / session.configuration.preprocessing.fps : (frames - 1) / fps;
   const stale = !connected || (updated > 0 && now - updated > 3000);
   const systemState = connected ? session?.state ?? "recovering" : "disconnected";
@@ -245,7 +247,7 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
             {video?.source === "synthetic" && <div className="replay-placeholder"><strong>{seconds(Math.min(position, duration))}</strong><span>Synthetic recording · simulated playback clock</span></div>}
           </div>
           {session && <CoverageTimeline windows={windows.filter(window => window.generation === session.generation)} jobs={jobs} from={span.from} to={span.to} position={shown} partial={windows.length >= 100 && !historyComplete} onLoadOlder={() => void older()} seek={live ? null : seek} />}
-          <div className="replay-controls"><button className="button primary" disabled={busy || !session || !connected || session.state === "running" || session.state === "stopped"} onClick={() => void begin(session?.position === 0 ? "start" : "resume")}>{session?.position === 0 ? "Start" : "Resume"}</button><button className="button secondary" disabled={busy || session?.state !== "running"} onClick={() => { media.current?.pause(); void send({ action: "pause" }); }}>Pause</button><button className="button secondary" disabled={busy || !session || session.state === "stopped"} onClick={() => { media.current?.pause(); void send({ action: "stop" }); }}>Stop</button><button className="button secondary restart" disabled={busy || !session || !connected} onClick={() => void begin("restart")}>Restart / retry inference</button></div>
+          <div className="replay-controls"><button className="button primary" disabled={busy || !session || !connected || session.state === "running" || session.state === "stopped" || ended} title={ended ? "The recording has ended. Use Restart to replay it." : undefined} onClick={() => void begin(session?.position === 0 ? "start" : "resume")}>{session?.position === 0 ? "Start" : "Resume"}</button><button className="button secondary" disabled={busy || session?.state !== "running"} onClick={() => { media.current?.pause(); void send({ action: "pause" }); }}>Pause</button><button className="button secondary" disabled={busy || !session || session.state === "stopped"} onClick={() => { media.current?.pause(); void send({ action: "stop" }); }}>Stop</button><button className="button secondary restart" disabled={busy || !session || !connected} onClick={() => void begin("restart")}>Restart / retry inference</button></div>
           <div className="replay-status">
             <p role="status" data-tone={toneOf(systemState)}>System: {systemState}{busy ? " · updating" : ""}{session?.recovery_reason ? ` · ${session.recovery_reason}` : ""}</p>
             <p role="status" data-tone={toneOf(inferenceState)}>Inference: {inferenceState}{newestWindow?.reason ? ` · ${newestWindow.reason}` : ""}</p>
