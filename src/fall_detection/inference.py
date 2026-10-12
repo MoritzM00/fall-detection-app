@@ -1,5 +1,6 @@
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -22,10 +23,15 @@ class InferenceClient:
     """Small client for the vLLM-compatible contract used by the worker."""
 
     def __init__(
-        self, base_url: str, timeout_seconds: float = 30, mock_fixture_identity: str | None = None
+        self,
+        base_url: str,
+        timeout_seconds: float = 30,
+        mock_fixture_identity: str | None = None,
+        auth_headers: Mapping[str, str] | None = None,
     ) -> None:
-        """Configure the serving endpoint and bounded request timeout."""
+        """Configure the serving endpoint, credentials and bounded request timeout."""
         self._mock_fixture_identity = mock_fixture_identity
+        self._auth_headers = dict(auth_headers or {})
         self._base_url = base_url.rstrip("/")
         self._timeout_seconds = timeout_seconds
 
@@ -58,11 +64,14 @@ class InferenceClient:
                 f"{self._base_url}/chat/completions",
                 json=payload,
                 timeout=self._timeout_seconds,
-                headers=(
-                    {"X-Mock-Fixture-Identity": self._mock_fixture_identity}
-                    if self._mock_fixture_identity
-                    else None
-                ),
+                headers={
+                    **self._auth_headers,
+                    **(
+                        {"X-Mock-Fixture-Identity": self._mock_fixture_identity}
+                        if self._mock_fixture_identity
+                        else {}
+                    ),
+                },
             )
             response.raise_for_status()
             if (
