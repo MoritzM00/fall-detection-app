@@ -2,10 +2,13 @@
 
 import hashlib
 import json
+import math
 import shutil
-from collections.abc import Callable
+from collections import OrderedDict
+from collections.abc import Callable, Iterator
 from concurrent.futures import Future
 from concurrent.futures import TimeoutError as FutureTimeout
+from fractions import Fraction
 from pathlib import Path
 from tempfile import mkdtemp
 from threading import BoundedSemaphore, Lock
@@ -13,6 +16,8 @@ from typing import TypeVar, cast
 
 import av
 import numpy as np
+from av.container import InputContainer
+from av.stream import Stream
 from PIL import Image
 
 from fall_detection.models import PreparationRequest, PreparedFrame, PreparedInput, VideoAsset
@@ -29,12 +34,104 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+_SOURCE_DIGESTS: OrderedDict[tuple[object, ...], str] = OrderedDict()
+_SOURCE_DIGESTS_LOCK = Lock()
+
+
+def _source_key(path: Path) -> tuple[object, ...]:
+    """Identify one unchanged source file without reading its content."""
+    status = path.stat()
+    return (str(path), status.st_dev, status.st_ino, status.st_size, status.st_mtime_ns)
+
+
+def _source_sha256(path: Path) -> tuple[tuple[object, ...], str]:
+    """Hash a source once per file identity, so replay windows do not rehash it each time."""
+    key = _source_key(path)
+    with _SOURCE_DIGESTS_LOCK:
+        cached = _SOURCE_DIGESTS.get(key)
+        if cached is not None:
+            _SOURCE_DIGESTS.move_to_end(key)
+            return key, cached
+    digest = _sha256_file(path)
+    if _source_key(path) != key:
+        raise ValueError("Video changed during preparation")
+    with _SOURCE_DIGESTS_LOCK:
+        _SOURCE_DIGESTS[key] = digest
+        while len(_SOURCE_DIGESTS) > 32:
+            _SOURCE_DIGESTS.popitem(last=False)
+    return key, digest
+
+
+# Decoding starts at a keyframe at least this far before the first requested timestamp.
+# Any keyframe strictly before it suffices for identical selection; the margin keeps a
+# window that starts exactly on a keyframe from landing on it and rescanning the file.
+SEEK_MARGIN_SECONDS = 1.0
+
+
+class _UnreliableSeekError(Exception):
+    """A seeked decode might differ from the full scan, so the full scan decides."""
+
+
+def _seeked_frames(
+    container: InputContainer, stream: Stream, first: float
+) -> Iterator[av.VideoFrame]:
+    """Yield the full-scan frame sequence from the last keyframe safely before ``first``.
+
+    Nearest-PTS selection of ``first`` compares the first frame at or after it with
+    the frame just before it, so that earlier frame must be decoded too. Frames
+    preceding the keyframe in presentation order (open-GOP leading frames) may
+    reference the skipped GOP and are discarded; if the keyframe is not strictly
+    before ``first`` or presentation order goes back past it, the seek is unreliable.
+    """
+    target = first - SEEK_MARGIN_SECONDS
+    if target <= 0 or stream.start_time is None or stream.time_base is None:
+        raise _UnreliableSeekError  # Near the start a full scan costs the same.
+    origin = float(stream.start_time * stream.time_base)
+    offset = stream.start_time + math.floor(Fraction(target) / stream.time_base)
+    container.seek(offset, stream=stream, backward=True, any_frame=False)
+    keyframe = None
+    for frame in container.decode(stream):
+        if not isinstance(frame, av.VideoFrame) or frame.pts is None or frame.time_base is None:
+            continue
+        position = frame.pts * frame.time_base
+        if keyframe is None:
+            if not frame.key_frame:
+                continue
+            if first <= float(position) - origin:
+                raise _UnreliableSeekError
+            keyframe = position
+        elif position < keyframe:
+            raise _UnreliableSeekError
+        yield frame
+    if keyframe is None:
+        raise _UnreliableSeekError  # No keyframe before the window was decoded.
+
+
 def _selected_frames(
-    path: Path, timestamps: list[float], max_actual_seconds: float | None = None
+    path: Path,
+    timestamps: list[float],
+    max_actual_seconds: float | None = None,
+    *,
+    seek: bool = True,
 ) -> list[tuple[av.VideoFrame, float, int]]:
-    """Select nearest frames on the playback timeline, retaining original PTS."""
+    """Select nearest frames on the playback timeline, retaining original PTS.
+
+    With ``seek``, decoding starts at a keyframe before the window instead of the
+    first frame; any doubt about that seek falls back to the full scan.
+    """
     if not timestamps or timestamps[0] < 0:
         raise ValueError("Selected window must contain nonnegative timestamps")
+    if seek:
+        try:
+            return _scan_frames(path, timestamps, max_actual_seconds, seek=True)
+        except (_UnreliableSeekError, av.error.FFmpegError):
+            pass
+    return _scan_frames(path, timestamps, max_actual_seconds, seek=False)
+
+
+def _scan_frames(
+    path: Path, timestamps: list[float], max_actual_seconds: float | None, *, seek: bool
+) -> list[tuple[av.VideoFrame, float, int]]:
     selected: list[tuple[av.VideoFrame, float, int]] = []
     with av.open(str(path)) as container:
         stream = next((item for item in container.streams if item.type == "video"), None)
@@ -48,7 +145,10 @@ def _selected_frames(
         )
         last_interval = None
         index = 0
-        for frame in container.decode(stream):
+        frames = (
+            _seeked_frames(container, stream, timestamps[0]) if seek else container.decode(stream)
+        )
+        for frame in frames:
             if not isinstance(frame, av.VideoFrame) or frame.pts is None or frame.time_base is None:
                 continue
             source_seconds = float(frame.pts * frame.time_base)
@@ -78,6 +178,8 @@ def _selected_frames(
         if previous is None:
             raise ValueError("Video has no timestamped frames")
         if index < len(timestamps):
+            if seek and last_interval is None:
+                raise _UnreliableSeekError  # The full scan may know an earlier frame interval.
             final_frame = previous[0]
             duration = (
                 float(final_frame.duration * final_frame.time_base)
@@ -164,7 +266,7 @@ def _prepare_video_unlocked(
     if end_seconds - request.start_seconds > 30:
         raise ValueError("Prepared windows are limited to 30 seconds")
     version = PREPROCESSING_VERSION + ("-causal" if causal else "")
-    source_sha256 = _sha256_file(media_path)
+    source_key, source_sha256 = _source_sha256(media_path)
     identity = json.dumps(
         [
             video.id,
@@ -186,7 +288,7 @@ def _prepare_video_unlocked(
         request.start_seconds + index / request.fps for index in range(request.frame_count)
     ]
     selected = _selected_frames(media_path, timestamps, end_seconds if causal else None)
-    if _sha256_file(media_path) != source_sha256:
+    if _source_key(media_path) != source_key:
         raise ValueError("Video changed during preparation")
     return write_bundle(
         data_dir,
