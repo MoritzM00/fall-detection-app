@@ -132,8 +132,10 @@ class ExperimentExports:
 
     def snapshot(self, kind: str, identity: str) -> dict:
         """Export every selected record without mutating lifecycle or applying UI limits."""
-        with storage_lock(self.data_dir, exclusive=False), self.repository._connect() as connection:
-            connection.execute("BEGIN")
+        with (
+            storage_lock(self.data_dir, exclusive=False),
+            self.repository.transaction(immediate=False) as connection,
+        ):
             result = {
                 "schema_version": SCHEMA_VERSION,
                 "kind": kind,
@@ -197,7 +199,6 @@ class ExperimentExports:
                     (identity,),
                 ).fetchall()
                 result["runs"] = [self._run(connection, row) for row in rows]
-            connection.commit()
         return result
 
 

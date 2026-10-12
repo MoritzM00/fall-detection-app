@@ -1,3 +1,4 @@
+import re
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
@@ -458,3 +459,44 @@ def test_job_reads_use_one_connection_and_never_write(
     assert single.prediction.label == "fall"
     assert by_id[running.id].state == "running"
     assert all(job.configuration == queued[0].configuration for job in listed)
+
+
+def test_transaction_commits_on_exit_and_rolls_back_on_error(tmp_path: Path) -> None:
+    clock = datetime(2026, 10, 12, 8, tzinfo=UTC)
+    repository = Repository(tmp_path / "app.sqlite3", clock=lambda: clock)
+    repository.initialize()
+    insert = "INSERT INTO videos VALUES (?, 'clip', 'synthetic', NULL, NULL, ?)"
+    with repository.transaction() as connection:
+        connection.execute(insert, ("kept", repository.timestamp()))
+    with pytest.raises(RuntimeError), repository.transaction() as connection:
+        connection.execute(insert, ("dropped", repository.timestamp()))
+        raise RuntimeError("abort")
+    with repository.transaction(immediate=False) as connection:
+        ids = [row["id"] for row in connection.execute("SELECT id FROM videos")]
+    assert ids == ["kept"]
+    assert repository.now() == clock
+    assert repository.timestamp() == "2026-10-12T08:00:00+00:00"
+
+
+PRIVATE_REPOSITORY_ACCESS = re.compile(r"\._(connect|timestamp|clock|database_path)\b")
+
+
+def private_repository_access(roots: list[Path]) -> list[str]:
+    """List production lines that reach into Repository internals."""
+    return [
+        f"{path}:{number}"
+        for root in roots
+        for path in sorted(root.rglob("*.py"))
+        if path.name != "repository.py"
+        for number, line in enumerate(path.read_text().splitlines(), 1)
+        if PRIVATE_REPOSITORY_ACCESS.search(line)
+    ]
+
+
+def test_production_code_uses_only_the_public_repository_api(tmp_path: Path) -> None:
+    project = Path(__file__).resolve().parents[1]
+    assert private_repository_access([project / "src", project / "apps"]) == []
+    # The scan bites: a planted private access is reported.
+    planted = tmp_path / "planted.py"
+    planted.write_text("with repository._connect() as connection:\n    pass\n")
+    assert private_repository_access([tmp_path]) == [f"{planted}:1"]
