@@ -105,6 +105,27 @@ test("recovers history and protects an active run after reload", async ({ page, 
   await expect(page.getByText(/Run status unavailable/)).toHaveCount(0);
 });
 
+test("settings that exceed the served context window block the run until reset", async ({ page, request }) => {
+  await waitForApi(request);
+  await page.route("**/api/capabilities", async (route) => {
+    const response = await route.fetch();
+    await route.fulfill({ response, json: { ...(await response.json()), serving_limits: { max_model_len: 4000 } } });
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Use sample clip" }).click();
+  await expect(page.locator(".analyze-button")).toBeEnabled();
+  await editSettings(page, async () => {
+    await page.getByLabel("Frames", { exact: true }).fill("32");
+    await page.getByLabel("Crop size").selectOption("672");
+    await expect(page.getByRole("alert")).toContainText("context window is 4,000");
+  });
+  await expect(page.locator(".settings-summary")).toContainText("Invalid");
+  await expect(page.locator(".analyze-button")).toBeDisabled();
+  await editSettings(page, () => page.getByRole("button", { name: "Reset to thesis baseline" }).click());
+  await expect(page.locator(".settings-summary")).toContainText("Thesis baseline");
+  await expect(page.locator(".analyze-button")).toBeEnabled();
+});
+
 test("shows history errors and recovers before allowing submission", async ({ page, request }) => {
   await waitForApi(request);
   await page.route("**/api/analysis-jobs?limit=50", async (route) => {
