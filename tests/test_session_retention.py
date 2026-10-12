@@ -296,7 +296,10 @@ def test_pruned_vllm_session_cannot_feed_a_real_report_and_preview_warns(storage
     assert session in warning and "--keep-sessions" in warning
     assert not prune_media(root, database, now=NOW, session_age=None).evaluated_sessions
 
-    assert bundle in prune_media(root, database, now=NOW, apply=True).removed
+    applied = prune_media(root, database, now=NOW, apply=True)
+    assert bundle in applied.removed
+    (warning,) = evaluation_warnings(applied, applied=True)
+    assert session in warning and "were pruned" in warning and "--keep-sessions" not in warning
     snapshot = exports.snapshot("session", session)
     (run,) = snapshot["runs"]
     assert run["input_status"] == "unavailable" and run["prepared_input"] is None

@@ -31,13 +31,33 @@ def session_summary(report: PruneReport) -> list[str]:
     return lines
 
 
-def evaluation_warnings(report: PruneReport) -> list[str]:
-    """Warn about eligible sessions whose real predictions an evaluation may still need."""
+def evaluation_warnings(report: PruneReport, *, applied: bool = False) -> list[str]:
+    """Warn about eligible sessions whose real predictions an evaluation may still need.
+
+    After ``--apply`` the advice to export first comes too late, so the warning then
+    names only sessions that actually lost an input and says what that means.
+    """
+    if not applied:
+        return [
+            f"warning: session {session_id} has real (vLLM) predictions; after pruning, its "
+            "export reports input_status unavailable and cannot feed a real evaluation "
+            "report. Export its manifest first, or use --keep-sessions while evaluation "
+            "is pending."
+            for session_id in report.evaluated_sessions
+        ]
+    removed = set(report.removed)
+    pruned = {
+        session_id
+        for candidate in report.candidates
+        if candidate.path in removed
+        for session_id in candidate.session_ids
+    }
     return [
-        f"warning: session {session_id} has real (vLLM) predictions; after pruning, its "
-        "export reports input_status unavailable and cannot feed a real evaluation report. "
-        "Export its manifest first, or use --keep-sessions while evaluation is pending."
+        f"warning: session {session_id} had real (vLLM) predictions and its inputs were "
+        "pruned; its export now reports input_status unavailable and can no longer feed "
+        "a real evaluation report."
         for session_id in report.evaluated_sessions
+        if session_id in pruned
     ]
 
 
@@ -79,7 +99,7 @@ def main() -> None:
             f"eligible {candidate.kind}: {candidate.path} ({candidate.reason}; "
             f"{candidate.file_count} files, {_megabytes(candidate.size_bytes)})"
         )
-    for line in [*session_summary(report), *evaluation_warnings(report)]:
+    for line in [*session_summary(report), *evaluation_warnings(report, applied=args.apply)]:
         print(line)
     total = sum(candidate.size_bytes for candidate in report.candidates)
     print(
