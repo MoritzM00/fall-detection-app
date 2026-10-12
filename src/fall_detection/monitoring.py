@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from fall_detection.models import GenerationConfiguration, RunConfiguration, SamplingConfiguration
 from fall_detection.prediction import PRESET_ID, THESIS_BASELINE_PROMPT
 from fall_detection.repository import Repository
+from fall_detection.storage import storage_lock
 
 
 class SessionConfiguration(BaseModel):
@@ -603,8 +604,6 @@ class Monitoring:
         """Read source playback bounds on the worker before any real-window admission."""
         import av
 
-        from fall_detection.storage_lock import storage_lock
-
         with self.repository._connect() as connection:
             row = connection.execute(
                 "SELECT * FROM monitoring_sessions WHERE state='running' AND duration_verified=0"
@@ -656,7 +655,6 @@ class Monitoring:
         from fall_detection.live import IngestGapError, prepare_frames
         from fall_detection.models import PreparationRequest
         from fall_detection.preparation import prepare_video
-        from fall_detection.storage_lock import storage_lock
 
         self.verify_source(settings)
         self.tick()

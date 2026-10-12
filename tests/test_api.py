@@ -5,10 +5,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 import apps.api.main as api
+from apps.api.upload_limit import MULTIPART_OVERHEAD_BYTES
 from fall_detection.config import Settings
 from fall_detection.prediction import PRESET_ID, THESIS_BASELINE_PROMPT, InferenceResponse
 from fall_detection.repository import Repository
-from fall_detection.upload_limit import MULTIPART_OVERHEAD_BYTES
 
 
 @pytest.fixture(autouse=True)
