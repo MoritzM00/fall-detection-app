@@ -122,7 +122,7 @@ class ExperimentExports:
         if prediction:
             result["prediction"] = fields(
                 prediction,
-                "id label backend_kind model fixture_version request_duration_ms total_duration_ms completed_at",
+                "id label backend_kind model fixture_version request_duration_ms total_duration_ms completed_at prompt_tokens completion_tokens",
             )
             result["prediction"]["sampled_timestamps"] = json.loads(
                 prediction["sampled_timestamps_json"]
@@ -256,6 +256,8 @@ CSV_FIELDS = [
     "completed_at",
     "request_duration_ms",
     "total_duration_ms",
+    "prompt_tokens",
+    "completion_tokens",
 ]
 
 

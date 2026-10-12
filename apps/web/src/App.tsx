@@ -4,6 +4,7 @@ import { createJob, getCapabilities } from "./api";
 import { FramePreview } from "./FramePreview";
 import { ExperimentControls } from "./ExperimentControls";
 import { RunComparison } from "./RunComparison";
+import { ServingBadge } from "./ServingBadge";
 import type { Capabilities, ExperimentSettings } from "./api";
 import { SamplingSettings, WindowControls } from "./SamplingControls";
 import { SourceSelection } from "./SourceSelection";
@@ -77,7 +78,9 @@ export default function App() {
         <button className={mode === "clip" ? "active" : ""} onClick={() => selectMode("clip")}>Clip analysis</button>
         <button className={mode === "monitoring" ? "active" : ""} onClick={() => selectMode("monitoring")}>Monitoring</button>
       </div>
-      <span className={`system-state ${capabilities ? "" : "offline"}`}><i /> {capabilities ? simulated ? "Local simulation" : "Online vLLM" : "Backend unavailable"}</span>
+      {capabilities && !simulated
+        ? <ServingBadge />
+        : <span className={`system-state ${capabilities ? "" : "offline"}`}><i /> {capabilities ? "Local simulation" : "Backend unavailable"}</span>}
     </header>
 
     <div hidden={mode !== "clip"}>

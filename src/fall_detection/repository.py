@@ -331,8 +331,9 @@ class Repository:
             connection.execute(
                 """INSERT INTO predictions
                 (id, job_id, label, raw_response, sampled_timestamps_json, backend_kind,
-                 model, fixture_version, request_duration_ms, total_duration_ms, completed_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                 model, fixture_version, request_duration_ms, total_duration_ms, completed_at,
+                 prompt_tokens, completion_tokens)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     str(uuid4()),
                     job_id,
@@ -345,6 +346,8 @@ class Repository:
                     result.request_duration_ms,
                     result.total_duration_ms,
                     completed_at,
+                    result.prompt_tokens,
+                    result.completion_tokens,
                 ),
             )
             self._attempt_event(connection, job_id, "succeeded", completed_at)
@@ -475,4 +478,6 @@ class Repository:
             request_duration_ms=row["request_duration_ms"],
             total_duration_ms=row["total_duration_ms"],
             completed_at=row["completed_at"],
+            prompt_tokens=row["prompt_tokens"],
+            completion_tokens=row["completion_tokens"],
         )

@@ -26,6 +26,8 @@ export type Prediction = {
   request_duration_ms: number;
   total_duration_ms: number;
   completed_at: string;
+  prompt_tokens?: number | null;
+  completion_tokens?: number | null;
 };
 
 export type AnalysisJob = {
@@ -87,6 +89,23 @@ export function createSample(): Promise<VideoAsset> {
 
 export function getCapabilities(): Promise<Capabilities> {
   return request("/capabilities");
+}
+
+export type ServingState = "simulated" | "unmonitored" | "unknown" | "idle" | "running" | "warming" | "ready";
+export type ServingStatus = {
+  state: ServingState;
+  containers: number | null;
+  backlog: number | null;
+  detail: string | null;
+  warmup: { state: "idle" | "warming" | "ready" | "failed"; seconds: number | null; error: string | null };
+};
+
+export function getServingStatus(): Promise<ServingStatus> {
+  return request("/serving-status");
+}
+
+export function warmUpServing(): Promise<ServingStatus> {
+  return request("/serving-status/warmup", { method: "POST" });
 }
 
 export function listDatasetVideos(): Promise<DatasetVideoOption[]> {

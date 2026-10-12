@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { getVideo, retryJob } from "./api";
 import type { AnalysisJob, VideoAsset } from "./api";
+import { formatTokenUsage } from "./tokens";
 
 type Props = {
   jobs: AnalysisJob[];
@@ -61,6 +62,7 @@ export function SubmittedResult({
       <dl>
         <div><dt>Input window</dt><dd>{job.start_seconds.toFixed(3)}–{job.end_seconds.toFixed(3)} s</dd></div>
         <div><dt>Request time</dt><dd>{result.request_duration_ms.toFixed(0)} ms</dd></div>
+        <div><dt>Tokens</dt><dd>{formatTokenUsage(result)}</dd></div>
       </dl>
       <details className="result-details">
         <summary>Run details</summary>

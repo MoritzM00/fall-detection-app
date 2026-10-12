@@ -123,3 +123,23 @@ def test_settings_reject_half_configured_proxy_token(monkeypatch):
     monkeypatch.delenv("FALL_DETECTION_INFERENCE_PROXY_SECRET", raising=False)
     with pytest.raises(ValueError, match="together"):
         Settings.from_env().inference_auth_headers()
+
+
+@pytest.mark.parametrize(
+    ("usage", "expected"),
+    [
+        ({"prompt_tokens": 1700, "completion_tokens": 6}, (1700, 6)),
+        (None, (None, None)),
+        ({"prompt_tokens": "1700", "completion_tokens": True}, (None, None)),
+        ({"prompt_tokens": -1}, (None, None)),
+    ],
+)
+def test_inference_client_reads_optional_token_usage(monkeypatch, usage, expected):
+    body = {"id": "x", "choices": [{"message": {"content": "fall"}}]}
+    if usage is not None:
+        body["usage"] = usage
+    response = httpx.Response(200, json=body)
+    response.request = httpx.Request("POST", "http://test/chat/completions")
+    monkeypatch.setattr(httpx, "post", lambda *_args, **_kwargs: response)
+    result = InferenceClient("http://test").complete({})
+    assert (result.prompt_tokens, result.completion_tokens) == expected

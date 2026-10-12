@@ -20,7 +20,7 @@ Cost and access controls:
 
 - **Scale to zero.** The GPU container stops 10 minutes after the last request and is billed per second while it runs. `max_containers=1` means at most one GPU runs at a time. Set a workspace spending limit in the Modal dashboard as a hard cap.
 - **Proxy auth.** Modal rejects requests without a valid proxy auth token at its edge, before any container starts, so a request without credentials never starts the GPU.
-- **Cold start.** The first request after idling waits for the container to start and the model to load: about 3.5 minutes in the first measured start, including a 74 s `torch.compile` that is now cached. The very first start also downloads about 17 GB of weights into a Modal volume. Run `make gpu-warm` when you start a session so the GPU is ready by the time you submit, and raise `FALL_DETECTION_REQUEST_TIMEOUT_SECONDS` so a window sent during a cold start does not time out.
+- **Cold start.** The first request after idling waits for the container to start and the model to load: about 3.5 minutes in the first measured start, including a 74 s `torch.compile` that is now cached. The very first start also downloads about 17 GB of weights into a Modal volume. A later cold start from the web UI's **Warm up** button took 172 s. Warm up when you start a session (button or `make gpu-warm`) so the GPU is ready by the time you submit, and raise `FALL_DETECTION_REQUEST_TIMEOUT_SECONDS` so a window sent during a cold start does not time out.
 
 Setup:
 
@@ -37,10 +37,17 @@ export FALL_DETECTION_INFERENCE_BASE_URL=https://<workspace>--fall-detection-vll
 export FALL_DETECTION_INFERENCE_PROXY_KEY=wk-...
 export FALL_DETECTION_INFERENCE_PROXY_SECRET=ws-...
 export FALL_DETECTION_REQUEST_TIMEOUT_SECONDS=600
+export FALL_DETECTION_MODAL_APP=fall-detection-vllm   # GPU status badge
 make dev
 ```
 
 Keep these lines in a Git-ignored file such as `.env` and load it with `source .env`; never commit the token. `make gpu-warm` loads `.env` itself, wakes the endpoint and prints how long it took to become ready. To take the endpoint down entirely, run `uvx modal app stop fall-detection-vllm`.
+
+### GPU status in the web UI
+
+With the vLLM backend, the top bar shows the GPU state instead of a static label: idle (scaled to zero), container up, warming up, ready, or unknown. The API reads it from Modal's control plane (`Function.get_current_stats`) using your local Modal CLI login, caches it for 5 seconds, and **never sends a request to vLLM**, so an open browser tab does not wake the GPU or keep it running. The UI polls every 15 seconds, and pauses while the tab is hidden. "Container up" means a container exists, but the API hasn't confirmed that vLLM is ready.
+
+**Warm up** (`POST /serving-status/warmup`) is the only part that contacts vLLM: it polls `/health` until the server answers, exactly like `make gpu-warm`. Without `FALL_DETECTION_MODAL_APP`, the badge cannot see containers and only reflects warm-ups.
 
 For a vLLM server started with `--api-key` (any host), set `FALL_DETECTION_INFERENCE_API_KEY` instead; the worker sends it as a bearer token.
 

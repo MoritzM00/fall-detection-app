@@ -41,6 +41,7 @@ from fall_detection.preparation import (
     prepare_video,
 )
 from fall_detection.repository import Repository
+from fall_detection.serving_status import ServingStatus, StatusSnapshot
 from fall_detection.storage import list_dataset_video_paths, resolve_dataset_video, storage_lock
 
 
@@ -54,6 +55,7 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
     preparation_coordinator = PreparationCoordinator(
         settings.preparation_slots, settings.preparation_wait_seconds
     )
+    serving_status = ServingStatus(settings)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -94,6 +96,19 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
             "generation_limits": {"min_max_tokens": 16, "max_max_tokens": 4096},
             "preprocessing": {"frame_count": 16, "size": 448, "crop": "center"},
         }
+
+    @app.get("/serving-status")
+    def get_serving_status() -> StatusSnapshot:
+        """Report GPU container state from the control plane without waking the GPU."""
+        return serving_status.snapshot()
+
+    @app.post("/serving-status/warmup", status_code=status.HTTP_202_ACCEPTED)
+    def warm_up_serving() -> StatusSnapshot:
+        """Wake the GPU endpoint in the background so a session starts warm."""
+        try:
+            return serving_status.start_warmup()
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.post("/videos/sample", response_model=VideoAsset)
     def create_sample_video() -> VideoAsset:

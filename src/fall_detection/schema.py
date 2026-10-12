@@ -2,7 +2,7 @@
 
 import sqlite3
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 def migrate(connection: sqlite3.Connection, timestamp: str) -> None:
@@ -51,7 +51,9 @@ def migrate(connection: sqlite3.Connection, timestamp: str) -> None:
             fixture_version TEXT,
             request_duration_ms REAL NOT NULL,
             total_duration_ms REAL NOT NULL,
-            completed_at TEXT NOT NULL
+            completed_at TEXT NOT NULL,
+            prompt_tokens INTEGER,
+            completion_tokens INTEGER
         )""",
     ):
         connection.execute(statement)
@@ -99,6 +101,12 @@ def migrate(connection: sqlite3.Connection, timestamp: str) -> None:
         )
     if "fixture_version" not in config_columns:
         connection.execute("ALTER TABLE configurations ADD COLUMN fixture_version TEXT")
+    prediction_columns = {
+        row["name"] for row in connection.execute("PRAGMA table_info(predictions)")
+    }
+    for column in ("prompt_tokens", "completion_tokens"):
+        if column not in prediction_columns:
+            connection.execute(f"ALTER TABLE predictions ADD COLUMN {column} INTEGER")
     connection.execute(
         """UPDATE jobs SET state = 'failed', error =
         'Worker interrupted before claim ownership was recorded. Retry this run.',

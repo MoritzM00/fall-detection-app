@@ -124,6 +124,9 @@ class PredictionResult(BaseModel):
     request_duration_ms: float
     total_duration_ms: float
     completed_at: str
+    # Server-reported usage; None when the backend did not report it.
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
 
 
 class SamplingConfiguration(BaseModel):
