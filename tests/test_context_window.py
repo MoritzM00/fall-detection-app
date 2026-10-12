@@ -43,6 +43,8 @@ def test_estimate_counts_odd_frames_small_crops_prompt_bytes_and_answer_budget()
         (32, 448, 32, True),
         (32, 576, 32, False),
         (32, 672, 32, False),
+        (16, 448, 2985, True),  # largest answer budget at the baseline (docs)
+        (16, 448, 2986, False),
         (16, 448, 4096, False),
         (2, 224, 4096, True),  # the static 4096 cap still fits the smallest window
     ],
