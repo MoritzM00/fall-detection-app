@@ -2,14 +2,17 @@ import csv
 import hashlib
 import io
 import json
+import re
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
 from apps.api.main import create_app
+from fall_detection import scheduling
 from fall_detection.config import Settings
 from fall_detection.exports import (
     LEGACY_REASONS,
@@ -350,8 +353,21 @@ def test_lease_recovery_never_changes_a_job_without_its_event(store, monkeypatch
     assert run["attempt_events"][-1]["occurred_at"] == run["updated_at"]
 
 
+def test_reason_columns_get_no_unclassified_sql_literals():
+    # A new code written as a SQL literal instead of a LifecycleReason member would
+    # be exported as diagnostic_redacted, so every literal must be classified here.
+    package = Path(scheduling.__file__).parent
+    pattern = re.compile(r"\b(?:recovery_)?reason\s*=\s*(?:COALESCE\([^,]*,\s*)?'([^']*)'")
+    literals = {
+        f"{path.name}: {value}"
+        for path in package.glob("*.py")
+        for value in pattern.findall(path.read_text())
+        if value not in SAFE_REASONS
+    }
+    assert literals == {"scheduling.py: Replay starts beyond the source duration"}
+
+
 def test_every_lifecycle_code_is_exportable_and_diagnostics_are_not():
-    # Writers bind LifecycleReason members, so a new code is classified when it is added.
     assert set(LifecycleReason) == SAFE_REASONS - LEGACY_REASONS
     assert LEGACY_REASONS.isdisjoint(LifecycleReason)
     for code in [*LifecycleReason, *LEGACY_REASONS]:
