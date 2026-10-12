@@ -230,9 +230,9 @@ class ReplayScheduler:
                     stream = next(
                         (item for item in container.streams if item.type == "video"), None
                     )
-                    if stream is None or stream.duration is None or stream.time_base is None:
-                        raise ValueError("Replay requires a video stream with a duration")
-                    duration = min(row["duration"], float(stream.duration * stream.time_base))
+                    if stream is None:
+                        raise ValueError("Replay requires a video stream")
+                    duration = min(row["duration"], source_duration(container, stream))
                 with self.repository._connect() as connection:
                     connection.execute("BEGIN IMMEDIATE")
                     current = connection.execute(
@@ -427,3 +427,31 @@ class ReplayScheduler:
                     (str(exc), row["id"]),
                 )
         return True
+
+
+def source_duration(container, stream) -> float:
+    """Return a replay source's playable length in seconds from its own metadata.
+
+    MP4 and MOV store the length on the video stream. Matroska and WebM store it on
+    the container instead. Streamed WebM, such as browser ``MediaRecorder`` output,
+    may have neither, so the last video packet end is read once without decoding.
+    """
+    import av
+
+    if stream.duration is not None and stream.time_base is not None:
+        return float(stream.duration * stream.time_base)
+    if container.duration is not None and container.duration > 0:
+        return container.duration / av.time_base
+    end = None
+    if stream.time_base is not None:
+        for packet in container.demux(stream):
+            if packet.pts is not None:
+                packet_end = packet.pts + max(packet.duration or 0, 0)
+                end = packet_end if end is None else max(end, packet_end)
+    start = stream.start_time or 0
+    if end is None or end <= start:
+        raise ValueError(
+            "Replay source has no readable duration: neither its metadata nor its video "
+            "packets give a length. Re-encode it as MP4 and upload it again."
+        )
+    return float((end - start) * stream.time_base)

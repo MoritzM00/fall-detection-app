@@ -380,3 +380,69 @@ def test_end_of_playback_admits_final_window_before_pausing(replay, monkeypatch)
     assert replay[1].get_job(final_job).prediction.label == "lying"
     assert replay[2].get(session["id"])["latest_job_id"] == final_job
     assert not worker.process_next_job(replay[0], replay[1])
+
+
+def write_matroska(path, codec, frames=16, rate=8, options=None):
+    """Write a small Matroska/WebM clip; ``live`` muxing omits duration and cues."""
+    import av
+    import numpy as np
+
+    with av.open(str(path), mode="w", options=options or {}) as container:
+        stream = container.add_stream(codec, rate=rate)
+        stream.width, stream.height, stream.pix_fmt = 64, 32, "yuv420p"
+        for index in range(frames):
+            rgb = np.full((32, 64, 3), index * 10, dtype=np.uint8)
+            for packet in stream.encode(av.VideoFrame.from_ndarray(rgb, format="rgb24")):
+                container.mux(packet)
+        for packet in stream.encode():
+            container.mux(packet)
+
+
+def start_uploaded_replay(replay, filename, headers_only=False, **write):
+    settings, repository, monitor, _, request, config, _ = replay
+    path = settings.data_dir / "media" / filename
+    path.parent.mkdir(exist_ok=True)
+    write_matroska(path, **write)
+    if headers_only:
+        # Keep only the first Cluster ID, as when a recording stops before any frame.
+        cluster = bytes.fromhex("1f43b675")
+        data = path.read_bytes()
+        path.write_bytes(data[: data.index(cluster) + len(cluster)])
+    video = repository.create_uploaded_video(filename, f"media/{filename}")
+    upload = request.model_copy(update={"video_id": video.id, "duration_seconds": 100})
+    session = monitor.create(upload, config)
+    monitor.command(session["id"], SessionCommand(action="start"))
+    monitor.verify_source(settings)
+    return monitor.get(session["id"])
+
+
+@pytest.mark.parametrize(
+    ("filename", "codec", "options"),
+    [
+        ("vp9.webm", "libvpx-vp9", None),
+        ("h264.mkv", "libx264", None),
+        # Streamed WebM (browser MediaRecorder) carries no duration metadata at all.
+        ("recorder.webm", "libvpx-vp9", {"live": "1"}),
+    ],
+)
+def test_matroska_replay_is_verified_and_schedules_windows(replay, filename, codec, options):
+    current = start_uploaded_replay(replay, filename, codec=codec, options=options)
+    assert (current["state"], current["recovery_reason"]) == ("running", None)
+    assert current["duration_verified"] == 1
+    assert current["duration"] == pytest.approx(2)
+    replay[2].command(current["id"], SessionCommand(action="position", position_seconds=2))
+    replay[2].tick()
+    pending = [row for row in replay[2].history(current["id"]) if row["state"] == "pending"]
+    assert [row["end_seconds"] for row in pending] == [2]
+    assert replay[2].prepare_next(replay[0])
+    window = next(r for r in replay[2].history(current["id"]) if r["id"] == pending[0]["id"])
+    assert replay[1].get_job(window["job_id"]).state == "queued"
+
+
+def test_replay_source_without_duration_pauses_with_readable_reason(replay):
+    current = start_uploaded_replay(
+        replay, "empty.webm", headers_only=True, codec="libvpx-vp9", options={"live": "1"}
+    )
+    assert current["state"] == "paused" and current["duration_verified"] == 0
+    assert current["recovery_reason"].startswith("Replay source has no readable duration")
+    assert replay[2].history(current["id"]) == []
