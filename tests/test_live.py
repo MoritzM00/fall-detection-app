@@ -64,15 +64,18 @@ def create(client, **overrides) -> dict:
     return response.json()
 
 
-def send(client, session_id, frames, blobs=None, run_id="run-a"):
+def send(client, session_id, frames, blobs=None, run_id="run-a", run_order=None):
     """Post one capture run's frames given as (run_seq, run-relative seconds) pairs."""
     blobs = blobs or [jpeg(seq % 200) for seq, _ in frames]
+    data = {
+        "run_id": run_id,
+        "metadata": json.dumps([{"run_seq": s, "capture_seconds": t} for s, t in frames]),
+    }
+    if run_order is not None:
+        data["run_order"] = str(run_order)
     return client.post(
         f"/monitoring-sessions/{session_id}/frames",
-        data={
-            "run_id": run_id,
-            "metadata": json.dumps([{"run_seq": s, "capture_seconds": t} for s, t in frames]),
-        },
+        data=data,
         files=[
             ("frames", (f"{s}.jpg", blob, "image/jpeg"))
             for (s, _), blob in zip(frames, blobs, strict=True)
@@ -191,6 +194,35 @@ def test_an_immediate_new_run_is_still_a_gap(live):
     send(client, session["id"], [(0, 0.0)], run_id="run-b")
     gaps = [row for row in history(client, session["id"]) if row["reason"] == "ingest_gap"]
     assert len(gaps) == 1 and gaps[0]["end_seconds"] == 1.25
+
+
+def test_an_older_run_arriving_after_a_newer_one_is_refused(live):
+    """A request abandoned by the client can still reach the server after the next run."""
+    client, settings, repository, clock = live
+    session = create(client)
+    run(client, session["id"], "start")
+    newer = send(
+        client, session["id"], [(i, i * 0.25) for i in range(5)], run_id="run-b", run_order=2
+    )
+    assert newer.status_code == 200, newer.text
+    clock[0] += timedelta(seconds=1)
+    stale = send(
+        client, session["id"], [(i, i * 0.25) for i in range(5)], run_id="run-a", run_order=1
+    )
+    assert stale.status_code == 409 and "started before a newer run" in stale.json()["detail"]
+    with repository._connect() as db:
+        assert [r[0] for r in db.execute("SELECT DISTINCT run_id FROM live_frames")] == ["run-b"]
+        assert [r[0] for r in db.execute("SELECT run_id FROM live_runs")] == ["run-b"]
+    assert sorted(path.name for path in (settings.data_dir / "live").rglob("*.jpg")) == [
+        f"{seq:010d}.jpg" for seq in range(5)
+    ]
+    more = send(
+        client, session["id"], [(i, i * 0.25) for i in range(5, 9)], run_id="run-b", run_order=2
+    )
+    assert (more.status_code, more.json()["accepted"]) == (200, 4)
+    assert more.json()["watermark_seconds"] == 2.0
+    later = send(client, session["id"], [(0, 0.0)], run_id="run-c", run_order=3)
+    assert later.status_code == 200, later.text
 
 
 def test_capture_gap_is_explicit_coverage_and_rebases_windows(live):
@@ -346,6 +378,19 @@ def test_migration_adds_live_schema_to_existing_databases(tmp_path):
         assert db.execute("PRAGMA user_version").fetchone()[0] == 6
         old = db.execute("SELECT * FROM monitoring_sessions WHERE id='old'").fetchone()
         assert (old["source_kind"], old["capture_fps"]) == ("recording", None)
+
+
+def test_migration_adds_run_order_to_existing_live_runs(tmp_path):
+    repository = Repository(tmp_path / "app.sqlite3")
+    repository.initialize()
+    video = repository.create_sample_video()
+    with repository._connect(foreign_keys=False) as db:
+        db.execute("ALTER TABLE live_runs DROP COLUMN run_order")
+        db.execute("INSERT INTO live_runs VALUES (?,'old-run',0,'t')", (video.id,))
+    repository.initialize()
+    with repository._connect() as db:
+        row = db.execute("SELECT * FROM live_runs WHERE run_id='old-run'").fetchone()
+        assert row["run_order"] is None
 
 
 def test_a_gap_inside_one_batch_is_still_explicit(live):

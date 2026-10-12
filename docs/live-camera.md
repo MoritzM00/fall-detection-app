@@ -89,8 +89,8 @@ rather than a separate record, because jobs and sessions already reference
 
 ### Frame ingest
 
-`POST /monitoring-sessions/{id}/frames` is multipart: a `run_id` form field, a
-`metadata` form field with `[{ "run_seq": 41, "capture_seconds": 2.733 }, …]` and
+`POST /monitoring-sessions/{id}/frames` is multipart: a `run_id` form field, an
+optional integer `run_order` form field, a `metadata` form field with `[{ "run_seq": 41, "capture_seconds": 2.733 }, …]` and
 one `frames` file part per JPEG, in the same order. Batches of 1–64 frames are
 expected every 250–500 ms.
 
@@ -105,6 +105,18 @@ expected every 250–500 ms.
   frame was received (at least one capture interval). This placement is a
   server-side estimate; it is what keeps a reload or a long pause from making
   frames minutes apart look adjacent.
+- Runs are ordered by the client, not by arrival. Aborting a request only stops
+  the client waiting: the API may still process it later, for example after it
+  waited for the storage or database lock, and neither lock is first-come
+  first-served. So an abandoned run's first batch can reach the server after the
+  next run's. The client therefore sends `run_order`, a number that increases
+  with every new run it starts (the browser uses its wall clock in milliseconds,
+  forced to increase within a page). The server stores it with the run and
+  refuses to create a run whose `run_order` is lower than that of any stored run
+  of the session (409, "started before a newer run"), storing nothing, so stale
+  frames are never placed after newer ones. Runs sent without `run_order`, as by
+  older clients, are not compared; the order across separate pages relies on the
+  device clock.
 - Within a batch `run_seq` is consecutive and `capture_seconds` strictly increases.
   Each frame must be a readable JPEG of at most 2 MiB and 4096 px per edge.
   Consecutive frames of a run must be at least `0.5 / capture_fps` apart, which
@@ -115,8 +127,8 @@ expected every 250–500 ms.
   is acknowledged without change, even after the session paused or a newer run
   began, so client retries settle. Conflicts return 409: a stored `run_seq` with
   other content, a new run not starting at `run_seq` 0, a batch that skips
-  `run_seq` values (the message names where to resend from), new frames for a run
-  superseded by a newer one, new frames while the session is not running, and
+  `run_seq` values (the message names where to resend from), a new run older
+  than a stored run, new frames for a run superseded by a newer one, new frames while the session is not running, and
   frames past `max_seconds`.
 - The response is `{accepted, run_seq_high, watermark_seconds, state}`.
 
