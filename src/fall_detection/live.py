@@ -3,7 +3,6 @@
 import hashlib
 import io
 import json
-from datetime import datetime
 from itertools import pairwise
 from pathlib import Path
 from uuid import uuid4
@@ -17,7 +16,7 @@ from fall_detection.models import (
     PreparedInput,
     VideoAsset,
 )
-from fall_detection.monitoring import Monitoring, SessionCreate
+from fall_detection.monitoring import Monitoring, SessionCreate, live_edge
 from fall_detection.preparation import (
     crop_image,
     load_prepared_input,
@@ -248,14 +247,8 @@ def ingest_frames(
                 ).fetchone()[0]
                 if run_order is not None and newest is not None and run_order < newest:
                     raise IngestConflictError(STALE_RUN)
-                if last is None:
-                    offset = session["position"]
-                else:
-                    # Server-clock estimate of the time since the previous run's last frame.
-                    elapsed = (
-                        repository._clock() - datetime.fromisoformat(last["received_at"])
-                    ).total_seconds()
-                    offset = last["capture_seconds"] + max(elapsed, 1 / session["capture_fps"])
+                # Server-clock estimate of the time since the previous run's last frame.
+                offset = live_edge(repository, connection, session)
                 connection.execute(
                     """INSERT INTO live_runs (video_id,run_id,offset_seconds,created_at,run_order)
                     VALUES (?,?,?,?,?)""",
