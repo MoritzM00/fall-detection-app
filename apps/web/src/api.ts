@@ -26,6 +26,8 @@ export type Prediction = {
   request_duration_ms: number;
   total_duration_ms: number;
   completed_at: string;
+  prompt_tokens?: number | null;
+  completion_tokens?: number | null;
 };
 
 export type AnalysisJob = {

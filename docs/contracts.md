@@ -9,7 +9,7 @@ The MVP implements video assets, prepared inputs, capabilities, persisted analys
 | Video asset | ID, storage key, duration, dimensions, source, content identity |
 | Configuration snapshot | ID, schema version, served model identity, optional adapter identity, prompt text and preset version, preprocessing, generation settings |
 | Job | ID, asset, selected range, configuration ID, state, attempt count, lease, error, optional session/generation/sequence |
-| Prediction | ID, job ID, canonical label, raw response, sampled timestamps, input window, model/configuration provenance, completion time, processing durations |
+| Prediction | ID, job ID, canonical label, raw response, sampled timestamps, input window, model/configuration provenance, completion time, processing durations, server-reported prompt/completion token counts (null when not reported) |
 | Monitoring session | ID, source, state, playback generation, window length, interval, configuration segments, skipped coverage |
 
 Use media-relative timestamps for video alignment and UTC wall-clock timestamps for lifecycle events. Measure durations with a monotonic clock. Report preprocessing, queue wait, inference request duration, and total latency separately where available; HTTP duration is not necessarily pure GPU compute time.

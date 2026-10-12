@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { commandSession, createLiveSession, createSession, getJob, getSession, getVideo, getWindows, listSessions } from "./api";
 import type { AnalysisJob, Capabilities, MonitoringCommand, MonitoringSession, MonitoringWindow, VideoAsset } from "./api";
 import { inPaintOrder } from "./coverage";
+import { formatTokenUsage } from "./tokens";
 import type { Tone } from "./coverage";
 import { SourceSelection } from "./SourceSelection";
 import { ExperimentControls } from "./ExperimentControls";
@@ -357,6 +358,7 @@ function Result({ job }: { job: AnalysisJob }) {
       <dl>
         <div><dt>Input interval</dt><dd>{seconds(job.start_seconds)}–{seconds(job.end_seconds)}</dd></div>
         <div><dt>Request · pipeline</dt><dd>{prediction.request_duration_ms.toFixed(0)} ms · {prediction.total_duration_ms.toFixed(0)} ms</dd></div>
+        <div><dt>Tokens</dt><dd>{formatTokenUsage(prediction)}</dd></div>
         <div><dt>Completed</dt><dd title={prediction.completed_at}>{completed && !Number.isNaN(completed.getTime()) ? completed.toLocaleTimeString() : prediction.completed_at}</dd></div>
       </dl>
     </>}

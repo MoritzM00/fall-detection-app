@@ -109,7 +109,9 @@ class Repository:
                     fixture_version TEXT,
                     request_duration_ms REAL NOT NULL,
                     total_duration_ms REAL NOT NULL,
-                    completed_at TEXT NOT NULL
+                    completed_at TEXT NOT NULL,
+                    prompt_tokens INTEGER,
+                    completion_tokens INTEGER
                 )""",
             ):
                 connection.execute(statement)
@@ -157,6 +159,12 @@ class Repository:
                 )
             if "fixture_version" not in config_columns:
                 connection.execute("ALTER TABLE configurations ADD COLUMN fixture_version TEXT")
+            prediction_columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(predictions)")
+            }
+            for column in ("prompt_tokens", "completion_tokens"):
+                if column not in prediction_columns:
+                    connection.execute(f"ALTER TABLE predictions ADD COLUMN {column} INTEGER")
             connection.execute(
                 """UPDATE jobs SET state = 'failed', error =
                 'Worker interrupted before claim ownership was recorded. Retry this run.',
@@ -166,7 +174,7 @@ class Repository:
             from fall_detection.monitoring import migrate
 
             migrate(connection)
-            connection.execute("PRAGMA user_version = 5")
+            connection.execute("PRAGMA user_version = 6")
             if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
                 raise RuntimeError("Migration would violate foreign keys")
             connection.commit()
@@ -432,8 +440,9 @@ class Repository:
             connection.execute(
                 """INSERT INTO predictions
                 (id, job_id, label, raw_response, sampled_timestamps_json, backend_kind,
-                 model, fixture_version, request_duration_ms, total_duration_ms, completed_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                 model, fixture_version, request_duration_ms, total_duration_ms, completed_at,
+                 prompt_tokens, completion_tokens)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     str(uuid4()),
                     job_id,
@@ -446,6 +455,8 @@ class Repository:
                     result.request_duration_ms,
                     result.total_duration_ms,
                     completed_at,
+                    result.prompt_tokens,
+                    result.completion_tokens,
                 ),
             )
             self._attempt_event(connection, job_id, "succeeded", completed_at)
@@ -576,4 +587,6 @@ class Repository:
             request_duration_ms=row["request_duration_ms"],
             total_duration_ms=row["total_duration_ms"],
             completed_at=row["completed_at"],
+            prompt_tokens=row["prompt_tokens"],
+            completion_tokens=row["completion_tokens"],
         )

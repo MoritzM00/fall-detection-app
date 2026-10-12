@@ -18,6 +18,8 @@ class PipelineResult:
     sampled_timestamps: list[float]
     request_duration_ms: float
     total_duration_ms: float
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
 
 
 def build_inference_payload(
@@ -81,4 +83,6 @@ def run_pipeline(
         sampled_timestamps=timestamps,
         request_duration_ms=round(request_duration_ms, 1),
         total_duration_ms=round(total_duration_ms, 1),
+        prompt_tokens=response.prompt_tokens,
+        completion_tokens=response.completion_tokens,
     )

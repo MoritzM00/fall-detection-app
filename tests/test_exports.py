@@ -28,7 +28,7 @@ def store(tmp_path):
 def complete(repository, label):
     claimed = repository.claim_next_job()
     assert claimed is not None
-    result = PipelineResult(label, "data:video/base64,SECRET", [0.03, 0.19], 12.5, 25.7)
+    result = PipelineResult(label, "data:video/base64,SECRET", [0.03, 0.19], 12.5, 25.7, 1700, 6)
     assert repository.complete_job(
         claimed.id,
         result,
@@ -52,6 +52,7 @@ def test_run_export_preserves_every_label_and_temporal_identity(store, label):
     assert run["prediction"]["label"] == label
     assert run["prediction"]["sampled_timestamps"] == [0.03, 0.19]
     assert run["prediction"]["request_duration_ms"] == 12.5
+    assert (run["prediction"]["prompt_tokens"], run["prediction"]["completion_tokens"]) == (1700, 6)
     assert run["provenance"] == "simulated"
     assert run["input_status"] == "synthetic"
     assert run["attempt_history"] == "complete"
@@ -64,6 +65,7 @@ def test_run_export_preserves_every_label_and_temporal_identity(store, label):
     assert rows[0]["label"] == label
     assert json.loads(rows[0]["sampled_timestamps"]) == [0.03, 0.19]
     assert json.loads(rows[0]["configuration"])["prompt_text"] == "  Exact prompt\n"
+    assert (rows[0]["prompt_tokens"], rows[0]["completion_tokens"]) == ("1700", "6")
 
 
 def test_retry_history_failure_running_and_legacy_are_explicit(store):

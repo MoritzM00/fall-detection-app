@@ -1,4 +1,5 @@
 import type { AnalysisJob } from "./api";
+import { formatTokenUsage } from "./tokens.ts";
 
 export function sameWindow(left: AnalysisJob, right: AnalysisJob): boolean {
   return left.video_id === right.video_id && Math.abs(left.start_seconds - right.start_seconds) <= 0.001
@@ -25,6 +26,7 @@ export function comparisonRows(left: AnalysisJob, right: AnalysisJob) {
       ["Mock fixture", config?.fixture_version ?? "None / unknown"],
       ["Request time", result ? `${result.request_duration_ms.toFixed(0)} ms` : "No prediction"],
       ["Total processing time", result ? `${result.total_duration_ms.toFixed(0)} ms` : "No prediction"],
+      ["Tokens", result ? formatTokenUsage(result) : "No prediction"],
       ["Raw response", result?.raw_response ?? "No prediction"],
       ["Configuration ID", job.configuration_id],
     ];

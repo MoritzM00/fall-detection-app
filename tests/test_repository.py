@@ -96,6 +96,8 @@ def test_job_lifecycle_is_persisted(tmp_path: Path) -> None:
             sampled_timestamps=[0, 1, 2],
             request_duration_ms=12.5,
             total_duration_ms=14.0,
+            prompt_tokens=1700,
+            completion_tokens=6,
         ),
         backend_kind="mock",
         model="qwen3-vl-8b-instruct",
@@ -109,6 +111,7 @@ def test_job_lifecycle_is_persisted(tmp_path: Path) -> None:
     assert completed.prediction is not None
     assert completed.prediction.label == "fall"
     assert completed.prediction.backend_kind == "mock"
+    assert (completed.prediction.prompt_tokens, completed.prediction.completion_tokens) == (1700, 6)
 
 
 def test_dataset_video_identity_is_stable(tmp_path: Path) -> None:
@@ -276,6 +279,9 @@ def test_concurrent_initialization_preserves_legacy_running_job(tmp_path: Path, 
     assert job.configuration.backend_kind == "unknown"
     assert job.configuration.model == "old-model"
     assert job.configuration.generation.max_tokens == 32
+    with sqlite3.connect(database) as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(predictions)")}
+    assert {"prompt_tokens", "completion_tokens"} <= columns
     assert repository.create_dataset_video("new.mp4", "omnifall/new.mp4").source == "dataset"
 
 

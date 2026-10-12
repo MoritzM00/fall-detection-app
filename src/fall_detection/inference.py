@@ -17,6 +17,14 @@ class InferenceResponse:
 
     content: str
     completion_id: str
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+
+
+def _token_count(usage: object, key: str) -> int | None:
+    """Read one optional usage counter; a missing or malformed count is not an error."""
+    value = usage.get(key) if isinstance(usage, dict) else None
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
 
 
 class InferenceClient:
@@ -89,8 +97,14 @@ class InferenceClient:
                 raise ValueError("Inference answer was truncated")
             content = body["choices"][0]["message"]["content"]
             completion_id = body["id"]
+            usage = body.get("usage")
         except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
             raise InferenceServiceError(f"inference request failed: {exc}") from exc
         if not isinstance(content, str) or not isinstance(completion_id, str):
             raise InferenceServiceError("inference response contains invalid field types")
-        return InferenceResponse(content=content, completion_id=completion_id)
+        return InferenceResponse(
+            content=content,
+            completion_id=completion_id,
+            prompt_tokens=_token_count(usage, "prompt_tokens"),
+            completion_tokens=_token_count(usage, "completion_tokens"),
+        )
