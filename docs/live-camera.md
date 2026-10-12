@@ -90,8 +90,8 @@ rather than a separate record, because jobs and sessions already reference
 
 ### Frame ingest
 
-`POST /monitoring-sessions/{id}/frames` is multipart: a `run_id` form field, a
-`metadata` form field with `[{ "run_seq": 41, "capture_seconds": 2.733 }, …]` and
+`POST /monitoring-sessions/{id}/frames` is multipart: a `run_id` form field, an
+optional integer `run_order` form field, a `metadata` form field with `[{ "run_seq": 41, "capture_seconds": 2.733 }, …]` and
 one `frames` file part per JPEG, in the same order. Batches of 1–64 frames are
 expected every 250–500 ms.
 
@@ -106,6 +106,18 @@ expected every 250–500 ms.
   frame was received (at least one capture interval). This placement is a
   server-side estimate; it is what keeps a reload or a long pause from making
   frames minutes apart look adjacent.
+- Runs are ordered by the client, not by arrival. Aborting a request only stops
+  the client waiting: the API may still process it later, for example after it
+  waited for the storage or database lock, and neither lock is first-come
+  first-served. So an abandoned run's first batch can reach the server after the
+  next run's. The client therefore sends `run_order`, a number that increases
+  with every new run it starts (the browser uses its wall clock in milliseconds,
+  forced to increase within a page). The server stores it with the run and
+  refuses to create a run whose `run_order` is lower than that of any stored run
+  of the session (409, "started before a newer run"), storing nothing, so stale
+  frames are never placed after newer ones. Runs sent without `run_order`, as by
+  older clients, are not compared; the order across separate pages relies on the
+  device clock.
 - Within a batch `run_seq` is consecutive and `capture_seconds` strictly increases.
   Each frame must be a readable JPEG of at most 2 MiB and 4096 px per edge.
   Consecutive frames of a run must be at least `0.5 / capture_fps` apart, which
@@ -116,8 +128,8 @@ expected every 250–500 ms.
   is acknowledged without change, even after the session paused or a newer run
   began, so client retries settle. Conflicts return 409: a stored `run_seq` with
   other content, a new run not starting at `run_seq` 0, a batch that skips
-  `run_seq` values (the message names where to resend from), new frames for a run
-  superseded by a newer one, new frames while the session is not running, and
+  `run_seq` values (the message names where to resend from), a new run older
+  than a stored run, new frames for a run superseded by a newer one, new frames while the session is not running, and
   frames past `max_seconds`.
 - The response is `{accepted, run_seq_high, watermark_seconds, state}`.
 
@@ -209,14 +221,35 @@ Camera frames are personal data of whoever is in view.
   no scrubber; its legend counts only windows in that span. The header clock, playhead and result lag follow the server
   watermark.
 - Start, Resume and Restart connect the camera first if needed. Each running
-  period is one capture run (`useLiveCapture`): frames are drawn to a canvas
-  (short edge at most 720 px), JPEG-encoded synchronously so `run_seq` stays
-  contiguous, and uploaded in ordered batches of up to 32 every 250 ms. Transient
-  upload errors back off and retry the same frames. Frames still queued when the
-  session pauses or stops are discarded (the server refuses them once it is not
-  running); this is at most about half a second of capture. A backlog over ten seconds, or
-  a lost-continuity conflict, abandons the run and starts a new one, so the server
-  records the gap. "Not running", "superseded" and the length cap stop capture.
+  period is one capture run (`useLiveCapture`, queue in `captureUploader.ts`):
+  frames are drawn to a canvas with the short edge at most 672 px, the largest
+  model input (`size` ≤ 672), so preparation's `crop_image` never upscales a
+  stored frame that the camera delivered at a larger size (smaller cameras are not
+  upscaled in the browser). Pixels differ slightly from full-resolution capture
+  because the frame is resampled twice. `run_seq`
+  and `capture_seconds` are assigned when the frame is drawn; JPEG encoding is
+  asynchronous (`OffscreenCanvas.convertToBlob`, else `canvas.toBlob`, else a
+  synchronous data URL), and only the contiguous encoded prefix is uploaded, so
+  order comes from `run_seq`, not from when encoding finishes. Each pending
+  encode holds a copy of the bitmap, so while 32 encodes are pending (a slow
+  device or a background tab) capture ticks are skipped without drawing; the
+  skipped time reaches the server as a capture-time jump and, if longer than
+  `2 / capture_fps`, is recorded as an `ingest_gap`. Frames go out in
+  ordered batches of up to 32 every 250 ms, each request aborted after 10 s.
+  Timeouts, network errors, 408, 429 and 5xx back off and retry the same frames.
+  Frames still queued when the session pauses or stops are discarded (the server
+  refuses them once it is not running); this is at most about half a second of
+  capture. The queue is capped at ten seconds of frames whether or not a request
+  is in flight: reaching the cap, a lost-continuity conflict or an encoding
+  failure abandons the run (aborting any outstanding request) and starts a new one
+  with a larger `run_order`, so the server records the gap. An abort only stops
+  the page waiting: the server may still process the request, and then refuses it
+  if the new run is already stored. Any answer for an abandoned run, success or
+  refusal, is ignored and never ends or changes the current run. For the current
+  run, "not running", "superseded" and the length cap stop capture. Any other 4xx,
+  such as a 422 or "started before a newer run" (another page runs this session),
+  cannot succeed on resend: capture stops and the reason is shown as a camera
+  error until the next Start or Resume.
 - Status adds a **Camera** pill: off, connected, or achieved capture rate and upload
   lag. A **Live camera** badge sits next to the backend badge; mock provenance stays
   visible.

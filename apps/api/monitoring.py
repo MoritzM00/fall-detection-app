@@ -98,6 +98,7 @@ def monitoring_router(settings: Settings, repository: Repository) -> APIRouter:
         run_id: Annotated[str, Form()],
         metadata: Annotated[str, Form()],
         frames: Annotated[list[UploadFile], File()],
+        run_order: Annotated[int | None, Form(ge=0)] = None,
     ) -> dict:
         """Append an ordered, idempotent batch of one capture run's JPEG frames."""
         try:
@@ -112,7 +113,7 @@ def monitoring_router(settings: Settings, repository: Repository) -> APIRouter:
         try:
             with storage_lock(settings.data_dir, exclusive=False):
                 return ingest_frames(
-                    repository, settings.data_dir, session_id, run_id, metas, blobs
+                    repository, settings.data_dir, session_id, run_id, metas, blobs, run_order
                 )
         except KeyError as exc:
             raise HTTPException(404, "Session not found") from exc

@@ -1,15 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ApiError, postFrames } from "./api";
-import type { CapturedFrame } from "./api";
+import { postFrames } from "./api";
+import { createCaptureUploader } from "./captureUploader";
+import type { CaptureStats } from "./captureUploader";
 
-export type CaptureStats = { frames: number; fps: number | null; lagSeconds: number | null; queued: number };
+export type { CaptureStats };
 
-const BATCH_FRAMES = 32;
 const UPLOAD_INTERVAL_MS = 250;
-const MAX_SHORT_EDGE = 720;
+// The largest model input is 672 px; preparation only ever downscales from here.
+const MAX_SHORT_EDGE = 672;
 const JPEG_QUALITY = 0.85;
-// A backlog beyond this many seconds is abandoned; the next run records the gap explicitly.
-const MAX_BACKLOG_SECONDS = 10;
 const idle: CaptureStats = { frames: 0, fps: null, lagSeconds: null, queued: 0 };
 
 function cameraMessage(cause: unknown) {
@@ -18,11 +17,45 @@ function cameraMessage(cause: unknown) {
   return cause instanceof Error ? cause.message : "Camera unavailable";
 }
 
-function jpegBlob(canvas: HTMLCanvasElement): Blob {
-  // Synchronous encoding keeps frames in capture order; run_seq must stay contiguous.
-  const [, data] = canvas.toDataURL("image/jpeg", JPEG_QUALITY).split(",");
-  const bytes = Uint8Array.from(atob(data), char => char.charCodeAt(0));
-  return new Blob([bytes], { type: "image/jpeg" });
+type FrameEncoder = { draw(video: HTMLVideoElement, width: number, height: number): void; encode(): Promise<Blob> };
+
+/**
+ * Draws frames to one reusable canvas and encodes them asynchronously. Both
+ * `convertToBlob` and `toBlob` copy the bitmap when called, so the canvas can be
+ * redrawn before encoding finishes. The synchronous data URL path is the fallback.
+ */
+function frameEncoder(): FrameEncoder | null {
+  if (typeof OffscreenCanvas !== "undefined") {
+    const canvas = new OffscreenCanvas(1, 1);
+    const context = canvas.getContext("2d");
+    if (context) return {
+      draw(video, width, height) {
+        if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
+        context.drawImage(video, 0, 0, width, height);
+      },
+      encode: () => canvas.convertToBlob({ type: "image/jpeg", quality: JPEG_QUALITY }),
+    };
+  }
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+  return {
+    draw(video, width, height) {
+      if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
+      context.drawImage(video, 0, 0, width, height);
+    },
+    encode() {
+      if (typeof canvas.toBlob === "function") {
+        return new Promise((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error("JPEG encoding failed")), "image/jpeg", JPEG_QUALITY));
+      }
+      try {
+        const [, data] = canvas.toDataURL("image/jpeg", JPEG_QUALITY).split(",");
+        return Promise.resolve(new Blob([Uint8Array.from(atob(data), char => char.charCodeAt(0))], { type: "image/jpeg" }));
+      } catch (cause) {
+        return Promise.reject(cause);
+      }
+    },
+  };
 }
 
 /**
@@ -33,6 +66,7 @@ function jpegBlob(canvas: HTMLCanvasElement): Blob {
 export function useLiveCapture(sessionId: string | null, running: boolean, captureFps: number, onStopped: (reason: string) => void) {
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [stats, setStats] = useState<CaptureStats>(idle);
   const preview = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -71,68 +105,38 @@ export function useLiveCapture(sessionId: string | null, running: boolean, captu
 
   useEffect(() => {
     if (!running || !stream || !sessionId) { setStats(idle); return; }
-    const canvas = document.createElement("canvas");
-    const context = canvas.getContext("2d");
-    let runId = crypto.randomUUID();
-    let start = performance.now();
-    let nextSeq = 0;
+    setUploadError(null);
+    const encoder = frameEncoder();
     let lastCapture = -Infinity;
-    let queue: CapturedFrame[] = [];
-    let inFlight = false;
-    let ended = false;
-    let retryAt = 0;
-    let backoff = 0;
-    let uploaded = 0;
-
-    function newRun() {
-      runId = crypto.randomUUID();
-      start = performance.now();
-      nextSeq = 0;
-      queue = [];
-    }
+    const uploader = createCaptureUploader({
+      captureFps,
+      post: (run, frames, signal) => postFrames(sessionId, run, frames, signal),
+      onStats: setStats,
+      onEnded: (reason, failure) => {
+        clearInterval(capture);
+        clearInterval(upload);
+        if (failure) setUploadError(failure);
+        stopped.current(reason);
+      },
+    });
 
     const capture = window.setInterval(() => {
       const video = preview.current;
-      if (!context || !video || video.readyState < 2 || !video.videoWidth) return;
+      if (!encoder || !video || video.readyState < 2 || !video.videoWidth) return;
       // Coalesced timer callbacks must not exceed the server's twice-the-capture-rate bound.
       if (performance.now() - lastCapture < 750 / captureFps) return;
-      lastCapture = performance.now();
       const scale = Math.min(1, MAX_SHORT_EDGE / Math.min(video.videoWidth, video.videoHeight));
-      canvas.width = Math.round(video.videoWidth * scale);
-      canvas.height = Math.round(video.videoHeight * scale);
-      const captured = (performance.now() - start) / 1000;
-      context.drawImage(video, 0, 0, canvas.width, canvas.height);
-      queue.push({ run_seq: nextSeq++, capture_seconds: captured, blob: jpegBlob(canvas) });
-      if (queue.length > captureFps * MAX_BACKLOG_SECONDS && !inFlight) newRun();
+      const taken = uploader.capture(() => {
+        encoder.draw(video, Math.round(video.videoWidth * scale), Math.round(video.videoHeight * scale));
+        return encoder.encode();
+      });
+      if (taken) lastCapture = performance.now();
     }, 1000 / captureFps);
 
-    const upload = window.setInterval(() => {
-      if (ended || inFlight || !queue.length || performance.now() < retryAt) return;
-      const batch = queue.slice(0, BATCH_FRAMES);
-      const batchRun = runId;
-      inFlight = true;
-      postFrames(sessionId, batchRun, batch).then(ack => {
-        if (batchRun === runId) queue = queue.slice(batch.length);
-        backoff = 0;
-        uploaded += ack.accepted;
-        const elapsed = (performance.now() - start) / 1000;
-        setStats({ frames: uploaded, fps: elapsed > 1 ? nextSeq / elapsed : null, lagSeconds: Math.max(0, elapsed - batch[batch.length - 1].capture_seconds), queued: queue.length });
-        if (ack.state !== "running") { ended = true; stopped.current(`Session ${ack.state}`); }
-      }).catch((cause: unknown) => {
-        if (cause instanceof ApiError && cause.status === 409 && /not running|superseded|maximum session length/.test(cause.message)) {
-          ended = true;
-          stopped.current(cause.message);
-          return;
-        }
-        if (cause instanceof ApiError && cause.status === 409) { newRun(); return; } // Lost continuity; restart cleanly.
-        backoff = Math.min(5000, backoff ? backoff * 2 : 500);
-        retryAt = performance.now() + backoff;
-        setStats(current => ({ ...current, queued: queue.length }));
-      }).finally(() => { inFlight = false; });
-    }, UPLOAD_INTERVAL_MS);
+    const upload = window.setInterval(() => uploader.pump(), UPLOAD_INTERVAL_MS);
 
-    return () => { ended = true; clearInterval(capture); clearInterval(upload); };
+    return () => { uploader.close(); clearInterval(capture); clearInterval(upload); };
   }, [running, stream, sessionId, captureFps]);
 
-  return { stream, error, stats, attach, connect, disconnect };
+  return { stream, error: error ?? uploadError, stats, attach, connect, disconnect };
 }
