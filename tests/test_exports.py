@@ -1,20 +1,33 @@
 import csv
+import hashlib
 import io
 import json
+import re
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 
 from apps.api.main import create_app
 from apps.api.request_guards import CLIENT_HEADERS
+from fall_detection import scheduling
 from fall_detection.config import Settings
-from fall_detection.exports import ExperimentExports, csv_export, json_export
+from fall_detection.exports import (
+    LEGACY_REASONS,
+    SAFE_REASONS,
+    ExperimentExports,
+    csv_export,
+    json_export,
+    safe_reason,
+)
 from fall_detection.models import PreparedFrame, PreparedInput
 from fall_detection.monitoring import Monitoring, SessionCreate
-from fall_detection.prediction import ACTIVITY_LABELS, PipelineResult
+from fall_detection.prediction import ACTIVITY_LABELS, InferenceClient, PipelineResult
 from fall_detection.repository import Repository
+from fall_detection.scheduling import LifecycleReason
 
 LOCAL_API = "http://127.0.0.1"
 
@@ -343,3 +356,120 @@ def test_lease_recovery_never_changes_a_job_without_its_event(store, monkeypatch
     run = exports.snapshot("run", job.id)["runs"][0]
     assert [event["event"] for event in run["attempt_events"]] == ["started", "lease_expired"]
     assert run["attempt_events"][-1]["occurred_at"] == run["updated_at"]
+
+
+def test_reason_columns_get_no_unclassified_sql_literals():
+    # A new code written as a SQL literal instead of a LifecycleReason member would
+    # be exported as diagnostic_redacted, so every literal must be classified here.
+    package = Path(scheduling.__file__).parent
+    pattern = re.compile(r"\b(?:recovery_)?reason\s*=\s*(?:COALESCE\([^,]*,\s*)?'([^']*)'")
+    literals = {
+        f"{path.name}: {value}"
+        for path in package.glob("*.py")
+        for value in pattern.findall(path.read_text())
+        if value not in SAFE_REASONS
+    }
+    assert literals == {"scheduling.py: Replay starts beyond the source duration"}
+
+
+def test_every_lifecycle_code_is_exportable_and_diagnostics_are_not():
+    assert set(LifecycleReason) == SAFE_REASONS - LEGACY_REASONS
+    assert LEGACY_REASONS.isdisjoint(LifecycleReason)
+    for code in [*LifecycleReason, *LEGACY_REASONS]:
+        assert safe_reason(str(code)) == code
+    for diagnostic in ["Replay starts beyond the source duration", "decoder /Users/x", ""]:
+        assert safe_reason(diagnostic) == "diagnostic_redacted"
+    assert safe_reason(None) is None
+
+
+def jpeg(shade: int) -> bytes:
+    buffer = io.BytesIO()
+    Image.new("RGB", (64, 48), (shade, shade, shade)).save(buffer, format="JPEG")
+    return buffer.getvalue()
+
+
+def test_live_session_export_keeps_capture_gap_and_end_codes(tmp_path, monkeypatch):
+    monkeypatch.setattr(InferenceClient, "discover_mock_identity", lambda self: "sample-v1")
+    clock = [datetime(2026, 10, 2, tzinfo=UTC)]
+    settings = replace(
+        Settings.from_env(),
+        data_dir=tmp_path,
+        database_path=tmp_path / "app.sqlite3",
+        backend_kind="mock",
+    )
+    repository = Repository(settings.database_path, clock=lambda: clock[0])
+    repository.initialize()
+
+    def send(session_id, frames, run_id):
+        return client.post(
+            f"/monitoring-sessions/{session_id}/frames",
+            data={
+                "run_id": run_id,
+                "metadata": json.dumps([{"run_seq": s, "capture_seconds": t} for s, t in frames]),
+            },
+            files=[("frames", (f"{s}.jpg", jpeg(s * 20), "image/jpeg")) for s, _ in frames],
+        )
+
+    with TestClient(
+        create_app(settings, repository), base_url=LOCAL_API, headers=CLIENT_HEADERS
+    ) as client:
+        created = client.post(
+            "/monitoring-sessions/live",
+            json={
+                "frame_count": 3,
+                "fps": 2,
+                "size": 224,
+                "stride_seconds": 1,
+                "expiration_seconds": 2,
+                "capture_fps": 4,
+                "max_seconds": 60,
+            },
+        )
+        assert created.status_code == 201, created.text
+        session_id = created.json()["id"]
+        url = f"/monitoring-sessions/{session_id}"
+        assert client.post(f"{url}/commands", json={"action": "start"}).status_code == 200
+        assert send(session_id, [(i, i * 0.25) for i in range(5)], "run-a").status_code == 200
+        # A new capture run is always an explicit gap, never inferred activity.
+        assert send(session_id, [(0, 0.0)], "run-b").status_code == 200
+        clock[0] += timedelta(seconds=30)
+        for _ in range(3):
+            Monitoring(repository).tick()
+        assert client.get(url).json()["recovery_reason"] == "capture_ended"
+        with repository._connect() as connection:
+            connection.execute(
+                """INSERT INTO monitoring_windows(id,session_id,generation,sequence,
+                sequence_end,segment_id,start_seconds,end_seconds,available_seconds,state,
+                reason,created_at) VALUES ('diag',?,0,99,99,?,0,2,2,'failed',?,'time')""",
+                (session_id, created.json()["segment_id"], "decoder /Users/private/secret"),
+            )
+            stored = connection.execute(
+                "SELECT reason FROM monitoring_windows WHERE session_id=? AND id!='diag'",
+                (session_id,),
+            ).fetchall()
+        # Every code the live lifecycle wrote is a shared constant, not a diagnostic.
+        assert {row["reason"] for row in stored} - {None} <= set(LifecycleReason)
+        exported = client.get(f"{url}/export?format=json")
+        rows = list(csv.DictReader(io.StringIO(client.get(f"{url}/export?format=csv").text)))
+
+    snapshot = json.loads(exported.text)
+    assert snapshot["session"]["recovery_reason"] == "capture_ended"
+    gaps = [item for item in snapshot["coverage"] if item["reason"] == "ingest_gap"]
+    assert len(gaps) == 1 and gaps[0]["state"] == "skipped"
+    assert gaps[0]["diagnostic_sha256"] is None
+    diagnostic = next(item for item in snapshot["coverage"] if item["id"] == "diag")
+    secret = hashlib.sha256(b"decoder /Users/private/secret").hexdigest()
+    assert (diagnostic["reason"], diagnostic["diagnostic_sha256"]) == (
+        "diagnostic_redacted",
+        secret,
+    )
+    assert "private" not in exported.text
+    coverage = {row["window_id"]: row for row in rows if row["record_type"] == "coverage"}
+    assert [row["reason"] for row in coverage.values()].count("ingest_gap") == 1
+    assert coverage[gaps[0]["id"]]["diagnostic_sha256"] == ""
+    assert (coverage["diag"]["reason"], coverage["diag"]["diagnostic_sha256"]) == (
+        "diagnostic_redacted",
+        secret,
+    )
+    # Coverage rows never carry an activity label, so a gap is never `other`.
+    assert all(row["label"] == "" for row in coverage.values())

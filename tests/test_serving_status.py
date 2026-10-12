@@ -11,6 +11,7 @@ from apps.api.main import create_app
 from apps.api.request_guards import CLIENT_HEADERS
 from fall_detection import serving_status
 from fall_detection.config import Settings
+from fall_detection.prediction import InferenceServiceError
 from fall_detection.serving_status import (
     ContainerStats,
     ServingStatus,
@@ -33,29 +34,58 @@ def settings(monkeypatch, tmp_path):
     return Settings.from_env()
 
 
-def test_wait_polls_health_with_credentials_until_ready(monkeypatch, settings):
+def test_wait_polls_health_with_credentials_until_ready(settings):
     calls = []
 
-    def fake_get(url, **kwargs):
-        calls.append((url, kwargs["headers"], kwargs["follow_redirects"]))
+    def handler(request):
+        calls.append((str(request.url), request.headers.get("modal-key")))
         if len(calls) == 1:
             raise httpx.ConnectError("starting")
         return httpx.Response(200 if len(calls) == 3 else 503)
 
-    monkeypatch.setattr(httpx, "get", fake_get)
-    wait_until_healthy(settings, sleep=lambda _seconds: None)
-    assert len(calls) == 3
-    assert calls[0] == (
-        "https://gpu.test/health",
-        {"Modal-Key": "wk-id", "Modal-Secret": "ws-secret"},
-        True,
+    wait_until_healthy(
+        settings, sleep=lambda _seconds: None, transport=httpx.MockTransport(handler)
     )
+    assert calls == [("https://gpu.test/health", "wk-id")] * 3
 
 
-def test_wait_stops_on_rejected_credentials(monkeypatch, settings):
-    monkeypatch.setattr(httpx, "get", lambda *_args, **_kwargs: httpx.Response(401))
+def test_wait_stops_on_rejected_credentials(settings):
+    transport = httpx.MockTransport(lambda _request: httpx.Response(401))
     with pytest.raises(PermissionError, match="401"):
-        wait_until_healthy(settings, sleep=lambda _seconds: None)
+        wait_until_healthy(settings, sleep=lambda _seconds: None, transport=transport)
+
+
+def test_wait_follows_a_same_origin_303(settings):
+    seen = []
+
+    def handler(request):
+        seen.append(str(request.url))
+        if not request.url.query:
+            return httpx.Response(303, headers={"Location": "/health?poll=dummy"})
+        return httpx.Response(200)
+
+    wait_until_healthy(
+        settings, sleep=lambda _seconds: None, transport=httpx.MockTransport(handler)
+    )
+    assert seen == ["https://gpu.test/health", "https://gpu.test/health?poll=dummy"]
+
+
+@pytest.mark.parametrize("location", ["https://elsewhere.test/health", "http://gpu.test/health"])
+def test_wait_refuses_redirects_off_the_configured_origin(settings, location):
+    foreign = []
+
+    def handler(request):
+        if request.url.host != "gpu.test" or request.url.scheme != "https":
+            foreign.append(request)
+            return httpx.Response(200)
+        return httpx.Response(307, headers={"Location": location})
+
+    with pytest.raises(InferenceServiceError, match="Refusing redirect") as refused:
+        wait_until_healthy(
+            settings, sleep=lambda _seconds: None, transport=httpx.MockTransport(handler)
+        )
+    assert foreign == []
+    assert "wk-id" not in str(refused.value) and "ws-secret" not in str(refused.value)
 
 
 def test_wait_refuses_the_mock_backend(settings):
@@ -63,11 +93,12 @@ def test_wait_refuses_the_mock_backend(settings):
         wait_until_healthy(replace(settings, backend_kind="mock"))
 
 
-def test_status_reads_containers_without_contacting_vllm(monkeypatch, settings):
+def test_status_reads_containers_without_contacting_vllm(monkeypatch, route_inference, settings):
     def no_vllm_requests(*_args, **_kwargs):
         raise AssertionError("status must not contact the serving endpoint")
 
     monkeypatch.setattr(httpx, "get", no_vllm_requests)
+    route_inference(no_vllm_requests)
     reads = []
     counts = iter([0, 1])
 

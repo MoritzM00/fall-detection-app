@@ -42,6 +42,8 @@ Confirm GPU hardware, vLLM version, SSH/network access, and serving configuratio
 
 Done when real-model results, input parity, failure handling, and measured latency/capacity are established. This gate can happen earlier when GPU access is convenient; it does not block local application development, but is required before model-quality evaluation.
 
+Status: hardware, vLLM version, serving configuration and the request contract were validated on a Modal L4 on 12 October 2026 (#9, [record](vllm-live-validation.md#live-run-modal-l4-2026-10-12)). Input parity and measured latency/capacity remain open in #41.
+
 ## 5. Evaluate continuous behavior
 
 Measure per-class performance, fall/fallen errors, event-level missed falls, false alarms per hour, detection delay, and unprocessed coverage. Include long negatives, falls crossing boundaries, crop-edge subjects, and multiple people. Keep tuning and final evaluation data separate.

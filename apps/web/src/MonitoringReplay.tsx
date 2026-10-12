@@ -9,6 +9,7 @@ import { SourceSelection } from "./SourceSelection";
 import { ExperimentControls } from "./ExperimentControls";
 import { useSourceSelection } from "./useSourceSelection";
 import { useLiveCapture } from "./useLiveCapture";
+import { contextWindowError } from "./context";
 import type { ExperimentSettings } from "./api";
 
 const labels = ["walk", "fall", "fallen", "sit_down", "sitting", "lie_down", "lying", "stand_up", "standing", "other", "kneel_down", "kneeling", "squat_down", "squatting", "crawl", "jump"];
@@ -194,16 +195,18 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
   const maxTokens = capabilities?.generation_limits.max_max_tokens ?? 4096;
   const maxFps = live || (!id && sourceMode === "camera") ? captureFps : 30;
   const settingsValid = settings && settings.prompt_text.trim() && Number.isInteger(settings.generation.max_tokens) && settings.prompt_text.length <= 16000 && settings.generation.max_tokens >= minTokens && settings.generation.max_tokens <= maxTokens && settings.generation.temperature >= 0 && settings.generation.temperature <= 2 && frames >= 2 && frames <= 32 && Number.isInteger(frames) && fps > 0 && fps <= maxFps && (frames - 1) / fps <= 30;
+  const contextError = settingsValid ? contextWindowError(capabilities, frames, size, settings.prompt_text, settings.generation.max_tokens) : null;
+  const configValid = settingsValid && !contextError;
   function configuration(videoId: string) { return { ...settings!, video_id: videoId, frame_count: frames, fps, size }; }
   async function create() {
-    if (!source.video || !source.duration || !settingsValid) return;
+    if (!source.video || !source.duration || !configValid) return;
     setBusy(true);
     try { const next = await createSession(configuration(source.video.id), source.duration); select(next.id); }
     catch (cause) { setError(message(cause)); }
     finally { setBusy(false); }
   }
   async function createLive() {
-    if (!settingsValid) return;
+    if (!configValid) return;
     setBusy(true);
     try { const next = await createLiveSession({ ...settings!, frame_count: frames, fps, size, capture_fps: LIVE_CAPTURE_FPS }); select(next.id); }
     catch (cause) { setError(message(cause)); }
@@ -247,10 +250,10 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
       <div className="viewer-panel">
         {!id ? <>
           <div className="source-mode" aria-label="Session source"><button aria-pressed={sourceMode === "recording"} onClick={() => setSourceMode("recording")}>Recording</button><button aria-pressed={sourceMode === "camera"} onClick={() => setSourceMode("camera")}>Camera</button></div>
-          {sourceMode === "recording" ? <><SourceSelection {...source} onSample={() => void source.useSample()} onBrowseDataset={() => void source.browseDataset()} onDatasetPathChange={source.setSelectedDatasetPath} onOpenDataset={() => void source.useDatasetVideo()} onUpload={file => void source.upload(file)} onDurationLoaded={source.onDurationLoaded} />{source.error && <p className="error-message" role="alert">{source.error}</p>}<button className="analyze-button" disabled={busy || !source.video || !source.duration || !settingsValid} onClick={() => void create()}>Create monitoring session</button></> : <>
+          {sourceMode === "recording" ? <><SourceSelection {...source} onSample={() => void source.useSample()} onBrowseDataset={() => void source.browseDataset()} onDatasetPathChange={source.setSelectedDatasetPath} onOpenDataset={() => void source.useDatasetVideo()} onUpload={file => void source.upload(file)} onDurationLoaded={source.onDurationLoaded} />{source.error && <p className="error-message" role="alert">{source.error}</p>}<button className="analyze-button" disabled={busy || !source.video || !source.duration || !configValid} onClick={() => void create()}>Create monitoring session</button></> : <>
             <div className="replay-screen">{cameraPreview}</div>
             {capture.error && <p className="error-message" role="alert">{capture.error}</p>}
-            <button className="analyze-button" disabled={busy || !capture.stream || !settingsValid} onClick={() => void createLive()}>Create live session</button>
+            <button className="analyze-button" disabled={busy || !capture.stream || !configValid} onClick={() => void createLive()}>Create live session</button>
             <p className="preview-note">Frames are captured at {LIVE_CAPTURE_FPS} fps and kept in the local data directory until you delete them. Use test footage of yourself; do not record other people without their consent.</p>
           </>}
         </> : <>
@@ -284,7 +287,8 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
           <label className="setting-row"><span>Crop size</span><select aria-label="Monitoring crop" value={size} onChange={event => setSize(Number(event.target.value))}><option value={224}>224 × 224</option><option value={448}>448 × 448</option><option value={672}>672 × 672</option></select></label>
           {capabilities && settings && <ExperimentControls capabilities={capabilities} settings={settings} busy={busy} onChange={setSettings} />}
           {settings && !settingsValid && <p className="error-message" role="alert">Use 2–32 frames, a sampling FPS above 0 and up to {maxFps}, a window of at most 30 s, a nonblank prompt, temperature from 0 to 2, and an integer token limit from {minTokens} to {maxTokens}.</p>}
-          {session && <><button className="button secondary wide" disabled={busy || !connected || !settingsValid} onClick={() => void send({ action: "configure", configuration: configuration(session.video_id) })}>Apply new configuration segment</button><p className="preview-note">Current generation {session.generation} · segment {session.segment_id.slice(0, 8)}</p><details className="plain-details"><summary>Saved segment settings</summary><pre className="saved-prompt">{JSON.stringify(session.configuration, null, 2)}</pre></details></>}
+          {contextError && <p className="error-message" role="alert">{contextError}</p>}
+          {session && <><button className="button secondary wide" disabled={busy || !connected || !configValid} onClick={() => void send({ action: "configure", configuration: configuration(session.video_id) })}>Apply new configuration segment</button><p className="preview-note">Current generation {session.generation} · segment {session.segment_id.slice(0, 8)}</p><details className="plain-details"><summary>Saved segment settings</summary><pre className="saved-prompt">{JSON.stringify(session.configuration, null, 2)}</pre></details></>}
         </section>
         <details className="plain-details"><summary>All 16 activity labels</summary><p>{labels.join(", ")}</p></details>
       </aside>

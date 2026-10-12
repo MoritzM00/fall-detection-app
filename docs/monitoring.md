@@ -119,11 +119,13 @@ processes/reload restarts are unsupported for uninterrupted replay, as each API
 startup intentionally pauses sessions.
 
 Retention protects sources for **all retained sessions**, including paused/stopped
-sessions without any jobs, and bundles referenced by window/job history. Publication
-and durable job references share the storage lock. No session deletion API is
-provided in this issue; retaining history conservatively retains its inputs. Disk
-history follows existing manual retention practices; admission bounds are not a
-quota on total historical bundles.
+sessions without any jobs. Bundles referenced by window/job history are kept until
+the session has been stopped for longer than the manual prune command's session age
+(30 days by default); the command then removes them on request, while window and
+job records keep their prepared input IDs and exports report `input_status:
+unavailable` ([retention](retention.md)). Publication and durable job references
+share the storage lock. No session deletion API is provided; admission bounds are
+not a quota on total historical bundles.
 
 ## Recorded monitoring UI
 
@@ -166,4 +168,4 @@ Issue #37 verification: 261 backend tests, 13 frontend unit tests, frontend buil
 and browser TypeScript checks pass. The disposable browser suite has 12 passing
 flows (9 existing clip/comparison and 3 monitoring). Browser failure/restart
 scenarios use controlled API responses; they do not terminate production services.
-Real GPU/model checks remain unperformed because GPU access is unavailable.
+GPU access was unavailable at the time, so no real GPU/model checks were performed.

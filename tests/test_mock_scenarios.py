@@ -373,16 +373,12 @@ def test_service_outage_fails_queued_job(tmp_path, http_service, set_manifest):
         },
     ],
 )
-def test_invalid_choice_and_truncated_valid_label_are_service_errors(monkeypatch, body):
+def test_invalid_choice_and_truncated_valid_label_are_service_errors(body):
     import httpx
 
-    monkeypatch.setattr(
-        httpx,
-        "post",
-        lambda url, **kwargs: httpx.Response(200, json=body, request=httpx.Request("POST", url)),
-    )
+    transport = httpx.MockTransport(lambda _request: httpx.Response(200, json=body))
     with pytest.raises(InferenceServiceError):
-        InferenceClient("http://fixture/v1").complete(payload())
+        InferenceClient("http://fixture/v1", transport=transport).complete(payload())
 
 
 def test_missing_durable_retry_storage_is_explicit(set_manifest, monkeypatch):

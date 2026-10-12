@@ -25,11 +25,13 @@ from fall_detection.preparation import (
     write_bundle,
 )
 from fall_detection.repository import Repository
+from fall_detection.scheduling import LifecycleReason
 
 LIVE_PREPROCESSING_VERSION = "pillow-live-frames-jpeg-v1"
 MAX_BATCH_FRAMES = 64
 MAX_FRAME_BYTES = 2 * 1024 * 1024
 MAX_FRAME_EDGE = 4096
+STALE_RUN = "This capture run started before a newer run; its frames were refused"
 
 
 class IngestGapError(ValueError):
@@ -121,6 +123,7 @@ def ingest_frames(
     run_id: str,
     metadata: list[FrameMeta],
     blobs: list[bytes],
+    run_order: int | None = None,
 ) -> dict:
     """Append one ordered batch of a capture run and advance the live watermark.
 
@@ -131,6 +134,12 @@ def ingest_frames(
     becomes one explicit ``ingest_gap`` coverage row and restarts the window grid,
     so no admitted window spans missing frames. Batches are idempotent on
     ``(run_id, run_seq)``.
+
+    ``run_order`` is a client-chosen number that increases with each new run. A
+    request can still be processed after its client gave up on it, so a run's
+    first batch may arrive after a newer run's; such an older run is refused
+    instead of being placed after the newer one. Runs without an order are not
+    compared.
     """
     if not 1 <= len(run_id) <= 64:
         raise ValueError("run_id must be 1–64 characters")
@@ -167,10 +176,10 @@ def ingest_frames(
     if split is not None:
         # A jump inside one batch is a gap like any other: ingest each side in turn.
         head = ingest_frames(
-            repository, data_dir, session_id, run_id, metadata[:split], blobs[:split]
+            repository, data_dir, session_id, run_id, metadata[:split], blobs[:split], run_order
         )
         tail = ingest_frames(
-            repository, data_dir, session_id, run_id, metadata[split:], blobs[split:]
+            repository, data_dir, session_id, run_id, metadata[split:], blobs[split:], run_order
         )
         return {**tail, "accepted": head["accepted"] + tail["accepted"]}
 
@@ -234,6 +243,11 @@ def ingest_frames(
             if run is None:
                 if first.run_seq != 0:
                     raise IngestConflictError("A new capture run must start at run_seq 0")
+                newest = connection.execute(
+                    "SELECT MAX(run_order) FROM live_runs WHERE video_id=?", (video.id,)
+                ).fetchone()[0]
+                if run_order is not None and newest is not None and run_order < newest:
+                    raise IngestConflictError(STALE_RUN)
                 if last is None:
                     offset = session["position"]
                 else:
@@ -243,7 +257,9 @@ def ingest_frames(
                     ).total_seconds()
                     offset = last["capture_seconds"] + max(elapsed, 1 / session["capture_fps"])
                 connection.execute(
-                    "INSERT INTO live_runs VALUES (?,?,?,?)", (video.id, run_id, offset, timestamp)
+                    """INSERT INTO live_runs (video_id,run_id,offset_seconds,created_at,run_order)
+                    VALUES (?,?,?,?,?)""",
+                    (video.id, run_id, offset, timestamp, run_order),
                 )
             else:
                 if last is not None and last["run_id"] != run_id:
@@ -282,7 +298,7 @@ def ingest_frames(
                     """INSERT INTO monitoring_windows
                     (id,session_id,generation,sequence,sequence_end,segment_id,start_seconds,
                      end_seconds,available_seconds,state,reason,created_at)
-                    VALUES (?,?,?,?,?,?,?,?,?,'skipped','ingest_gap',?)""",
+                    VALUES (?,?,?,?,?,?,?,?,?,'skipped',?,?)""",
                     (
                         str(uuid4()),
                         session_id,
@@ -293,6 +309,7 @@ def ingest_frames(
                         min(gap_start, times[0]),
                         times[0],
                         session["position"],
+                        LifecycleReason.INGEST_GAP,
                         timestamp,
                     ),
                 )
@@ -331,6 +348,8 @@ def prepare_frames(
     capture_fps: float,
     data_dir: Path,
     inspection_pngs: bool = True,
+    *,
+    rgb_array: bool = False,
 ) -> PreparedInput:
     """Select causal frames from the log and publish an ordinary prepared bundle."""
     if video.source != "live" or video.id != request.video_id:
@@ -380,7 +399,11 @@ def prepare_frames(
         return load_prepared_input(data_dir, prepared_id)
     frames = []
     for row in selected:
-        data = _frame_path(data_dir, video, row["seq"]).read_bytes()
+        try:
+            data = _frame_path(data_dir, video, row["seq"]).read_bytes()
+        except FileNotFoundError as exc:
+            # Frame-log rows outlive frames removed by manual retention.
+            raise ValueError("Stored live frame is no longer available") from exc
         if hashlib.sha256(data).hexdigest() != row["sha256"]:
             raise ValueError("Stored live frame failed integrity check")
         with Image.open(io.BytesIO(data)) as image:
@@ -403,4 +426,5 @@ def prepare_frames(
             "preprocessing_version": LIVE_PREPROCESSING_VERSION,
         },
         inspection_pngs,
+        rgb_array=rgb_array,
     )

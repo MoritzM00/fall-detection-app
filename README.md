@@ -82,6 +82,7 @@ Open **<http://localhost:5173>**, pick the synthetic sample or a local video, an
 | `FALL_DETECTION_INFERENCE_API_KEY` | Bearer token for a vLLM server started with `--api-key` |
 | `FALL_DETECTION_INFERENCE_PROXY_KEY` / `_SECRET` | Modal proxy auth token for the [Modal GPU endpoint](deploy/README.md#modal-gpu-endpoint) |
 | `FALL_DETECTION_MODAL_APP` | Modal app name; enables the [GPU status badge](deploy/README.md#gpu-status-in-the-web-ui) without waking the GPU |
+| `FALL_DETECTION_MAX_MODEL_LEN` | Served context window (vLLM `--max-model-len`); configurations whose conservative token estimate exceeds it are rejected with 422 at submission |
 
 Real inference needs a vLLM version that supports request-level video `media_io_kwargs`. Local OmniFall videos placed under `data/omnifall/videos` are discovered automatically; their `Fall`/`ADL` folder names are source groupings, not ground truth.
 
@@ -96,7 +97,7 @@ Real inference needs a vLLM version that supports request-level video `media_io_
 | --- | --- |
 | Clip analysis, prompt editing, run comparison | ✅ Implemented |
 | Recorded monitoring with replay controls and recovery | ✅ Implemented |
-| Live browser camera ingest and capture | ✅ Implemented (raw-frame retention pending) |
+| Live browser camera ingest and capture | ✅ Implemented (manual raw-frame pruning by session age; no automatic deletion) |
 | JSON/CSV exports and offline evaluation harness | ✅ Implemented |
 | Deterministic mock scenarios and CPU demo | ✅ Implemented |
 | Real GPU service validation | ✅ Contract validated on Modal ([#9](https://github.com/MoritzM00/fall-detection-app/issues/9)); ⏳ parity and capacity open ([#41](https://github.com/MoritzM00/fall-detection-app/issues/41)) |

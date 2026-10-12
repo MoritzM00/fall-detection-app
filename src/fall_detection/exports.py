@@ -10,6 +10,7 @@ from pathlib import Path
 from fall_detection.prediction import ACTIVITY_LABELS
 from fall_detection.preparation import load_prepared_input
 from fall_detection.repository import Repository
+from fall_detection.scheduling import LifecycleReason
 from fall_detection.storage import storage_lock
 
 SCHEMA_VERSION = 1
@@ -25,23 +26,10 @@ def fields(row: sqlite3.Row, names: str) -> dict:
     return {name: row[name] for name in names.split()}
 
 
-SAFE_REASONS = {
-    "process_restart",
-    "preparation_interrupted",
-    "expired",
-    "pause",
-    "stop",
-    "seek",
-    "restart",
-    "configure",
-    "lifecycle_changed",
-    "backlog",
-    "overload",
-    "busy",
-    "end_of_source",
-    "superseded",
-    "incomplete_tail",
-}
+# Allowlisted in the first export schema but never written by the current lifecycle.
+# Kept so exports of older databases or fixtures stay readable instead of redacted.
+LEGACY_REASONS = frozenset({"backlog", "overload", "busy", "end_of_source"})
+SAFE_REASONS = frozenset(LifecycleReason) | LEGACY_REASONS
 
 
 def safe_reason(value: str | None) -> str | None:

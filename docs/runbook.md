@@ -2,8 +2,9 @@
 
 The CPU track (#35–#40, tracked in #43) verifies proposed application behavior:
 real decoding, saved JPEG transport, persistence, replay scheduling, UI, exports,
-and synthetic evaluation. Only model serving is simulated. Research input parity,
-real model quality, network compatibility and GPU capacity remain unverified.
+and synthetic evaluation. Only model serving is simulated. The vLLM request
+contract has since been validated once on a Modal GPU endpoint (#9); research
+input parity, real model quality and GPU capacity remain unverified.
 
 ## Fresh CPU setup and disposable acceptance
 
@@ -67,7 +68,8 @@ allows current work to finish, then the launcher applies its bounded kill/reap.
 configured serving kind/model. `/v1/mock/identity` confirms the effective mock
 fixture; `/v1/models` discovers serving aliases. A live API does not prove a live
 worker or model: inspect queued/running jobs and explicit errors. Worker leases
-and heartbeat fence abandoned inference; retry failed clip jobs explicitly.
+and heartbeat fence abandoned inference; the API marks expired leases failed at
+startup and every 15 seconds, even without a worker. Retry failed clip jobs explicitly.
 Replay after API restart requires Resume; monitoring failures require a new
 generation via Restart/retry inference, not a clip-job retry. See
 [monitoring lifecycle and bounds](monitoring.md) for expiration, the 90-second
@@ -78,7 +80,9 @@ Set `FALL_DETECTION_DATA_DIR`, `FALL_DETECTION_DATABASE_PATH`,
 `FALL_DETECTION_INFERENCE_BASE_URL`, `FALL_DETECTION_INFERENCE_MODEL`, and
 `FALL_DETECTION_REQUEST_TIMEOUT_SECONDS` consistently. API upload/preparation
 limits are `FALL_DETECTION_UPLOAD_MAX_BYTES`, `FALL_DETECTION_PREPARATION_SLOTS`
-and `FALL_DETECTION_PREPARATION_WAIT_SECONDS`. The API has no authentication; it
+and `FALL_DETECTION_PREPARATION_WAIT_SECONDS`. Prepared bundles store the raw RGB
+array only with `FALL_DETECTION_RGB_ARRAYS=1` (for parity checks) and inspection
+PNGs only with `FALL_DETECTION_INSPECTION_PNGS=1`. The API has no authentication; it
 answers only to `127.0.0.1` and `localhost` (HTTP 400 otherwise) and refuses
 POST/PUT/PATCH/DELETE without `X-Requested-With: fall-detection` (HTTP 403).
 `FALL_DETECTION_ALLOWED_HOSTS` adds comma-separated host names, for example a
@@ -90,9 +94,13 @@ All 16 labels remain valid; failures and skipped windows have no activity class.
 
 Back up the database and managed media together with the application stopped.
 Sources, prepared bundles and histories are linked: copying only SQLite loses
-inputs. Retention is manual, defaults to preview and protects all retained job
-and session references. Follow [retention](retention.md); never prune user data
-as part of demo/test cleanup. Histories have no automatic total disk quota.
+inputs. Retention is manual, defaults to preview and protects all retained clip
+jobs and open sessions; inputs and live frames of sessions stopped longer than the
+session age become eligible. A pruned session can no longer feed a real evaluation
+report, so export its manifests before `--apply` or use `--keep-sessions` while
+evaluation is pending; the preview warns about sessions with vLLM predictions.
+Follow [retention](retention.md); never prune user data as part of demo/test
+cleanup. Histories have no automatic total disk quota.
 Export reproducible [run/session manifests](exports.md) before analysis; evaluate
 with the [ground-truth protocol](evaluation.md). Synthetic reports test arithmetic
 and contracts and cannot demonstrate model quality.
@@ -104,8 +112,9 @@ frontend tests/build and browser flows. Controlled browser outage fixtures verif
 UI behavior; actual HTTP failures and restarts above verify the application stack.
 GPU validation is opt-in and never part of CPU CI.
 
-When GPU access returns, reuse `scripts/validate_vllm_contract.py` and its generated
-fixture rather than changing the prepared-input contract. Follow
+After changing the serving stack (vLLM, model, processor or serving options),
+revalidate with `scripts/validate_vllm_contract.py` and its generated fixture
+rather than changing the prepared-input contract. Follow
 [live validator instructions](vllm-live-validation.md). Record the exact repository
 commit, UTC run date, validator output/errors, endpoint transport arrangement,
 GPU-host vLLM version, served model alias and model revision, processor class,
@@ -115,9 +124,15 @@ The validator checks saved JPEG bytes, request metadata, parsed label, actual
 timestamps, configuration and explicit unavailable-endpoint failure with no mock
 fallback. Its local fake-response self-test is not real-service evidence.
 
-Target endpoint authentication requirements are unresolved. No authentication
-scheme or credential persistence is introduced here; agree the secured transport
-and required auth mechanism with the endpoint owner before external deployment.
-Do not place credentials in URLs, manifests, exports or logs. #9 remains the real
-transport gate, #41 covers research input parity and measured capacity, and #42
-covers held-out continuous evaluation with targets agreed before final scoring.
+The [Modal GPU endpoint](../deploy/README.md#modal-gpu-endpoint) requires a
+Modal proxy auth token; a vLLM server started with `--api-key` takes a bearer
+token instead. Both come only from the environment (`.env` is Git-ignored) and
+are never saved in run configurations. The worker refuses plaintext HTTP to any
+host other than this machine. The inference client, warm-up and live validators
+follow redirects only within the scheme, host and port of the configured
+endpoint; any other redirect fails the job (or warm-up) before credentials or
+frames are sent to the new origin. Do not place credentials in URLs, manifests,
+exports or logs. #9 validated the transport contract on 12 October 2026
+([record](vllm-live-validation.md#live-run-modal-l4-2026-10-12)), #41 covers
+research input parity and measured capacity, and #42 covers held-out continuous
+evaluation with targets agreed before final scoring.

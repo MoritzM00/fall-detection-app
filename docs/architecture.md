@@ -2,7 +2,7 @@
 
 ## Implemented local MVP
 
-The current application uses FastAPI, SQLite, filesystem media storage, one API process, a separate worker, and HTTP polling. Frame preparation is synchronous through a bounded API coordinator; the worker consumes the saved immutable bundle and calls either mock HTTP or vLLM according to the saved backend. Every submitted run saves its prompt, generation, sampling, model, and input identity. Worker leases/heartbeats and explicit retries recover interrupted work without automatically repeating a model request. Prompt/generation editing and saved-run comparison are implemented. Real GPU compatibility remains unverified.
+The current application uses FastAPI, SQLite, filesystem media storage, one API process, a separate worker, and HTTP polling. Frame preparation is synchronous through a bounded API coordinator; the worker consumes the saved immutable bundle and calls either mock HTTP or vLLM according to the saved backend. Every submitted run saves its prompt, generation, sampling, model, and input identity. Worker leases/heartbeats and explicit retries recover interrupted work without automatically repeating a model request. Prompt/generation editing and saved-run comparison are implemented. Real inference uses a private Modal endpoint over HTTPS ([deployment](../deploy/README.md#modal-gpu-endpoint)). Its request contract was validated once on 12 October 2026 ([live validation](vllm-live-validation.md#live-run-modal-l4-2026-10-12)); research input parity, capacity and model quality remain unverified.
 
 The sections and diagram below describe the proposed later architecture, including PostgreSQL, events, and monitoring. They do not represent current deployment. Any future automatic retry policy needs a separate decision; the implemented policy requires explicit retry.
 
@@ -57,6 +57,6 @@ The API may initially read persisted job changes to publish server-sent events. 
 
 Start with PostgreSQL and filesystem media storage. API and worker need the same media volume when colocated. Store relative storage keys rather than machine-specific absolute paths. Keep a storage boundary for later object storage.
 
-For ordinary local development, the worker reaches the local mock service without GPU access. For real-model integration, it reaches GPU-local vLLM through an SSH tunnel. A local worker path is not a GPU-server path: send media bytes or a deliberately accessible media URL. Verify online video transport against the research preprocessing before choosing its exact encoding.
+For ordinary local development, the worker reaches the local mock service without GPU access. For real-model integration, it reaches vLLM over HTTPS (currently the Modal endpoint) or through an SSH tunnel to GPU-local vLLM. A local worker path is not a GPU-server path: send media bytes or a deliberately accessible media URL. Verify online video transport against the research preprocessing before choosing its exact encoding.
 
-Persistent deployment can use a private network or authenticated HTTPS endpoint. GPU sizing, network topology, exact vLLM version, and process supervision remain open.
+Persistent deployment can use a private network or authenticated HTTPS endpoint. The Modal endpoint fixes the GPU (one L4) and vLLM version for development; sizing for longer contexts, pilot network topology, and process supervision remain open.
