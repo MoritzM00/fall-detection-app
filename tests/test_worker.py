@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Event
 
+import httpx
 import pytest
 
 import apps.worker.main as worker
@@ -62,6 +63,36 @@ def test_worker_records_media_read_failure(queued_job, monkeypatch):
     assert failed.state == "failed"
     assert failed.prediction is None
     assert "media access denied" in failed.error
+
+
+def test_worker_fails_job_when_endpoint_redirects_off_origin(queued_job, route_inference):
+    settings, repository, job = queued_job
+    settings = replace(
+        settings,
+        inference_base_url="https://gpu.test/v1",
+        inference_proxy_key="dummy-key",
+        inference_proxy_secret="dummy-secret",
+    )
+    foreign = []
+
+    def handler(request):
+        if request.url.host != "gpu.test":
+            foreign.append(request)
+            return httpx.Response(
+                200, json={"id": "x", "choices": [{"message": {"content": "fall"}}]}
+            )
+        return httpx.Response(
+            307, headers={"Location": "http://elsewhere.test/v1/chat/completions"}
+        )
+
+    route_inference(handler)
+    worker.process_next_job(settings, repository)
+    failed = repository.get_job(job.id)
+    assert failed.state == "failed"
+    assert failed.prediction is None
+    assert "Refusing redirect to http://elsewhere.test" in failed.error
+    assert "dummy" not in failed.error
+    assert foreign == []
 
 
 def test_worker_rejects_synthetic_video_for_real_inference(queued_job, monkeypatch):
