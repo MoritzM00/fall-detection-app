@@ -78,7 +78,12 @@ def drain(settings, repository):
 
 
 def tree(root: Path) -> list[str]:
-    return sorted(path.relative_to(root).as_posix() for path in root.rglob("*"))
+    """Managed media files; SQLite may add its own WAL side files on read."""
+    return sorted(
+        path.relative_to(root).as_posix()
+        for path in root.rglob("*")
+        if not path.name.startswith("app.sqlite3")
+    )
 
 
 def test_ended_live_session_frames_and_bundles_are_pruned_with_provenance_kept(live):
