@@ -195,10 +195,10 @@ export type LiveSettings = ExperimentSettings & { frame_count: number; fps: numb
 export type CapturedFrame = { run_seq: number; capture_seconds: number; blob: Blob };
 export type FrameAck = { accepted: number; run_seq_high: number | null; watermark_seconds: number; state: MonitoringSession["state"] };
 export const createLiveSession = (settings: LiveSettings) => request<MonitoringSession>("/monitoring-sessions/live", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(settings) });
-export function postFrames(id: string, runId: string, frames: CapturedFrame[]): Promise<FrameAck> {
+export function postFrames(id: string, runId: string, frames: CapturedFrame[], signal?: AbortSignal): Promise<FrameAck> {
   const body = new FormData();
   body.append("run_id", runId);
   body.append("metadata", JSON.stringify(frames.map(({ run_seq, capture_seconds }) => ({ run_seq, capture_seconds }))));
   for (const frame of frames) body.append("frames", frame.blob, `${frame.run_seq}.jpg`);
-  return request(`/monitoring-sessions/${id}/frames`, { method: "POST", body });
+  return request(`/monitoring-sessions/${id}/frames`, { method: "POST", headers: { "X-Requested-With": "fall-detection" }, body, signal });
 }
