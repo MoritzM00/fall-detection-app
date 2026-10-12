@@ -116,9 +116,11 @@ The [Modal GPU endpoint](../deploy/README.md#modal-gpu-endpoint) requires a
 Modal proxy auth token; a vLLM server started with `--api-key` takes a bearer
 token instead. Both come only from the environment (`.env` is Git-ignored) and
 are never saved in run configurations. The worker refuses plaintext HTTP to any
-host other than this machine (redirect hops are tracked in #74). Do not place
-credentials in URLs, manifests, exports or logs. #9 validated the transport
-contract on 12 October 2026
+host other than this machine. The inference client, warm-up and live validators
+follow redirects only within the scheme, host and port of the configured
+endpoint; any other redirect fails the job (or warm-up) before credentials or
+frames are sent to the new origin. Do not place credentials in URLs, manifests,
+exports or logs. #9 validated the transport contract on 12 October 2026
 ([record](vllm-live-validation.md#live-run-modal-l4-2026-10-12)), #41 covers
 research input parity and measured capacity, and #42 covers held-out continuous
 evaluation with targets agreed before final scoring.
