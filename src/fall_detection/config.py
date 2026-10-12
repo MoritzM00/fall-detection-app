@@ -1,5 +1,5 @@
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -17,6 +17,9 @@ class Settings:
     preparation_slots: int = 2
     preparation_wait_seconds: float = 10
     inspection_pngs: bool = False
+    inference_api_key: str | None = field(default=None, repr=False)
+    inference_proxy_key: str | None = field(default=None, repr=False)
+    inference_proxy_secret: str | None = field(default=None, repr=False)
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -44,4 +47,19 @@ class Settings:
                 os.getenv("FALL_DETECTION_PREPARATION_WAIT_SECONDS", "10")
             ),
             inspection_pngs=os.getenv("FALL_DETECTION_INSPECTION_PNGS", "0") == "1",
+            inference_api_key=os.getenv("FALL_DETECTION_INFERENCE_API_KEY") or None,
+            inference_proxy_key=os.getenv("FALL_DETECTION_INFERENCE_PROXY_KEY") or None,
+            inference_proxy_secret=os.getenv("FALL_DETECTION_INFERENCE_PROXY_SECRET") or None,
         )
+
+    def inference_auth_headers(self) -> dict[str, str]:
+        """Build credential headers for a protected serving endpoint."""
+        if (self.inference_proxy_key is None) != (self.inference_proxy_secret is None):
+            raise ValueError("Inference proxy key and secret must be configured together")
+        headers = {}
+        if self.inference_api_key:
+            headers["Authorization"] = f"Bearer {self.inference_api_key}"
+        if self.inference_proxy_key and self.inference_proxy_secret:
+            headers["Modal-Key"] = self.inference_proxy_key
+            headers["Modal-Secret"] = self.inference_proxy_secret
+        return headers
