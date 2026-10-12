@@ -82,7 +82,12 @@ Set `FALL_DETECTION_DATA_DIR`, `FALL_DETECTION_DATABASE_PATH`,
 limits are `FALL_DETECTION_UPLOAD_MAX_BYTES`, `FALL_DETECTION_PREPARATION_SLOTS`
 and `FALL_DETECTION_PREPARATION_WAIT_SECONDS`. Prepared bundles store the raw RGB
 array only with `FALL_DETECTION_RGB_ARRAYS=1` (for parity checks) and inspection
-PNGs only with `FALL_DETECTION_INSPECTION_PNGS=1`. Mock manifest and durable retry
+PNGs only with `FALL_DETECTION_INSPECTION_PNGS=1`. The API has no authentication; it
+answers only to `127.0.0.1` and `localhost` (HTTP 400 otherwise) and refuses
+POST/PUT/PATCH/DELETE without `X-Requested-With: fall-detection` (HTTP 403).
+`FALL_DETECTION_ALLOWED_HOSTS` adds comma-separated host names, for example a
+Tailscale name for a client that reaches the API directly (see
+[deploy](../deploy/README.md)). Mock manifest and durable retry
 state are described in [mock inference](mock-inference.md). Fixture changes require
 new submissions; changed fixture identities cannot silently execute old jobs.
 All 16 labels remain valid; failures and skipped windows have no activity class.

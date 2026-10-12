@@ -187,6 +187,16 @@ test("real recording watermark follows media playback and recovers uploaded sour
   await expect(panel.getByText(/System: paused/)).toBeVisible();
   await panel.getByRole("button", { name: "Resume", exact: true }).click();
   await expect(panel.getByText(/System: running/)).toBeVisible();
+  // The pagehide keepalive pause must carry the header the API requires on state-changing requests.
+  const leaving = page.waitForResponse(response => response.url().endsWith("commands") && response.request().postDataJSON()?.action === "pause");
+  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pagehide")));
+  const paused = await leaving;
+  expect(paused.request().headers()["x-requested-with"]).toBe("fall-detection");
+  expect(paused.status()).toBe(200);
+  await page.reload();
+  await expect(panel.getByText(/System: paused/)).toBeVisible();
+  await panel.getByRole("button", { name: "Resume", exact: true }).click();
+  await expect(panel.getByText(/System: running/)).toBeVisible();
   let outage = true;
   await page.route("**/api/monitoring-sessions", async route => {
     if (outage) await route.fulfill({ status: 503, json: { detail: "temporary outage" } });

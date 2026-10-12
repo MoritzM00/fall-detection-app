@@ -15,6 +15,7 @@ from PIL import Image
 
 import apps.worker.main as worker
 from apps.api.main import create_app
+from apps.api.request_guards import CLIENT_HEADERS
 from fall_detection.config import Settings
 from fall_detection.evaluation import evaluate
 from fall_detection.exports import ExperimentExports
@@ -27,6 +28,7 @@ from fall_detection.repository import Repository
 from fall_detection.retention import prune_media
 from scripts.prune_media import evaluation_warnings, session_summary
 
+LOCAL_API = "http://127.0.0.1"
 DAY = timedelta(days=1)
 
 
@@ -54,7 +56,9 @@ def live(tmp_path, monkeypatch):
         "run_pipeline",
         lambda **kw: PipelineResult("walk", "walk", kw["sampled_timestamps"], 1, 2),
     )
-    with TestClient(create_app(settings, repository)) as client:
+    with TestClient(
+        create_app(settings, repository), base_url=LOCAL_API, headers=CLIENT_HEADERS
+    ) as client:
         yield client, settings, repository, clock
 
 

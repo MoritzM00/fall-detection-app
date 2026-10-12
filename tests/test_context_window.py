@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from apps.api.main import create_app
+from apps.api.request_guards import CLIENT_HEADERS
 from fall_detection.config import Settings
 from fall_detection.models import (
     ContextWindowError,
@@ -16,6 +17,7 @@ from fall_detection.prediction import THESIS_BASELINE_PROMPT, InferenceClient
 from fall_detection.repository import Repository
 
 DEPLOYED_MAX_MODEL_LEN = 5120  # deploy/modal_vllm.py --max-model-len
+LOCAL_API = "http://127.0.0.1"
 
 
 @pytest.mark.parametrize(
@@ -94,7 +96,9 @@ def served(tmp_path, monkeypatch):
         max_model_len=DEPLOYED_MAX_MODEL_LEN,
     )
     repository = Repository(settings.database_path)
-    with TestClient(create_app(settings, repository)) as client:
+    with TestClient(
+        create_app(settings, repository), base_url=LOCAL_API, headers=CLIENT_HEADERS
+    ) as client:
         yield client, repository
 
 
