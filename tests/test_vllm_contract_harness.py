@@ -3,7 +3,7 @@
 import httpx
 import pytest
 
-from fall_detection.prompts import THESIS_BASELINE_PROMPT
+from fall_detection.prediction import THESIS_BASELINE_PROMPT
 from scripts.validate_vllm_contract import validate
 
 

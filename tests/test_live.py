@@ -13,11 +13,10 @@ import apps.worker.main as worker
 from apps.api.main import create_app
 from fall_detection import live as live_module
 from fall_detection.config import Settings
-from fall_detection.inference import InferenceClient
 from fall_detection.live import LIVE_PREPROCESSING_VERSION, IngestGapError, prepare_frames
 from fall_detection.models import PreparationRequest, RunConfiguration
 from fall_detection.monitoring import Monitoring
-from fall_detection.pipeline import PipelineResult
+from fall_detection.prediction import InferenceClient, PipelineResult
 from fall_detection.preparation import load_prepared_input
 from fall_detection.repository import Repository
 

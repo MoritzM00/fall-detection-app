@@ -2,8 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import apps.mock_inference.main as mock_server
-from fall_detection.pipeline import build_inference_payload
-from fall_detection.prompts import THESIS_BASELINE_PROMPT
+from fall_detection.prediction import THESIS_BASELINE_PROMPT, build_inference_payload
 
 
 @pytest.fixture(autouse=True)

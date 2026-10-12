@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from fall_detection.media import list_dataset_video_paths, resolve_dataset_video
+from fall_detection.storage import list_dataset_video_paths, resolve_dataset_video
 
 
 def test_dataset_video_paths_are_sorted_and_relative(tmp_path: Path) -> None:

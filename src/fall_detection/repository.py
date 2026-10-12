@@ -16,8 +16,8 @@ from fall_detection.models import (
     SamplingConfiguration,
     VideoAsset,
 )
-from fall_detection.pipeline import PipelineResult
-from fall_detection.prompts import PRESET_ID, THESIS_BASELINE_PROMPT
+from fall_detection.prediction import PRESET_ID, THESIS_BASELINE_PROMPT, PipelineResult
+from fall_detection.schema import migrate
 
 
 def utc_now() -> str:
@@ -65,116 +65,7 @@ class Repository:
         self._database_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect(foreign_keys=False) as connection:
             connection.execute("BEGIN IMMEDIATE")
-            for statement in (
-                """
-                CREATE TABLE IF NOT EXISTS videos (
-                    id TEXT PRIMARY KEY,
-                    filename TEXT NOT NULL,
-                    source TEXT NOT NULL CHECK (source IN ('upload', 'synthetic', 'dataset', 'live')),
-                    storage_key TEXT,
-                    duration_seconds REAL,
-                    created_at TEXT NOT NULL
-                )""",
-                """CREATE TABLE IF NOT EXISTS configurations (
-                    id TEXT PRIMARY KEY,
-                    schema_version INTEGER NOT NULL,
-                    model TEXT NOT NULL,
-                    prompt_preset TEXT NOT NULL,
-                    prompt_text TEXT NOT NULL,
-                    preprocessing_json TEXT NOT NULL,
-                    generation_json TEXT NOT NULL,
-                    created_at TEXT NOT NULL
-                )""",
-                """CREATE TABLE IF NOT EXISTS jobs (
-                    id TEXT PRIMARY KEY,
-                    video_id TEXT NOT NULL REFERENCES videos(id),
-                    configuration_id TEXT NOT NULL REFERENCES configurations(id),
-                    prepared_input_id TEXT,
-                    state TEXT NOT NULL,
-                    start_seconds REAL NOT NULL,
-                    end_seconds REAL NOT NULL,
-                    attempt_count INTEGER NOT NULL DEFAULT 0,
-                    error TEXT,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                )""",
-                """CREATE TABLE IF NOT EXISTS predictions (
-                    id TEXT PRIMARY KEY,
-                    job_id TEXT NOT NULL UNIQUE REFERENCES jobs(id),
-                    label TEXT NOT NULL,
-                    raw_response TEXT NOT NULL,
-                    sampled_timestamps_json TEXT NOT NULL,
-                    backend_kind TEXT NOT NULL,
-                    model TEXT NOT NULL,
-                    fixture_version TEXT,
-                    request_duration_ms REAL NOT NULL,
-                    total_duration_ms REAL NOT NULL,
-                    completed_at TEXT NOT NULL,
-                    prompt_tokens INTEGER,
-                    completion_tokens INTEGER
-                )""",
-            ):
-                connection.execute(statement)
-            connection.execute("""CREATE TABLE IF NOT EXISTS attempt_events (
-                id INTEGER PRIMARY KEY, job_id TEXT NOT NULL REFERENCES jobs(id),
-                attempt INTEGER NOT NULL, event TEXT NOT NULL, occurred_at TEXT NOT NULL,
-                error_sha256 TEXT)""")
-            connection.execute(
-                "CREATE INDEX IF NOT EXISTS attempt_events_by_job ON attempt_events(job_id,id)"
-            )
-            videos_schema = connection.execute(
-                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'videos'"
-            ).fetchone()["sql"]
-            if "'live'" not in videos_schema:
-                # SQLite cannot alter a CHECK constraint. Preserve the old rows
-                # while moving the table name under the same transaction.
-                connection.execute("""CREATE TABLE videos_new (
-                        id TEXT PRIMARY KEY,
-                        filename TEXT NOT NULL,
-                        source TEXT NOT NULL
-                            CHECK (source IN ('upload', 'synthetic', 'dataset', 'live')),
-                        storage_key TEXT,
-                        duration_seconds REAL,
-                        created_at TEXT NOT NULL
-                    )""")
-                connection.execute("""INSERT INTO videos_new
-                        (id, filename, source, storage_key, duration_seconds, created_at)
-                    SELECT id, filename, source, storage_key, duration_seconds, created_at
-                    FROM videos""")
-                connection.execute("DROP TABLE videos")
-                connection.execute("ALTER TABLE videos_new RENAME TO videos")
-            job_columns = {row["name"] for row in connection.execute("PRAGMA table_info(jobs)")}
-            if "prepared_input_id" not in job_columns:
-                connection.execute("ALTER TABLE jobs ADD COLUMN prepared_input_id TEXT")
-            if "claim_token" not in job_columns:
-                connection.execute("ALTER TABLE jobs ADD COLUMN claim_token TEXT")
-            if "lease_expires_at" not in job_columns:
-                connection.execute("ALTER TABLE jobs ADD COLUMN lease_expires_at TEXT")
-            config_columns = {
-                row["name"] for row in connection.execute("PRAGMA table_info(configurations)")
-            }
-            if "backend_kind" not in config_columns:
-                connection.execute(
-                    "ALTER TABLE configurations ADD COLUMN backend_kind TEXT NOT NULL DEFAULT 'unknown'"
-                )
-            if "fixture_version" not in config_columns:
-                connection.execute("ALTER TABLE configurations ADD COLUMN fixture_version TEXT")
-            prediction_columns = {
-                row["name"] for row in connection.execute("PRAGMA table_info(predictions)")
-            }
-            for column in ("prompt_tokens", "completion_tokens"):
-                if column not in prediction_columns:
-                    connection.execute(f"ALTER TABLE predictions ADD COLUMN {column} INTEGER")
-            connection.execute(
-                """UPDATE jobs SET state = 'failed', error =
-                'Worker interrupted before claim ownership was recorded. Retry this run.',
-                updated_at = ? WHERE state = 'running' AND claim_token IS NULL""",
-                (self._timestamp(),),
-            )
-            from fall_detection.monitoring import migrate
-
-            migrate(connection)
-            connection.execute("PRAGMA user_version = 6")
+            migrate(connection, self._timestamp())
             if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
                 raise RuntimeError("Migration would violate foreign keys")
             connection.commit()
