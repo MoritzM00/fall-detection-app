@@ -13,7 +13,8 @@ export function baselineExperiment(capabilities: Capabilities): ExperimentSettin
 }
 
 export function isBaselineExperiment(capabilities: Capabilities, settings: ExperimentSettings): boolean {
-  return settings.prompt_text === capabilities.prompt_preset.prompt
+  return settings.model === capabilities.models[0]
+    && settings.prompt_text === capabilities.prompt_preset.prompt
     && settings.generation.temperature === capabilities.generation.temperature
     && settings.generation.max_tokens === capabilities.generation.max_tokens;
 }

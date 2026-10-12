@@ -114,7 +114,17 @@ test("monitoring exposes timed failure, coverage gaps, disconnect and restart re
   await expect(panel.getByLabel("Resolved prompt")).toHaveValue("first part");
   // Unapplied edits are discarded on close, so the summary keeps describing the running segment.
   await panel.getByLabel("Resolved prompt").fill("unapplied");
-  await panel.getByRole("button", { name: "Close settings" }).click();
+  // Selecting prompt text and releasing over the backdrop must not close the sheet.
+  const prompt = (await panel.getByLabel("Resolved prompt").boundingBox())!;
+  await page.mouse.move(prompt.x + prompt.width - 20, prompt.y + 10);
+  await page.mouse.down();
+  await page.mouse.move(10, prompt.y + 10, { steps: 5 });
+  await page.mouse.up();
+  await expect(panel.getByRole("dialog", { name: "Session settings" })).toBeVisible();
+  await expect(panel.getByLabel("Resolved prompt")).toHaveValue("unapplied");
+  // A real backdrop click closes and discards.
+  await page.mouse.click(10, prompt.y + 10);
+  await expect(panel.getByRole("dialog", { name: "Session settings" })).toBeHidden();
   await panel.getByRole("button", { name: "Settings", exact: true }).click();
   await expect(panel.getByLabel("Resolved prompt")).toHaveValue("first part");
   await panel.getByRole("button", { name: "Close settings" }).click();

@@ -45,6 +45,8 @@ export function SettingsDialog({ open, title, onClose, children, footer }: Dialo
   // The native close event also fires for closes driven by `open`; only report the ones the user started (Escape).
   const expectedOpen = useRef(open);
   expectedOpen.current = open;
+  // A drag that starts in the sheet (selecting prompt text) and ends on the backdrop is not a backdrop click.
+  const pressedBackdrop = useRef(false);
   useEffect(() => {
     const element = dialog.current;
     if (!element) return;
@@ -52,7 +54,8 @@ export function SettingsDialog({ open, title, onClose, children, footer }: Dialo
     if (!open && element.open) element.close();
   }, [open]);
   return <dialog ref={dialog} className="settings-dialog" aria-label={title} onClose={() => { if (expectedOpen.current) onClose(); }}
-    onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    onPointerDown={(event) => { pressedBackdrop.current = event.target === event.currentTarget; }}
+    onClick={(event) => { if (pressedBackdrop.current && event.target === event.currentTarget) onClose(); }}>
     <header><h2>{title}</h2><button type="button" className="dialog-close" aria-label="Close settings" onClick={onClose}>×</button></header>
     <div className="settings-body">{children}</div>
     <footer>{footer}</footer>
