@@ -109,15 +109,7 @@ def monitoring_router(settings: Settings, repository: Repository) -> APIRouter:
     @router.get("/monitoring-sessions")
     def list_monitoring_sessions() -> list[dict]:
         """List retained sessions for refresh recovery."""
-        with repository._connect() as connection:
-            ids = [
-                row[0]
-                for row in connection.execute(
-                    "SELECT id FROM monitoring_sessions ORDER BY created_at DESC LIMIT 100"
-                )
-            ]
-        monitor = Monitoring(repository)
-        return [monitor.get(identity) for identity in ids]
+        return Monitoring(repository).recent(100)
 
     @router.get("/monitoring-sessions/{session_id}")
     def get_monitoring_session(session_id: str) -> dict:

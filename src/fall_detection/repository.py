@@ -5,7 +5,6 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from time import monotonic, sleep
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from fall_detection.models import (
@@ -17,12 +16,28 @@ from fall_detection.models import (
     VideoAsset,
 )
 from fall_detection.prediction import PRESET_ID, THESIS_BASELINE_PROMPT, PipelineResult
-from fall_detection.schema import migrate
+from fall_detection.schema import enable_wal, migrate
 
 
 def utc_now() -> str:
     """Return a stable UTC timestamp for persisted lifecycle events."""
     return datetime.now(UTC).isoformat()
+
+
+_EXPIRED_SELECT = """SELECT id FROM jobs WHERE state = 'running'
+    AND (lease_expires_at IS NULL OR lease_expires_at <= ?)"""
+# One read statement returns a job with its configuration snapshot and result.
+_JOB_SELECT = """SELECT j.*, c.model AS c_model, c.prompt_preset AS c_prompt_preset,
+    c.prompt_text AS c_prompt_text, c.preprocessing_json AS c_preprocessing_json,
+    c.generation_json AS c_generation_json, c.backend_kind AS c_backend_kind,
+    c.fixture_version AS c_fixture_version, p.id AS p_id, p.label AS p_label,
+    p.raw_response AS p_raw_response, p.sampled_timestamps_json AS p_sampled_timestamps_json,
+    p.backend_kind AS p_backend_kind, p.model AS p_model, p.fixture_version AS p_fixture_version,
+    p.request_duration_ms AS p_request_duration_ms, p.total_duration_ms AS p_total_duration_ms,
+    p.completed_at AS p_completed_at, p.prompt_tokens AS p_prompt_tokens,
+    p.completion_tokens AS p_completion_tokens
+    FROM jobs j LEFT JOIN configurations c ON c.id = j.configuration_id
+    LEFT JOIN predictions p ON p.job_id = j.id"""
 
 
 class Repository:
@@ -38,32 +53,24 @@ class Repository:
 
     @contextmanager
     def _connect(self, *, foreign_keys: bool = True):
+        """Open a connection with the pragmas SQLite does not persist in the file.
+
+        ``timeout`` sets the busy timeout. WAL mode is persistent and is set once
+        by :meth:`initialize`, so ordinary connections never touch the journal mode.
+        """
         connection = sqlite3.connect(self._database_path, timeout=10, isolation_level=None)
         connection.row_factory = sqlite3.Row
         try:
             connection.execute(f"PRAGMA foreign_keys = {'ON' if foreign_keys else 'OFF'}")
-            # Changing journal mode can return SQLITE_BUSY immediately, even with
-            # busy_timeout configured, when another startup connection holds a lock.
-            deadline = monotonic() + 10
-            while True:
-                try:
-                    connection.execute("PRAGMA journal_mode = WAL")
-                    break
-                except sqlite3.OperationalError as exc:
-                    if (
-                        getattr(exc, "sqlite_errorcode", 0) & 0xFF != sqlite3.SQLITE_BUSY
-                        or monotonic() >= deadline
-                    ):
-                        raise
-                    sleep(0.01)
             yield connection
         finally:
             connection.close()
 
     def initialize(self) -> None:
-        """Create and migrate the schema under a database-wide write lock."""
+        """Enable WAL, then create and migrate the schema under a database-wide write lock."""
         self._database_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect(foreign_keys=False) as connection:
+            enable_wal(connection)
             connection.execute("BEGIN IMMEDIATE")
             migrate(connection, self._timestamp())
             if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
@@ -210,68 +217,32 @@ class Repository:
             ).fetchone()
         if row is None:
             raise ValueError("job configuration no longer exists")
-        preprocessing = json.loads(row["preprocessing_json"])
-        # Historic snapshots did not contain FPS. Their backend is deliberately unknown.
-        preprocessing.setdefault("fps", 7.5)
-        return RunConfiguration(
-            model=row["model"],
-            prompt_preset=row["prompt_preset"],
-            prompt_text=row["prompt_text"],
-            preprocessing=SamplingConfiguration.model_validate(preprocessing),
-            generation=GenerationConfiguration.model_validate_json(row["generation_json"]),
-            backend_kind=row["backend_kind"],
-            fixture_version=row["fixture_version"],
-        )
+        return self._configuration_from_row(row)
 
     def get_job(self, job_id: str) -> AnalysisJob | None:
-        """Read a job with its persisted result when completed."""
-        self.recover_expired()
+        """Read a job with its configuration and persisted result; never writes."""
         with self._connect() as connection:
-            connection.execute("BEGIN")
-            row = connection.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
-            if row is None:
-                return None
-            prediction_row = connection.execute(
-                "SELECT * FROM predictions WHERE job_id = ?", (job_id,)
-            ).fetchone()
-            connection.commit()
-        prediction = self._prediction_from_row(prediction_row) if prediction_row else None
-        return AnalysisJob(
-            id=row["id"],
-            video_id=row["video_id"],
-            configuration_id=row["configuration_id"],
-            prepared_input_id=row["prepared_input_id"],
-            state=row["state"],
-            start_seconds=row["start_seconds"],
-            end_seconds=row["end_seconds"],
-            attempt_count=row["attempt_count"],
-            error=row["error"],
-            created_at=row["created_at"],
-            updated_at=row["updated_at"],
-            claim_token=row["claim_token"],
-            lease_expires_at=row["lease_expires_at"],
-            configuration=self.get_configuration(row["configuration_id"]),
-            prediction=prediction,
-        )
+            row = connection.execute(f"{_JOB_SELECT} WHERE j.id = ?", (job_id,)).fetchone()
+        return self._job_from_row(row) if row is not None else None
 
     def list_jobs(self, limit: int = 20) -> list[AnalysisJob]:
-        """List every active job and a bounded number of recent terminal jobs."""
+        """List every active job and a bounded number of recent terminal jobs.
+
+        One connection and one read statement, independent of the number of jobs.
+        Expired leases are recovered by the worker and the API's recovery timer.
+        """
         if not 1 <= limit <= 100:
             raise ValueError("limit must be between 1 and 100")
-        self.recover_expired()
         with self._connect() as connection:
-            ids = [
-                row["id"]
-                for row in connection.execute(
-                    """SELECT id FROM jobs WHERE state IN ('queued', 'running')
-                    OR id IN (SELECT id FROM jobs
-                        WHERE state NOT IN ('queued', 'running')
-                        ORDER BY created_at DESC, rowid DESC LIMIT ?)
-                    ORDER BY created_at DESC, rowid DESC""",
-                    (limit,),
-                )
-            ]
-        return [job for job_id in ids if (job := self.get_job(job_id)) is not None]
+            rows = connection.execute(
+                f"""{_JOB_SELECT} WHERE j.state IN ('queued', 'running')
+                OR j.id IN (SELECT id FROM jobs
+                    WHERE state NOT IN ('queued', 'running')
+                    ORDER BY created_at DESC, rowid DESC LIMIT ?)
+                ORDER BY j.created_at DESC, j.rowid DESC""",
+                (limit,),
+            ).fetchall()
+        return [self._job_from_row(row) for row in rows]
 
     def claim_next_job(self) -> AnalysisJob | None:
         """Atomically claim the oldest queued job for one worker."""
@@ -386,10 +357,7 @@ class Repository:
 
     def _recover_expired_locked(self, connection: sqlite3.Connection) -> int:
         now = self._timestamp()
-        expired = connection.execute(
-            "SELECT id FROM jobs WHERE state='running' AND (lease_expires_at IS NULL OR lease_expires_at <= ?)",
-            (now,),
-        ).fetchall()
+        expired = connection.execute(_EXPIRED_SELECT, (now,)).fetchall()
         for row in expired:
             self._attempt_event(connection, row["id"], "lease_expired", now)
         return connection.execute(
@@ -401,8 +369,14 @@ class Repository:
         ).rowcount
 
     def recover_expired(self) -> int:
-        """Expose abandoned work as retryable failed jobs."""
+        """Expose abandoned work as retryable failed jobs.
+
+        Runs in the worker loop and on API startup and timer, never on reads. The
+        write lock is taken only when a read finds an expired lease.
+        """
         with self._connect() as connection:
+            if connection.execute(_EXPIRED_SELECT, (self._timestamp(),)).fetchone() is None:
+                return 0
             connection.execute("BEGIN IMMEDIATE")
             changed = self._recover_expired_locked(connection)
             connection.commit()
@@ -465,19 +439,56 @@ class Repository:
             created_at=row["created_at"],
         )
 
-    @staticmethod
-    def _prediction_from_row(row: sqlite3.Row) -> PredictionResult:
-        return PredictionResult(
+    @classmethod
+    def _job_from_row(cls, row: sqlite3.Row) -> AnalysisJob:
+        if row["c_model"] is None:
+            raise ValueError("job configuration no longer exists")
+        return AnalysisJob(
             id=row["id"],
-            label=row["label"],
-            raw_response=row["raw_response"],
-            sampled_timestamps=json.loads(row["sampled_timestamps_json"]),
-            backend_kind=row["backend_kind"],
-            model=row["model"],
-            fixture_version=row["fixture_version"],
-            request_duration_ms=row["request_duration_ms"],
-            total_duration_ms=row["total_duration_ms"],
-            completed_at=row["completed_at"],
-            prompt_tokens=row["prompt_tokens"],
-            completion_tokens=row["completion_tokens"],
+            video_id=row["video_id"],
+            configuration_id=row["configuration_id"],
+            prepared_input_id=row["prepared_input_id"],
+            state=row["state"],
+            start_seconds=row["start_seconds"],
+            end_seconds=row["end_seconds"],
+            attempt_count=row["attempt_count"],
+            error=row["error"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            claim_token=row["claim_token"],
+            lease_expires_at=row["lease_expires_at"],
+            configuration=cls._configuration_from_row(row, "c_"),
+            prediction=cls._prediction_from_row(row, "p_") if row["p_id"] is not None else None,
+        )
+
+    @staticmethod
+    def _configuration_from_row(row: sqlite3.Row, prefix: str = "") -> RunConfiguration:
+        preprocessing = json.loads(row[f"{prefix}preprocessing_json"])
+        # Historic snapshots did not contain FPS. Their backend is deliberately unknown.
+        preprocessing.setdefault("fps", 7.5)
+        return RunConfiguration(
+            model=row[f"{prefix}model"],
+            prompt_preset=row[f"{prefix}prompt_preset"],
+            prompt_text=row[f"{prefix}prompt_text"],
+            preprocessing=SamplingConfiguration.model_validate(preprocessing),
+            generation=GenerationConfiguration.model_validate_json(row[f"{prefix}generation_json"]),
+            backend_kind=row[f"{prefix}backend_kind"],
+            fixture_version=row[f"{prefix}fixture_version"],
+        )
+
+    @staticmethod
+    def _prediction_from_row(row: sqlite3.Row, prefix: str = "") -> PredictionResult:
+        return PredictionResult(
+            id=row[f"{prefix}id"],
+            label=row[f"{prefix}label"],
+            raw_response=row[f"{prefix}raw_response"],
+            sampled_timestamps=json.loads(row[f"{prefix}sampled_timestamps_json"]),
+            backend_kind=row[f"{prefix}backend_kind"],
+            model=row[f"{prefix}model"],
+            fixture_version=row[f"{prefix}fixture_version"],
+            request_duration_ms=row[f"{prefix}request_duration_ms"],
+            total_duration_ms=row[f"{prefix}total_duration_ms"],
+            completed_at=row[f"{prefix}completed_at"],
+            prompt_tokens=row[f"{prefix}prompt_tokens"],
+            completion_tokens=row[f"{prefix}completion_tokens"],
         )
