@@ -363,20 +363,31 @@ def test_api_reads_do_not_recover_leases_but_the_timer_does(make_api):
         assert client.get(f"/analysis-jobs/{job_id}").json()["state"] == "failed"
 
 
-def test_lease_recovery_timer_survives_a_locked_database(caplog):
+@pytest.mark.parametrize(
+    "error",
+    [
+        sqlite3.OperationalError("database is locked"),
+        sqlite3.DatabaseError("database disk image is malformed"),
+        sqlite3.IntegrityError("UNIQUE constraint failed"),
+        ValueError("clock went backwards"),
+    ],
+    ids=lambda error: type(error).__name__,
+)
+def test_lease_recovery_timer_survives_failures_and_shuts_down_cleanly(make_api, caplog, error):
+    app, repository, _ = make_api(lease_recovery_interval_seconds=0.01)
     calls = []
+    real_recover = repository.recover_expired
 
-    class StopLoopError(Exception):
-        pass
+    def fail_on_first_timer_run() -> int:
+        calls.append(1)
+        if len(calls) == 2:  # call 1 is startup; call 2 is the first timer run
+            raise error
+        return real_recover()
 
-    class LockedOnce:
-        def recover_expired(self) -> int:
-            calls.append(1)
-            if len(calls) == 1:
-                raise sqlite3.OperationalError("database is locked")
-            raise StopLoopError
-
-    with pytest.raises(StopLoopError):
-        asyncio.run(api.recover_leases_periodically(LockedOnce(), 0))  # ty: ignore[invalid-argument-type]
-    assert len(calls) == 2
+    repository.recover_expired = fail_on_first_timer_run
+    with TestClient(app):
+        deadline = time.monotonic() + 5
+        while len(calls) < 4:
+            assert time.monotonic() < deadline, "the recovery timer stopped after a failure"
+            time.sleep(0.01)
     assert "Lease recovery failed" in caplog.text

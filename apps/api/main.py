@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import sqlite3
 import subprocess
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
@@ -58,7 +57,9 @@ async def recover_leases_periodically(repository: Repository, interval_seconds: 
         await asyncio.sleep(interval_seconds)
         try:
             await asyncio.to_thread(repository.recover_expired)
-        except sqlite3.OperationalError:
+        except Exception:
+            # Any failure (locked or corrupt database, constraint, clock) must not end the
+            # timer: nobody awaits it before shutdown, so recovery would silently stop.
             logger.warning("Lease recovery failed; retrying next interval", exc_info=True)
 
 
