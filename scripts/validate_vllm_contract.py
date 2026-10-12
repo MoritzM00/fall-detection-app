@@ -8,13 +8,16 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import av
-import httpx
 import numpy as np
 
 import apps.worker.main as worker
 from fall_detection.config import Settings
 from fall_detection.models import PreparationRequest
-from fall_detection.prediction import ACTIVITY_LABELS, THESIS_BASELINE_PROMPT
+from fall_detection.prediction import (
+    ACTIVITY_LABELS,
+    THESIS_BASELINE_PROMPT,
+    same_origin_client,
+)
 from fall_detection.preparation import prepare_video, to_vllm_jpeg_data_url
 from fall_detection.repository import Repository
 
@@ -42,15 +45,12 @@ def _server_identity(base_url: str, model: str, headers: dict[str, str]) -> tupl
     """Read the serving version and model IDs before sending video data."""
     root = base_url.removesuffix("/v1")
     # A scale-to-zero endpoint may need to start a container before it answers.
-    version_response = httpx.get(
-        f"{root}/version", headers=headers, timeout=600, follow_redirects=True
-    )
-    version_response.raise_for_status()
-    version = version_response.json().get("version")
-    models_response = httpx.get(
-        f"{base_url}/models", headers=headers, timeout=60, follow_redirects=True
-    )
-    models_response.raise_for_status()
+    with same_origin_client(base_url, timeout=600) as http:
+        version_response = http.get(f"{root}/version", headers=headers)
+        version_response.raise_for_status()
+        version = version_response.json().get("version")
+        models_response = http.get(f"{base_url}/models", headers=headers, timeout=60)
+        models_response.raise_for_status()
     models = [item["id"] for item in models_response.json()["data"]]
     if not isinstance(version, str) or not version:
         raise ValueError("server did not expose a vLLM version")

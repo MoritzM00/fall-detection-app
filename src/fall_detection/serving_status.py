@@ -12,6 +12,7 @@ from typing import Literal, TypedDict
 import httpx
 
 from fall_detection.config import Settings
+from fall_detection.prediction import same_origin_client
 
 # Control-plane counts can lag a fresh container; trust a warm-up this long before them.
 READY_GRACE_SECONDS = 60
@@ -93,6 +94,7 @@ def wait_until_healthy(
     deadline_seconds: float = 900,
     poll_seconds: float = 5,
     sleep: Callable[[float], None] = time.sleep,
+    transport: httpx.BaseTransport | None = None,
 ) -> float:
     """Poll the vLLM health route until it answers 200; return the elapsed seconds.
 
@@ -109,12 +111,8 @@ def wait_until_healthy(
             raise TimeoutError(f"endpoint not healthy after {deadline_seconds:.0f} s")
         try:
             # Modal holds the request during a cold start and redirects past ~150 s.
-            response = httpx.get(
-                health_url,
-                headers=headers,
-                timeout=deadline_seconds - elapsed,
-                follow_redirects=True,
-            )
+            with same_origin_client(health_url, deadline_seconds - elapsed, transport) as http:
+                response = http.get(health_url, headers=headers)
             if response.status_code == 200:
                 return time.monotonic() - started
             if response.status_code in (401, 403):

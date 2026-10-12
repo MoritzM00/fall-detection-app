@@ -31,9 +31,27 @@ Each event includes its attempt number and wall-clock time. Request/pipeline tim
 and server-reported `prompt_tokens`/`completion_tokens` are exported when recorded
 (both are null for runs made before usage was stored or when the backend did not report it); processing completion is not the activity timestamp.
 Failures preserve diagnostic SHA-256 identifiers and presence without copying
-freeform exception messages. Known lifecycle skip reasons remain codes; arbitrary
-coverage/recovery diagnostics are redacted. Coverage diagnostic hashes are retained
-in both JSON and CSV. Raw model responses, filenames, storage
+freeform exception messages. Coverage `reason` and session `recovery_reason` keep
+lifecycle codes unchanged; any other stored text is a diagnostic, exported as
+`diagnostic_redacted`. Coverage diagnostic hashes are retained in both JSON and CSV;
+CSV has no session row, so `recovery_reason` appears in JSON only.
+
+| Code | Written when |
+| --- | --- |
+| `process_restart` | API startup pauses a running session and skips its open windows |
+| `preparation_interrupted` | A window stayed in preparation too long; its session pauses |
+| `expired` | A window aged past the session expiration before preparation or claim |
+| `superseded` | Playback or capture jumped; skipped windows are coalesced into one row |
+| `incomplete_tail` | The final window would extend past the source end |
+| `lifecycle_changed` | The session moved on while a window was being prepared |
+| `pause`, `stop`, `seek`, `restart`, `configure` | The named command skipped open windows |
+| `ingest_gap` | Live capture left a gap or began a new capture run |
+| `capture_ended` | Live frames stopped arriving; the session paused (recovery reason) |
+
+The codes are defined once as `LifecycleReason` in `src/fall_detection/scheduling.py`.
+`backlog`, `overload`, `busy` and `end_of_source` are not written by the current
+application but stay readable in exports of older data. Gaps and skips are coverage,
+never the `other` activity. Raw model responses, filenames, storage
 paths, claim tokens, media bytes, endpoint URLs, environment settings, credentials
 and weights are not exported. Configurations use an explicit field allowlist.
 User-authored prompts and model/fixture identifiers are intentionally exported;

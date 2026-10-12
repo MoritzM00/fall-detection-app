@@ -15,6 +15,9 @@ import fall_detection.preparation as preparation
 from fall_detection.models import PreparationRequest, VideoAsset
 
 PROFILES = (("720p-60s", 1280, 720, 15, 60), ("1080p-120s", 1920, 1080, 10, 120))
+# Replay-shaped profile from issue #70: causal windows far into a 10-minute recording.
+LONG_PROFILE = ("720p30-600s", 1280, 720, 30, 600)
+LONG_POSITIONS = (("t10", 10.0), ("t120", 120.0), ("t300", 300.0), ("t590", 590.0))
 
 
 def _generate(path: Path, width: int, height: int, fps: int, seconds: int) -> None:
@@ -73,13 +76,18 @@ def _worker(source: Path, data_dir: Path, seconds: int) -> dict[str, object]:
     preparation._sha256_file = record("hash", original_hash)
     preparation._selected_frames = record("decode_select", original_select)
     preparation._crop_rgb = record("crop", original_crop)
+    long = seconds >= LONG_PROFILE[4]
     positions = (
-        ("early", 1.0),
-        ("late", seconds - 4.0),
-        ("cache_hit", seconds - 4.0),
-        ("rapid_early", 2.0),
-        ("rapid_middle", seconds / 2.0),
-        ("rapid_late", seconds - 5.0),
+        LONG_POSITIONS
+        if long
+        else (
+            ("early", 1.0),
+            ("late", seconds - 4.0),
+            ("cache_hit", seconds - 4.0),
+            ("rapid_early", 2.0),
+            ("rapid_middle", seconds / 2.0),
+            ("rapid_late", seconds - 5.0),
+        )
     )
     rows = []
     saved = []
@@ -93,7 +101,9 @@ def _worker(source: Path, data_dir: Path, seconds: int) -> dict[str, object]:
             size=448,
         )
         start = time.perf_counter()
-        prepared = preparation.prepare_video(video, request, data_dir, inspection_pngs=False)
+        prepared = preparation.prepare_video(
+            video, request, data_dir, inspection_pngs=False, causal=long
+        )
         elapsed = time.perf_counter() - start
         hash_seconds = sum(phases.get("hash", []))
         decode_seconds = sum(phases.get("decode_select", []))
@@ -117,19 +127,22 @@ def _worker(source: Path, data_dir: Path, seconds: int) -> dict[str, object]:
     rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     peak_rss_mib = rss / (1024 * 1024) if sys.platform == "darwin" else rss / 1024
 
-    # Compare persisted selection and RGB hashes with the existing full-scan nearest-PTS path.
+    # Compare persisted selection and RGB hashes with the full-scan nearest-PTS path, which
+    # decodes from the first frame without seeking.
     preparation._sha256_file = original_hash
     preparation._selected_frames = original_select
     preparation._crop_rgb = original_crop
     for request, prepared in saved:
         stamps = [request.start_seconds + index / request.fps for index in range(16)]
-        reference = original_select(source, stamps)
+        watermark = stamps[-1] if long else None
+        reference = original_select(source, stamps, watermark, seek=False)
         assert [frame.source_pts for frame in prepared.frames] == [item[2] for item in reference]
         assert [frame.sha256 for frame in prepared.frames] == [
             hashlib.sha256(original_crop(item[0], request.size).tobytes()).hexdigest()
             for item in reference
         ]
-    assert saved[1][1].id == saved[2][1].id
+    if not long:
+        assert saved[1][1].id == saved[2][1].id
     return {"cases": rows, "peak_rss_mib": round(peak_rss_mib, 1), "reference_match": True}
 
 
@@ -137,6 +150,9 @@ def main() -> None:
     """Generate representative clips, measure each in isolation, and print JSON."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--worker", nargs=3, metavar=("SOURCE", "DATA_DIR", "SECONDS"))
+    parser.add_argument(
+        "--long", action="store_true", help="also run the 10-minute 720p30 replay profile"
+    )
     args = parser.parse_args()
     if args.worker:
         source, data_dir, seconds = args.worker
@@ -151,7 +167,7 @@ def main() -> None:
     }
     with TemporaryDirectory(prefix="fall-prep-benchmark-") as directory:
         root = Path(directory)
-        for name, width, height, fps, seconds in PROFILES:
+        for name, width, height, fps, seconds in PROFILES + ((LONG_PROFILE,) if args.long else ()):
             data_dir = root / name
             media_dir = data_dir / "media"
             media_dir.mkdir(parents=True)

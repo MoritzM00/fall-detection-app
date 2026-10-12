@@ -17,7 +17,7 @@ from fall_detection.live import LIVE_PREPROCESSING_VERSION, IngestGapError, prep
 from fall_detection.models import PreparationRequest, RunConfiguration
 from fall_detection.monitoring import Monitoring
 from fall_detection.prediction import InferenceClient, PipelineResult
-from fall_detection.preparation import load_prepared_input
+from fall_detection.preparation import load_prepared_input, preparation_path
 from fall_detection.repository import Repository
 
 
@@ -130,6 +130,20 @@ def test_live_frames_flow_into_an_ordinary_prediction(live):
     exported = client.get(f"/monitoring-sessions/{session['id']}/export?format=json")
     assert exported.status_code == 200, exported.text
     assert client.get(f"/monitoring-sessions/{session['id']}/export?format=csv").status_code == 200
+
+
+@pytest.mark.parametrize("rgb_arrays", [False, True])
+def test_live_bundles_store_the_rgb_array_only_when_enabled(live, rgb_arrays):
+    client, settings, repository, _ = live
+    session = create(client)
+    run(client, session["id"], "start")
+    send(client, session["id"], [(i, i * 0.25) for i in range(9)])
+    drain(replace(settings, rgb_arrays=rgb_arrays), repository)
+    job_id = {row["sequence"]: row for row in history(client, session["id"])}[1]["job_id"]
+    job = repository.get_job(job_id)
+    assert job.state == "succeeded"
+    stored = preparation_path(settings.data_dir, job.prepared_input_id) / "frames.npy"
+    assert stored.exists() == rgb_arrays
 
 
 def test_ingest_is_idempotent_and_rejects_conflicts(live):

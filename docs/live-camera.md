@@ -1,7 +1,8 @@
 # Live camera monitoring
 
 Status: **phases 1–2 (backend ingest and browser capture) implemented locally
-against mock serving; raw-frame retention is not yet built.** This is proposed application behavior, not verified
+against mock serving; phase 3 provides manual raw-frame pruning by age; automatic
+retention is not built.** This is proposed application behavior, not verified
 research behavior. It addresses the open decision "Camera protocol and browser
 playback approach" ([decisions](decisions.md)) and the ingestion part of roadmap
 milestone 6. Nothing here changes the research baseline or claims parity with it.
@@ -150,7 +151,7 @@ resize as video preparation. A sampled timestamp without a frame within
 `2 / capture_fps` is a defensive `ingest_gap` skip, not a failure. The result is an
 ordinary prepared bundle with preprocessing version `pillow-live-frames-jpeg-v1`,
 actual capture times as `actual_seconds`, frame `seq` values as `source_pts`, and
-the usual RGB/JPEG integrity, so the worker's inference path is unchanged and jobs
+the usual JPEG integrity checks, so the worker's inference path is unchanged and jobs
 keep their input timestamps and configuration identity.
 
 ### Lifecycle
@@ -177,22 +178,28 @@ keep their input timestamps and configuration identity.
 
 ## Storage, retention and privacy
 
-Camera frames are personal data of whoever is in view. Proposed defaults, all to
-be confirmed:
+Camera frames are personal data of whoever is in view.
 
 - Frame logs live under `FALL_DETECTION_DATA_DIR/live/<source id>/` (already
-  git-ignored via `data/`; never committed). **Not yet implemented:** raw frames
-  are currently kept until the data directory is cleaned manually, and
-  `scripts/prune_media.py` does not touch `live/`. Until phase 3, use live
-  sessions only with test footage of yourself. Phase 3 must protect frames that
-  pending or preparing windows still need and coordinate deletion with frame-log
-  reads under the storage lock.
-- Raw frames older than `expiration_seconds + window width + margin` are deleted
-  by the worker unless a prepared bundle for an admitted window references them.
-  Prepared bundles referenced by jobs are retained, as for other sources, because
-  they are the prediction's input provenance.
-- `max_seconds` caps per-session storage; the existing manual
-  [retention](retention.md) command is extended to live bundles.
+  git-ignored via `data/`; never committed). Raw frames are kept while a session
+  is running or paused. **Implemented (phase 3, manual):** `scripts/prune_media.py`
+  removes the frame log and the prepared bundles of a live session that was
+  stopped more than `--session-age-days` ago (default 30), in preview mode unless
+  `--apply` is given; see [retention](retention.md). It never touches frames or
+  bundles that pending or preparing windows, or queued or running jobs, still
+  need. Deletion runs under the exclusive storage lock, so it cannot overlap
+  frame ingest or preparation, which hold the shared lock. The `live_frames`
+  rows (sequence, capture time, SHA-256) stay, so provenance survives, a restarted
+  session never reuses sequence numbers, and preparation that would need a pruned
+  frame fails with a reason. Nothing is deleted automatically, so use live
+  sessions only with test footage of yourself.
+- Measured on generated 1280×720 frames at the browser's JPEG quality 85, raw
+  frames take about 3.3–5.0 GB per hour at 15 fps. Prepared bundles no longer store
+  the RGB array by default (about 0.5–0.9 MB per default window instead of about
+  10 MB); see [retention](retention.md) for the measurements.
+- Not built: worker-side deletion of raw frames older than
+  `expiration_seconds + window width + margin` while a session runs.
+- `max_seconds` caps per-session storage.
 - Before anyone other than the developer is on camera, the conditions in
   [product](product.md) apply: intended users, consent, access control and
   deletion must be defined first. This slice is a local development and demo tool.
@@ -243,8 +250,9 @@ be confirmed:
    `prepare_frames`, schema migration (SQLite `user_version` 5), tests.
 2. Frontend (done): camera capture and upload loop, live viewer and rolling
    timeline, e2e test with the fake camera.
-3. Retention for live frames and documentation updates (`monitoring.md`,
-   `contracts.md`, `retention.md`).
+3. Retention for live frames (manual pruning by age, done; see
+   [retention](retention.md)). Automatic deletion while a session runs is not
+   built.
 4. Later, separately: a server-side RTSP reader writing the same frame log, plus
    the preview transport it would need.
 
@@ -252,7 +260,8 @@ be confirmed:
 
 - Default `capture_fps` (15 proposed) and upload resolution/JPEG quality, balancing
   bandwidth against crop quality at 448 px.
-- Raw-frame retention horizon and whether bundles for skipped windows are kept.
+- Whether raw frames should also be deleted automatically while a session runs,
+  and with which horizon (manual pruning by session age is implemented).
 - Maximum session length (1 hour proposed).
 - Whether a running live session should survive a tab reload by re-acquiring the
   camera automatically, or always pause (proposed: always pause).
