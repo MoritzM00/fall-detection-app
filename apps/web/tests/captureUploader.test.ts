@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { ApiError } from "../src/api.ts";
 import type { CapturedFrame, FrameAck } from "../src/api";
-import { MAX_BACKLOG_SECONDS, createCaptureUploader } from "../src/captureUploader.ts";
+import { MAX_BACKLOG_SECONDS, MAX_PENDING_ENCODES, createCaptureUploader } from "../src/captureUploader.ts";
 import type { CaptureStats } from "../src/captureUploader.ts";
 
 const FPS = 15;
@@ -39,7 +39,7 @@ function harness(respond: (call: Call, index: number) => Promise<FrameAck>, time
     async run(count: number) {
       for (let index = 0; index < count; index++) {
         clock += 1000 / FPS;
-        uploader.capture(jpeg());
+        uploader.capture(jpeg);
         await settle();
         uploader.pump();
         await settle();
@@ -56,8 +56,8 @@ function hang(call: Call): Promise<FrameAck> {
 test("frames are numbered at capture time and uploaded in order even if encoding finishes out of order", async () => {
   const h = harness(async call => ack(call.frames));
   let releaseFirst!: (blob: Blob) => void;
-  h.uploader.capture(new Promise(resolve => { releaseFirst = resolve; }));
-  h.uploader.capture(jpeg());
+  h.uploader.capture(() => new Promise(resolve => { releaseFirst = resolve; }));
+  h.uploader.capture(jpeg);
   await settle();
   h.uploader.pump();
   assert.equal(h.calls.length, 0, "a later frame must not overtake an unencoded earlier one");
@@ -171,4 +171,35 @@ test("a current run refused as older than another page's run ends with a visible
   await h.run(4);
   assert.equal(h.calls.length, 1, "restarting would only be refused again");
   assert.deepEqual(h.ended, [{ reason: message, failure: `Frame upload failed: ${message}` }]);
+});
+
+test("capture ticks are skipped while too many encodes are pending, then resume", async () => {
+  const h = harness(async call => ack(call.frames));
+  const pending: ((blob: Blob) => void)[] = [];
+  let started = 0;
+  const slow = () => { started++; return new Promise<Blob>(resolve => { pending.push(resolve); }); };
+  for (let index = 0; index < MAX_PENDING_ENCODES + 5; index++) h.uploader.capture(slow);
+  assert.equal(started, MAX_PENDING_ENCODES, "no encode may start beyond the limit");
+  assert.equal(h.uploader.encoding, MAX_PENDING_ENCODES);
+  assert.equal(h.uploader.queued, MAX_PENDING_ENCODES);
+  assert.equal(h.uploader.capture(jpeg), false);
+  for (const resolve of pending) resolve(new Blob(["x"]));
+  await settle();
+  assert.equal(h.uploader.encoding, 0);
+  await h.run(1);
+  h.uploader.pump(); // The first batch took BATCH_FRAMES; send the rest.
+  await settle();
+  assert.equal(h.uploader.queued, 0);
+  const frames = h.calls.flatMap(call => call.frames);
+  assert.deepEqual(frames.map(frame => frame.run_seq), [...Array(MAX_PENDING_ENCODES + 1).keys()], "skipped ticks do not consume run_seq");
+  assert.ok(frames.at(-1)!.capture_seconds > frames.at(-2)!.capture_seconds);
+  assert.deepEqual(h.ended, []);
+});
+
+test("a rejected encode also frees its slot", async () => {
+  const h = harness(async call => ack(call.frames));
+  h.uploader.capture(() => Promise.reject(new Error("JPEG encoding failed")));
+  h.uploader.capture(() => { throw new Error("synchronous failure"); });
+  await settle();
+  assert.equal(h.uploader.encoding, 0);
 });

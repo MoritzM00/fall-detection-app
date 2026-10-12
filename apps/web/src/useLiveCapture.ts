@@ -125,10 +125,12 @@ export function useLiveCapture(sessionId: string | null, running: boolean, captu
       if (!encoder || !video || video.readyState < 2 || !video.videoWidth) return;
       // Coalesced timer callbacks must not exceed the server's twice-the-capture-rate bound.
       if (performance.now() - lastCapture < 750 / captureFps) return;
-      lastCapture = performance.now();
       const scale = Math.min(1, MAX_SHORT_EDGE / Math.min(video.videoWidth, video.videoHeight));
-      encoder.draw(video, Math.round(video.videoWidth * scale), Math.round(video.videoHeight * scale));
-      uploader.capture(encoder.encode());
+      const taken = uploader.capture(() => {
+        encoder.draw(video, Math.round(video.videoWidth * scale), Math.round(video.videoHeight * scale));
+        return encoder.encode();
+      });
+      if (taken) lastCapture = performance.now();
     }, 1000 / captureFps);
 
     const upload = window.setInterval(() => uploader.pump(), UPLOAD_INTERVAL_MS);

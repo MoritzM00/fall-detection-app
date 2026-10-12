@@ -7,6 +7,8 @@ export const BATCH_FRAMES = 32;
 // A backlog beyond this many seconds is abandoned; the next run records the gap explicitly.
 export const MAX_BACKLOG_SECONDS = 10;
 export const UPLOAD_TIMEOUT_MS = 10_000;
+// Each pending encode holds a bitmap copy (about 3 MB at 1280×720); skip ticks beyond this.
+export const MAX_PENDING_ENCODES = BATCH_FRAMES;
 const STOPPING_CONFLICT = /not running|superseded|maximum session length/;
 // The server refuses to start a run older than one it already stored.
 const STALE_RUN = /started before a newer run/;
@@ -63,6 +65,7 @@ export function createCaptureUploader(options: CaptureUploaderOptions) {
   let backoff = 0;
   let uploaded = 0;
   let lagSeconds: number | null = null;
+  let encoding = 0;
 
   function newRun() {
     inFlight?.abort(); // The stale request settles on its own; its result is ignored.
@@ -88,17 +91,27 @@ export function createCaptureUploader(options: CaptureUploaderOptions) {
     options.onStats({ frames: uploaded, fps: elapsed > 1 ? nextSeq / elapsed : null, lagSeconds, queued: queue.length });
   }
 
-  /** Records one frame now; `encoded` may resolve later and in any order. */
-  function capture(encoded: Promise<Blob>) {
-    if (ended) return;
+  /**
+   * Records one frame now; the encoding `encode` starts may resolve later and in any
+   * order. While too many encodes are pending (a slow device or a background tab)
+   * the tick is skipped without drawing; the server records the jump as a gap.
+   * Returns whether the frame was taken.
+   */
+  function capture(encode: () => Promise<Blob>): boolean {
+    if (ended || encoding >= MAX_PENDING_ENCODES) return false;
     if (queue.length >= maxQueued) newRun();
     const frame: QueuedFrame = { run_seq: nextSeq++, capture_seconds: (now() - start) / 1000, blob: null };
     const run = runId;
     queue.push(frame);
-    encoded.then(blob => { frame.blob = blob; }, () => {
+    let encoded: Promise<Blob>;
+    try { encoded = encode(); } catch (cause) { encoded = Promise.reject(cause); }
+    encoding++;
+    encoded.then(blob => { encoding--; frame.blob = blob; }, () => {
+      encoding--;
       // A frame that cannot be encoded breaks run_seq continuity; restart behind a gap.
       if (run === runId && queue.includes(frame)) newRun();
     });
+    return true;
   }
 
   /** Starts the next upload when nothing is in flight and encoded frames are ready. */
@@ -145,5 +158,6 @@ export function createCaptureUploader(options: CaptureUploaderOptions) {
     get runId() { return runId; },
     get queued() { return queue.length; },
     get uploading() { return inFlight !== null; },
+    get encoding() { return encoding; },
   };
 }

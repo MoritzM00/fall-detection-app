@@ -223,7 +223,11 @@ be confirmed:
   and `capture_seconds` are assigned when the frame is drawn; JPEG encoding is
   asynchronous (`OffscreenCanvas.convertToBlob`, else `canvas.toBlob`, else a
   synchronous data URL), and only the contiguous encoded prefix is uploaded, so
-  order comes from `run_seq`, not from when encoding finishes. Frames go out in
+  order comes from `run_seq`, not from when encoding finishes. Each pending
+  encode holds a copy of the bitmap, so while 32 encodes are pending (a slow
+  device or a background tab) capture ticks are skipped without drawing; the
+  skipped time reaches the server as a capture-time jump and, if longer than
+  `2 / capture_fps`, is recorded as an `ingest_gap`. Frames go out in
   ordered batches of up to 32 every 250 ms, each request aborted after 10 s.
   Timeouts, network errors, 408, 429 and 5xx back off and retry the same frames.
   Frames still queued when the session pauses or stops are discarded (the server
