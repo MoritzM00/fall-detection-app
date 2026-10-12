@@ -5,14 +5,13 @@ import pytest
 
 import apps.worker.main as worker
 from fall_detection.config import Settings
-from fall_detection.inference import InferenceResponse
-from fall_detection.pipeline import PipelineResult
+from fall_detection.prediction import InferenceResponse, PipelineResult
 from fall_detection.repository import Repository
 
 
 @pytest.fixture(autouse=True)
 def mock_discovery(monkeypatch):
-    from fall_detection.inference import InferenceClient
+    from fall_detection.prediction import InferenceClient
 
     monkeypatch.setattr(InferenceClient, "discover_mock_identity", lambda self: "sample-v1")
 

@@ -14,10 +14,9 @@ import numpy as np
 import apps.worker.main as worker
 from fall_detection.config import Settings
 from fall_detection.models import PreparationRequest
+from fall_detection.prediction import ACTIVITY_LABELS, THESIS_BASELINE_PROMPT
 from fall_detection.preparation import prepare_video, to_vllm_jpeg_data_url
-from fall_detection.prompts import THESIS_BASELINE_PROMPT
 from fall_detection.repository import Repository
-from fall_detection.taxonomy import ACTIVITY_LABELS
 
 
 def _generate_clip(path: Path) -> None:

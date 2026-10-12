@@ -13,7 +13,7 @@ import pytest
 
 from fall_detection.repository import Repository
 from fall_detection.retention import prune_media
-from fall_detection.storage_lock import storage_lock
+from fall_detection.storage import storage_lock
 
 NOW = datetime(2026, 9, 25, tzinfo=UTC)
 OLD = NOW - timedelta(days=10)

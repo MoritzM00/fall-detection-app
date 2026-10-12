@@ -27,12 +27,15 @@ from apps.mock_inference.scenarios import (
     next_attempt,
 )
 from fall_detection.config import Settings
-from fall_detection.inference import InferenceClient, InferenceServiceError
 from fall_detection.models import PreparationRequest
-from fall_detection.pipeline import build_inference_payload
+from fall_detection.prediction import (
+    ACTIVITY_LABELS,
+    InferenceClient,
+    InferenceServiceError,
+    build_inference_payload,
+)
 from fall_detection.preparation import prepare_video
 from fall_detection.repository import Repository
-from fall_detection.taxonomy import ACTIVITY_LABELS
 
 
 def payload(color="red"):

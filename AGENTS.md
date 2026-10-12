@@ -3,6 +3,7 @@
 - Keep the thesis source and research repository unchanged unless separately authorized.
 - Record proposed behavior separately from verified research behavior.
 - Preserve all 16 activity labels. Processing failures are not the `other` class.
+- Keep Python modules under about 500 lines. Split a module along a real boundary (for example, `monitoring.py` lifecycle vs. `scheduling.py`) before it grows past that, but don't create tiny single-purpose modules either: put small helpers in the module that owns their concern instead of adding a new file. Put command-line wrappers in `scripts/`, not in the `fall_detection` package.
 - Model predictions must retain their input timestamps and configuration identity.
 - Never commit video data, credentials, model weights, or adapter weights.
 - Commit completed, verified changes in small, coherent pieces instead of accumulating a large uncommitted worktree.

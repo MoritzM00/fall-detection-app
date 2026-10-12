@@ -7,10 +7,10 @@ import json
 import sqlite3
 from pathlib import Path
 
+from fall_detection.prediction import ACTIVITY_LABELS
 from fall_detection.preparation import load_prepared_input
 from fall_detection.repository import Repository
-from fall_detection.storage_lock import storage_lock
-from fall_detection.taxonomy import ACTIVITY_LABELS
+from fall_detection.storage import storage_lock
 
 SCHEMA_VERSION = 1
 

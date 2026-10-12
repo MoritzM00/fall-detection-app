@@ -3,7 +3,7 @@ from threading import Event
 
 import pytest
 
-from fall_detection.preparation_queue import PreparationBusyError, PreparationCoordinator
+from fall_detection.preparation import PreparationBusyError, PreparationCoordinator
 
 
 def test_identical_requests_share_one_decode() -> None:

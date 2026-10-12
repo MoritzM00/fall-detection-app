@@ -8,7 +8,7 @@ before final scoring. Dataset directories are never annotations.
 Run the CLI against [canonical JSON exports](exports.md):
 
 ```sh
-uv run python -m fall_detection.evaluation --ground-truth truth.json --export session.json --output report.json
+uv run python -m scripts.evaluate --ground-truth truth.json --export session.json --output report.json
 ```
 
 `--export` can repeat for disjoint sources with the same dataset/split/purpose and

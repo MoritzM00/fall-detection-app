@@ -2,14 +2,17 @@ import copy
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
-from fall_detection.evaluation import GroundTruth, evaluate
+from fall_detection.evaluation import evaluate
 from fall_detection.exports import ExperimentExports
-from fall_detection.pipeline import PipelineResult
+from fall_detection.ground_truth import GroundTruth
+from fall_detection.prediction import ACTIVITY_LABELS, PipelineResult
 from fall_detection.repository import Repository
-from fall_detection.taxonomy import ACTIVITY_LABELS
+
+ROOT = Path(__file__).parents[1]
 
 
 @pytest.fixture
@@ -462,7 +465,7 @@ def test_cli_consumes_actual_export_and_records_missing_legacy_facts(tmp_path, t
         [
             sys.executable,
             "-m",
-            "fall_detection.evaluation",
+            "scripts.evaluate",
             "--ground-truth",
             str(truth_path),
             "--export",
@@ -474,6 +477,7 @@ def test_cli_consumes_actual_export_and_records_missing_legacy_facts(tmp_path, t
         capture_output=True,
         text=True,
         check=False,
+        cwd=ROOT,
     )
     assert result.returncode == 0, result.stderr
     report = json.loads(output.read_text())
@@ -488,7 +492,7 @@ def test_cli_consumes_actual_export_and_records_missing_legacy_facts(tmp_path, t
         [
             sys.executable,
             "-m",
-            "fall_detection.evaluation",
+            "scripts.evaluate",
             "--ground-truth",
             str(truth_path),
             "--export",
@@ -499,6 +503,7 @@ def test_cli_consumes_actual_export_and_records_missing_legacy_facts(tmp_path, t
         capture_output=True,
         text=True,
         check=False,
+        cwd=ROOT,
     )
     assert result.returncode == 2
     assert "Evaluation rejected" in result.stderr
@@ -631,7 +636,7 @@ def test_cli_rejects_input_overwrite_and_duplicate_json_keys(tmp_path, truth):
     command = [
         sys.executable,
         "-m",
-        "fall_detection.evaluation",
+        "scripts.evaluate",
         "--ground-truth",
         str(truth_path),
         "--export",
@@ -641,12 +646,12 @@ def test_cli_rejects_input_overwrite_and_duplicate_json_keys(tmp_path, truth):
         "--synthetic",
     ]
     before = export_path.read_bytes()
-    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    result = subprocess.run(command, capture_output=True, text=True, check=False, cwd=ROOT)
     assert result.returncode == 2 and "overwrite" in result.stderr
     assert export_path.read_bytes() == before
     command[command.index("--output") + 1] = str(tmp_path / "report.json")
     truth_path.write_text('{"schema_version":1,"schema_version":2}')
-    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    result = subprocess.run(command, capture_output=True, text=True, check=False, cwd=ROOT)
     assert result.returncode == 2 and "duplicate JSON key" in result.stderr
 
 

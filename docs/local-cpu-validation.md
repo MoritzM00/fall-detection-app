@@ -38,7 +38,7 @@ From the application repository, create a temporary prompt file:
 ```sh
 .venv/bin/python - <<'PY'
 from pathlib import Path
-from fall_detection.prompts import THESIS_BASELINE_PROMPT
+from fall_detection.prediction import THESIS_BASELINE_PROMPT
 
 extra = (
     "\n\nThe entire response must be exactly one line: The best answer is: "

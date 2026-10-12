@@ -12,7 +12,7 @@ from typing import Literal
 from uuid import UUID
 
 from fall_detection.models import PreparedInput
-from fall_detection.storage_lock import storage_lock
+from fall_detection.storage import storage_lock
 
 _MEDIA_SUFFIXES = {".mp4", ".mov", ".webm", ".mkv"}
 

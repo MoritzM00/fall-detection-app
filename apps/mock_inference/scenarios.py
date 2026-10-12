@@ -9,7 +9,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from fall_detection.taxonomy import ActivityLabel
+from fall_detection.prediction import ActivityLabel
 
 
 class Scenario(BaseModel):
