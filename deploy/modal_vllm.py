@@ -5,7 +5,9 @@ auth token (``Modal-Key`` / ``Modal-Secret`` headers); Modal rejects anything el
 edge, before a GPU container is started, so unauthenticated traffic cannot run up cost.
 """
 
+import os
 import subprocess
+import threading
 
 import modal
 
@@ -14,7 +16,8 @@ VLLM_VERSION = "0.30.0"
 MODEL_ID = "Qwen/Qwen3-VL-8B-Instruct"
 # Matches the worker default for FALL_DETECTION_INFERENCE_MODEL.
 SERVED_MODEL_NAME = "qwen3-vl-8b-instruct"
-# 24 GB is enough for bf16 weights plus a 16k context; switch to "L40S" (48 GB) on OOM.
+# 24 GB fits bf16 weights plus a ~12k-token KV cache; 16 frames at the 672 px maximum
+# crop need about 3.5k visual tokens. Switch to "L40S" (48 GB) for longer contexts.
 GPU = "L4"
 PORT = 8000
 MINUTES = 60
@@ -41,7 +44,7 @@ app = modal.App("fall-detection-vllm")
 @modal.web_server(port=PORT, startup_timeout=20 * MINUTES, requires_proxy_auth=True)
 def serve() -> None:
     """Start the OpenAI-compatible vLLM server inside the GPU container."""
-    subprocess.Popen(
+    server = subprocess.Popen(
         [
             "vllm",
             "serve",
@@ -53,7 +56,7 @@ def serve() -> None:
             "--port",
             str(PORT),
             "--max-model-len",
-            "16384",
+            "5120",
             "--max-num-seqs",
             "4",
             "--gpu-memory-utilization",
@@ -62,3 +65,9 @@ def serve() -> None:
             '{"image": 0, "video": 1}',
         ]
     )
+
+    # A crashed server would otherwise leave an idle GPU container running until timeout.
+    def exit_with_server() -> None:
+        os._exit(server.wait() or 1)
+
+    threading.Thread(target=exit_with_server, daemon=True).start()

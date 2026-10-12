@@ -14,7 +14,7 @@ Later: process supervision, private networking or HTTPS, secrets injection, heal
 
 ## Modal GPU endpoint (proposed, not yet validated)
 
-[`modal_vllm.py`](modal_vllm.py) serves `Qwen/Qwen3-VL-8B-Instruct` with vLLM on a rented Modal GPU. The application keeps running locally (`make dev`), and only the worker talks to the endpoint. **No live request has been made against it yet**, so the vLLM version, GPU size and context length are untested starting points (see [vLLM live validation](../docs/vllm-live-validation.md)).
+[`modal_vllm.py`](modal_vllm.py) serves `Qwen/Qwen3-VL-8B-Instruct` with vLLM on a rented Modal GPU. The application keeps running locally (`make dev`), and only the worker talks to the endpoint. **No successful live request has been made against it yet**, so the vLLM version, GPU size and context length are untested starting points. A first start with a 16k context ran out of KV cache memory on the L4; the context is now 5,120 tokens (see [vLLM live validation](../docs/vllm-live-validation.md)).
 
 Cost and access controls:
 
