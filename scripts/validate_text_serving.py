@@ -6,6 +6,7 @@ import math
 import socket
 from typing import Any
 
+from fall_detection.config import Settings
 from fall_detection.prediction import (
     ACTIVITY_LABELS,
     InferenceClient,
@@ -21,8 +22,9 @@ def validate(base_url: str, model: str, timeout: float = 120) -> dict[str, Any]:
     if not math.isfinite(timeout) or timeout <= 0:
         raise ValueError("timeout must be finite and positive")
     base_url = base_url.rstrip("/")
-    version, served_models = _server_identity(base_url, model)
-    client = InferenceClient(base_url, timeout_seconds=timeout)
+    headers = Settings.from_env().inference_auth_headers()
+    version, served_models = _server_identity(base_url, model, headers)
+    client = InferenceClient(base_url, timeout_seconds=timeout, auth_headers=headers)
 
     def payload(text: str, *, max_tokens: int = 32) -> dict[str, Any]:
         return {

@@ -34,7 +34,8 @@ test("live camera frames produce predictions and pause or reload leaves an expli
   // Resume reconnects the camera and starts a new capture run behind an explicit gap.
   await panel.getByRole("button", { name: "Resume", exact: true }).click();
   await expect(panel.getByText(/System: running/)).toBeVisible();
-  await expect(panel.locator("summary").filter({ hasText: /ingest_gap/ })).toBeVisible();
+  // A slow first frame can add a second gap at the start of the capture, so require at least one.
+  await expect(panel.locator("summary").filter({ hasText: /ingest_gap/ }).first()).toBeVisible();
   await expect(panel.getByText(/Camera: \d+\.\d fps/)).toBeVisible();
 
   await page.setViewportSize({ width: 390, height: 844 });

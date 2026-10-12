@@ -80,6 +80,7 @@ def process_next_job(settings: Settings, repository: Repository) -> bool:
             settings.inference_base_url,
             timeout_seconds=settings.request_timeout_seconds,
             mock_fixture_identity=config.fixture_version if config.backend_kind == "mock" else None,
+            auth_headers=settings.inference_auth_headers(),
         )
         if (
             config.backend_kind == "mock"

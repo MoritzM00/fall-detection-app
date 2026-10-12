@@ -1,4 +1,4 @@
-.PHONY: setup dev check browser-test demo
+.PHONY: setup dev check browser-test demo gpu-warm
 
 setup:
 	UV_CACHE_DIR=.uv-cache uv sync
@@ -22,3 +22,6 @@ browser-test:
 
 demo:
 	.venv/bin/python -m scripts.demo
+
+gpu-warm:
+	[ ! -f .env ] || . ./.env; UV_CACHE_DIR=.uv-cache uv run python scripts/warm_gpu.py

@@ -38,13 +38,18 @@ def _generate_clip(path: Path) -> None:
             container.mux(packet)
 
 
-def _server_identity(base_url: str, model: str) -> tuple[str, list[str]]:
+def _server_identity(base_url: str, model: str, headers: dict[str, str]) -> tuple[str, list[str]]:
     """Read the serving version and model IDs before sending video data."""
     root = base_url.removesuffix("/v1")
-    version_response = httpx.get(f"{root}/version", timeout=10)
+    # A scale-to-zero endpoint may need to start a container before it answers.
+    version_response = httpx.get(
+        f"{root}/version", headers=headers, timeout=600, follow_redirects=True
+    )
     version_response.raise_for_status()
     version = version_response.json().get("version")
-    models_response = httpx.get(f"{base_url}/models", timeout=10)
+    models_response = httpx.get(
+        f"{base_url}/models", headers=headers, timeout=60, follow_redirects=True
+    )
     models_response.raise_for_status()
     models = [item["id"] for item in models_response.json()["data"]]
     if not isinstance(version, str) or not version:
@@ -63,7 +68,9 @@ def validate(
     prompt_text: str = THESIS_BASELINE_PROMPT,
 ) -> dict:
     """Verify actual request bytes, accepted response, provenance, and failure state."""
-    vllm_version, served_models = _server_identity(base_url, model)
+    vllm_version, served_models = _server_identity(
+        base_url, model, Settings.from_env().inference_auth_headers()
+    )
     with TemporaryDirectory(prefix="fall-vllm-contract-") as directory:
         data_dir = Path(directory)
         media_path = data_dir / "media" / "generated.mp4"
