@@ -3,6 +3,7 @@
 import httpx
 import pytest
 
+import scripts.validate_vllm_contract as vllm_contract
 from fall_detection import prediction, serving_status
 
 
@@ -16,7 +17,7 @@ def route_inference(monkeypatch):
         def routed(base_url, timeout, transport=None):
             return real(base_url, timeout, httpx.MockTransport(handler))
 
-        monkeypatch.setattr(prediction, "same_origin_client", routed)
-        monkeypatch.setattr(serving_status, "same_origin_client", routed)
+        for module in (prediction, serving_status, vllm_contract):
+            monkeypatch.setattr(module, "same_origin_client", routed)
 
     return install

@@ -113,9 +113,9 @@ fallback. Its local fake-response self-test is not real-service evidence.
 Target endpoint authentication requirements are unresolved. No authentication
 scheme or credential persistence is introduced here; agree the secured transport
 and required auth mechanism with the endpoint owner before external deployment.
-Do not place credentials in URLs, manifests, exports or logs. The inference client
-and warm-up follow redirects only within the scheme, host and port of the configured
-endpoint; any other redirect fails the job (or warm-up) before credentials or frames
-are sent to the new origin. #9 remains the real
+Do not place credentials in URLs, manifests, exports or logs. The inference client,
+warm-up and live validators follow redirects only within the scheme, host and port of
+the configured endpoint; any other redirect fails the job (or warm-up) before
+credentials or frames are sent to the new origin. #9 remains the real
 transport gate, #41 covers research input parity and measured capacity, and #42
 covers held-out continuous evaluation with targets agreed before final scoring.

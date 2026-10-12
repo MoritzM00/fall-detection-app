@@ -9,18 +9,12 @@ from scripts.validate_text_serving import validate
 
 
 @pytest.mark.parametrize("invalid_answer", ["banana", "other"])
-def test_smoke_test_only_reports_success_when_negative_checks_fail(
-    monkeypatch, route_inference, invalid_answer
-):
-    def fake_get(url, **_kwargs):
-        body = (
-            {"version": "fixture-only"}
-            if url.endswith("/version")
-            else {"data": [{"id": "fixture-model"}]}
-        )
-        return httpx.Response(200, json=body, request=httpx.Request("GET", url))
-
-    def fake_post(request):
+def test_smoke_test_only_reports_success_when_negative_checks_fail(route_inference, invalid_answer):
+    def handler(request):
+        if request.url.path == "/version":
+            return httpx.Response(200, json={"version": "fixture-only"})
+        if request.url.path == "/v1/models":
+            return httpx.Response(200, json={"data": [{"id": "fixture-model"}]})
         if request.url.host == "127.0.0.1":
             raise httpx.ConnectError("fixture connection refused")
         body = json.loads(request.content)
@@ -47,8 +41,7 @@ def test_smoke_test_only_reports_success_when_negative_checks_fail(
             },
         )
 
-    monkeypatch.setattr(httpx, "get", fake_get)
-    route_inference(fake_post)
+    route_inference(handler)
     if invalid_answer == "other":
         with pytest.raises(RuntimeError, match="expected non-activity output to fail"):
             validate("http://fixture.example/v1", "fixture-model", 1)
