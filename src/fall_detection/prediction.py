@@ -123,6 +123,35 @@ def require_encrypted_transport(base_url: str) -> None:
     )
 
 
+def same_origin_client(
+    base_url: str, timeout: float, transport: httpx.BaseTransport | None = None
+) -> httpx.Client:
+    """Return a client that follows redirects only within the scheme, host and port of base_url.
+
+    Modal answers long requests with a same-origin 303 that must be followed. httpx would
+    otherwise follow any redirect, keep custom credential headers such as Modal-Key on a
+    cross-origin hop, and resend the frames on a 307 or 308. The check runs before each
+    request is sent, so a refused hop sends nothing to the new origin.
+    """
+    origin = httpx.URL(base_url)
+
+    def check_origin(request: httpx.Request) -> None:
+        url = request.url
+        if (url.scheme, url.host, url.port) != (origin.scheme, origin.host, origin.port):
+            target = f"{url.scheme}://{url.host}" + (f":{url.port}" if url.port else "")
+            raise InferenceServiceError(
+                f"Refusing redirect to {target}: the endpoint may only redirect within "
+                f"{origin.scheme}://{origin.host}" + (f":{origin.port}" if origin.port else "")
+            )
+
+    return httpx.Client(
+        timeout=timeout,
+        follow_redirects=True,
+        transport=transport,
+        event_hooks={"request": [check_origin]},
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class InferenceResponse:
     """Validated portion of a serving response needed by the pipeline."""
@@ -148,12 +177,14 @@ class InferenceClient:
         timeout_seconds: float = 30,
         mock_fixture_identity: str | None = None,
         auth_headers: Mapping[str, str] | None = None,
+        transport: httpx.BaseTransport | None = None,
     ) -> None:
         """Configure the serving endpoint, credentials and bounded request timeout."""
         self._mock_fixture_identity = mock_fixture_identity
         self._auth_headers = dict(auth_headers or {})
         self._base_url = base_url.rstrip("/")
         self._timeout_seconds = timeout_seconds
+        self._transport = transport
 
     def discover_mock_identity(self) -> str:
         """Read effective service identity on the mock-only discovery endpoint."""
@@ -180,21 +211,20 @@ class InferenceClient:
     def complete(self, payload: dict[str, Any]) -> InferenceResponse:
         """Send one non-streaming multimodal completion request."""
         try:
-            response = httpx.post(
-                f"{self._base_url}/chat/completions",
-                json=payload,
-                timeout=self._timeout_seconds,
-                # Modal answers requests running past ~150 s with a 303 to poll for the result.
-                follow_redirects=True,
-                headers={
-                    **self._auth_headers,
-                    **(
-                        {"X-Mock-Fixture-Identity": self._mock_fixture_identity}
-                        if self._mock_fixture_identity
-                        else {}
-                    ),
-                },
-            )
+            # Modal answers requests running past ~150 s with a 303 to poll for the result.
+            with same_origin_client(self._base_url, self._timeout_seconds, self._transport) as http:
+                response = http.post(
+                    f"{self._base_url}/chat/completions",
+                    json=payload,
+                    headers={
+                        **self._auth_headers,
+                        **(
+                            {"X-Mock-Fixture-Identity": self._mock_fixture_identity}
+                            if self._mock_fixture_identity
+                            else {}
+                        ),
+                    },
+                )
             response.raise_for_status()
             if (
                 self._mock_fixture_identity
