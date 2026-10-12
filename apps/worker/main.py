@@ -17,6 +17,8 @@ stopping = False
 HEARTBEAT_SECONDS = 20.0
 IDLE_SECONDS = 0.4
 MAX_BACKOFF_SECONDS = 5.0
+# Stays well inside the 90 s lease, which the heartbeat keeps renewing meanwhile.
+SAVE_RETRY_SECONDS = 60.0
 UNEXPECTED_FAILURE = "Unexpected worker error. Retry this run."
 
 
@@ -45,6 +47,26 @@ def keep_claim_alive(
                 return
         except sqlite3.Error:
             logger.warning("lease renewal for job %s failed; retrying", job_id, exc_info=True)
+
+
+def save_result(save: Callable[[], bool], sleep: Callable[[float], None] | None = None) -> bool:
+    """Store a finished result, retrying transient database errors.
+
+    The inference has already run and may have been paid for, so a short lock
+    must not discard its result. Each attempt is its own transaction.
+    """
+    sleep = sleep or time.sleep
+    delay, waited = IDLE_SECONDS, 0.0
+    while True:
+        try:
+            return save()
+        except sqlite3.OperationalError:
+            if waited >= SAVE_RETRY_SECONDS:
+                raise
+            logger.warning("saving result failed; retrying in %.1f s", delay, exc_info=True)
+            sleep(delay)
+            waited += delay
+            delay = min(MAX_BACKOFF_SECONDS, delay * 2)
 
 
 def process_next_job(settings: Settings, repository: Repository) -> bool:
@@ -127,13 +149,15 @@ def process_next_job(settings: Settings, repository: Repository) -> bool:
             frame_count=config.preprocessing.frames,
             allow_bare_label=config.prompt_preset == "custom",
         )
-        accepted = repository.complete_job(
-            job.id,
-            result,
-            backend_kind=config.backend_kind,
-            model=model,
-            fixture_version=(config.fixture_version if config.backend_kind == "mock" else None),
-            claim_token=claim_token,
+        accepted = save_result(
+            lambda: repository.complete_job(
+                job.id,
+                result,
+                backend_kind=config.backend_kind,
+                model=model,
+                fixture_version=(config.fixture_version if config.backend_kind == "mock" else None),
+                claim_token=claim_token,
+            )
         )
         if accepted:
             logger.info("completed job %s as %s", job.id, result.label)

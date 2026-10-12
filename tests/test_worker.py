@@ -201,6 +201,40 @@ def test_unexpected_job_error_fails_job_with_generic_message(queued_job, monkeyp
     assert failed.error == worker.UNEXPECTED_FAILURE
 
 
+def test_locked_database_after_inference_keeps_the_result(queued_job, monkeypatch):
+    settings, repository, job = queued_job
+    monkeypatch.setattr(worker, "run_pipeline", _succeed)
+    failures = iter([sqlite3.OperationalError("database is locked")] * 2)
+    complete = repository.complete_job
+
+    def locked_twice(*args, **kwargs):
+        error = next(failures, None)
+        if error is not None:
+            raise error
+        return complete(*args, **kwargs)
+
+    monkeypatch.setattr(repository, "complete_job", locked_twice)
+    slept: list[float] = []
+    monkeypatch.setattr(worker.time, "sleep", slept.append)
+    assert worker.process_next_job(settings, repository)
+    completed = repository.get_job(job.id)
+    assert completed.state == "succeeded"
+    assert completed.prediction is not None and completed.prediction.label == "fall"
+    assert slept == pytest.approx([0.4, 0.8])
+
+
+def test_saving_gives_up_after_the_retry_window(monkeypatch):
+    monkeypatch.setattr(worker, "SAVE_RETRY_SECONDS", 2.0)
+    slept: list[float] = []
+
+    def locked() -> bool:
+        raise sqlite3.OperationalError("database is locked")
+
+    with pytest.raises(sqlite3.OperationalError):
+        worker.save_result(locked, sleep=slept.append)
+    assert slept == pytest.approx([0.4, 0.8, 1.6])
+
+
 class _TickingStop(Event):
     """Heartbeat stop event that returns immediately and advances a fake clock per tick."""
 
