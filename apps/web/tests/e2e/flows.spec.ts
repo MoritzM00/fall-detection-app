@@ -10,6 +10,19 @@ async function waitForApi(request: APIRequestContext) {
   await expect.poll(async () => (await request.get(`http://127.0.0.1:${process.env.FALL_DETECTION_API_PORT ?? "8000"}/health`)).status()).toBe(200);
 }
 
+test("the dev proxy grants no cross-origin preflight to another local page", async ({ request }) => {
+  await waitForApi(request);
+  const preflight = await request.fetch("/api/serving-status/warmup", {
+    method: "OPTIONS",
+    headers: {
+      Origin: "http://localhost:3000",
+      "Access-Control-Request-Method": "POST",
+      "Access-Control-Request-Headers": "x-requested-with",
+    },
+  });
+  expect(preflight.headers()["access-control-allow-origin"]).toBeUndefined();
+});
+
 test("uploaded frames and submitted result survive source and sampling changes", async ({ page, request }) => {
   await waitForApi(request);
   await page.goto("/");
