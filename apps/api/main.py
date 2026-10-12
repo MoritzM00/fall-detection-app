@@ -21,11 +21,13 @@ from fall_detection.exports import ExperimentExports, csv_export, json_export
 from fall_detection.models import (
     AnalysisJob,
     AnalysisJobCreate,
+    ContextWindowError,
     DatasetVideoCreate,
     DatasetVideoOption,
     PreparationRequest,
     PreparedInput,
     VideoAsset,
+    check_context_window,
 )
 from fall_detection.monitoring import (
     Monitoring,
@@ -129,6 +131,8 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
             "generation": {"temperature": 0, "max_tokens": 32},
             "generation_limits": {"min_max_tokens": 16, "max_max_tokens": 4096},
             "preprocessing": {"frame_count": 16, "size": 448, "crop": "center"},
+            # Requests whose conservative token estimate exceeds this are rejected with 422.
+            "serving_limits": {"max_model_len": settings.max_model_len},
         }
 
     @app.get("/serving-status")
@@ -249,6 +253,16 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
     @app.post("/analysis-jobs", response_model=AnalysisJob, status_code=status.HTTP_202_ACCEPTED)
     def create_analysis_job(request: AnalysisJobCreate) -> AnalysisJob:
         """Validate a selected range and persist a queued analysis job."""
+        try:
+            check_context_window(
+                request.frame_count,
+                request.size,
+                request.prompt_text if request.prompt_text is not None else THESIS_BASELINE_PROMPT,
+                request.generation.max_tokens if request.generation else 32,
+                settings.max_model_len,
+            )
+        except ContextWindowError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
         def validate_input() -> PreparedInput | None:
             """Validate storage-backed input while its caller holds the lock."""

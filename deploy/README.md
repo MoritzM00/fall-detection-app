@@ -33,7 +33,7 @@ Configuration is split by sensitivity:
 
 | File | Committed | Contents |
 | --- | --- | --- |
-| [`modal.env`](modal.env) | yes | Backend kind, endpoint URL, Modal app name, request timeout |
+| [`modal.env`](modal.env) | yes | Backend kind, endpoint URL, Modal app name, context window, request timeout |
 | [`.env.example`](../.env.example) | yes | Names of the required secrets, with placeholders |
 | `.env` | no (Git-ignored) | Your Modal proxy auth token |
 
