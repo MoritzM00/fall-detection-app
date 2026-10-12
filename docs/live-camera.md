@@ -218,8 +218,8 @@ Camera frames are personal data of whoever is in view.
   a lost-continuity conflict, abandons the run and starts a new one, so the server
   records the gap. "Not running", "superseded" and the length cap stop capture.
 - Status adds a **Camera** pill: off, connected, or achieved capture rate and upload
-  lag. A **Live camera** badge sits next to the backend badge; mock provenance stays
-  visible.
+  lag. A **Live camera** badge sits next to the session picker; mock provenance stays
+  visible on every prediction.
 - Reload behaves like recordings: the running session is paused and the camera is
   off until **Resume**, which begins a new run behind an `ingest_gap`.
 
