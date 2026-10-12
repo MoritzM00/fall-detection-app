@@ -17,6 +17,8 @@ class Settings:
     preparation_slots: int = 2
     preparation_wait_seconds: float = 10
     inspection_pngs: bool = False
+    # Modal app serving vLLM; enables container status that never wakes the GPU.
+    modal_app: str | None = None
     inference_api_key: str | None = field(default=None, repr=False)
     inference_proxy_key: str | None = field(default=None, repr=False)
     inference_proxy_secret: str | None = field(default=None, repr=False)
@@ -47,6 +49,7 @@ class Settings:
                 os.getenv("FALL_DETECTION_PREPARATION_WAIT_SECONDS", "10")
             ),
             inspection_pngs=os.getenv("FALL_DETECTION_INSPECTION_PNGS", "0") == "1",
+            modal_app=os.getenv("FALL_DETECTION_MODAL_APP") or None,
             inference_api_key=os.getenv("FALL_DETECTION_INFERENCE_API_KEY") or None,
             inference_proxy_key=os.getenv("FALL_DETECTION_INFERENCE_PROXY_KEY") or None,
             inference_proxy_secret=os.getenv("FALL_DETECTION_INFERENCE_PROXY_SECRET") or None,
