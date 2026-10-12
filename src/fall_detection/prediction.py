@@ -106,6 +106,23 @@ class InferenceServiceError(RuntimeError):
     """Raised when the serving endpoint fails or violates its contract."""
 
 
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def require_encrypted_transport(base_url: str) -> None:
+    """Refuse to send frames over plaintext HTTP to anything but this machine.
+
+    Loopback HTTP covers the local mock and SSH tunnels, whose traffic never leaves the host.
+    """
+    url = httpx.URL(base_url)
+    if url.scheme == "https" or (url.scheme == "http" and url.host in LOOPBACK_HOSTS):
+        return
+    raise InferenceServiceError(
+        f"Refusing to send video frames to {url.scheme}://{url.host}: use https, "
+        "or http only to this machine (127.0.0.1, localhost)"
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class InferenceResponse:
     """Validated portion of a serving response needed by the pipeline."""

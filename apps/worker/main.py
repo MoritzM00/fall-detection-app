@@ -5,7 +5,7 @@ from threading import Event, Thread
 
 from fall_detection.config import Settings
 from fall_detection.monitoring import Monitoring
-from fall_detection.prediction import InferenceClient, run_pipeline
+from fall_detection.prediction import InferenceClient, require_encrypted_transport, run_pipeline
 from fall_detection.preparation import load_prepared_input, to_vllm_jpeg_data_url
 from fall_detection.repository import Repository
 from fall_detection.storage import to_video_data_url
@@ -76,6 +76,8 @@ def process_next_job(settings: Settings, repository: Repository) -> bool:
             video_data_url = to_video_data_url(video, settings.data_dir)
         else:
             raise ValueError("Real videos require a prepared frame bundle")
+        if config.backend_kind == "vllm":
+            require_encrypted_transport(settings.inference_base_url)
         client = InferenceClient(
             settings.inference_base_url,
             timeout_seconds=settings.request_timeout_seconds,

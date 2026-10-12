@@ -218,3 +218,13 @@ def test_api_maps_blocked_shutdown_to_conflict(settings, monkeypatch):
         response = client.post("/serving-status/shutdown")
     assert response.status_code == 409
     assert "in flight" in response.json()["detail"]
+
+
+def test_capabilities_name_the_inference_host_without_credentials(settings):
+    remote = replace(settings, inference_base_url="https://user:pw@gpu.modal.run/v1")
+    with TestClient(create_app(remote)) as client:
+        body = client.get("/capabilities").json()
+    assert (body["inference_host"], body["inference_encrypted"]) == ("gpu.modal.run", True)
+    assert "pw" not in str(body)
+    with TestClient(create_app(replace(settings, backend_kind="mock"))) as client:
+        assert client.get("/capabilities").json()["inference_host"] is None

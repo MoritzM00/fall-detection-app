@@ -34,7 +34,7 @@ def test_validator_exercises_success_and_failure_without_gpu(monkeypatch, prompt
     monkeypatch.setattr(httpx, "get", fake_get)
     monkeypatch.setattr(httpx, "post", fake_post)
     report = validate(
-        "http://gpu.example/v1", "served-model", "fixture-processor", 1, prompt_text=prompt
+        "https://gpu.example/v1", "served-model", "fixture-processor", 1, prompt_text=prompt
     )
     assert report["prompt_preset"] == (
         "thesis-baseline-v1" if prompt == THESIS_BASELINE_PROMPT else "custom"

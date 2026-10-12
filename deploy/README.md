@@ -48,6 +48,15 @@ make gpu-stop           # optional: stop the GPU now instead of after 10 idle mi
 
 Both targets load `modal.env` first and `.env` second, so a value in `.env` overrides the committed one, for example to point at a different deployment. Plain `make dev` keeps using the mock. If you redeploy under a different app or workspace name, update `modal.env`. To take the endpoint down entirely, run `uvx modal app stop fall-detection-vllm`.
 
+### Where video frames go
+
+- **In transit: encrypted.** The worker sends frames to the Modal endpoint over HTTPS, with certificate verification. It refuses to send frames over plain HTTP unless the endpoint is on this machine (the local mock or an SSH tunnel to `127.0.0.1`/`localhost`); such a job fails explicitly instead.
+- **At Modal: readable by the provider.** Modal terminates TLS at its edge and forwards the request to the container, where vLLM decodes the frames in memory. This is not end-to-end encryption: as with any cloud GPU, the provider's infrastructure can technically access the frames while they are processed.
+- **Storage:** the endpoint does not store requests, and vLLM is started without `--enable-log-requests`, so request contents are not logged. A spot check of recent Modal logs found only request lines, no frame data.
+- **Region:** Modal chooses where the container runs unless the function pins a `region`. Check plan availability and pricing before pinning, for example to keep footage of identifiable people in the EU.
+
+In vLLM mode the web UI shows this as a notice naming the endpoint host. Only use footage you are allowed to share with the hosting provider.
+
 ### GPU status in the web UI
 
 With the vLLM backend, the top bar shows the GPU state instead of a static label: idle (scaled to zero), container up, warming up, ready, or unknown. The API reads it from Modal's control plane (`Function.get_current_stats`) using your local Modal CLI login, caches it for 5 seconds, and **never sends a request to vLLM**, so an open browser tab does not wake the GPU or keep it running. The UI polls every 15 seconds, and pauses while the tab is hidden. "Container up" means a container exists, but the API hasn't confirmed that vLLM is ready.

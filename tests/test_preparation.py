@@ -171,6 +171,23 @@ def test_job_references_prepared_input_and_worker_sends_selected_frames(
     assert worker.process_next_job(replace(settings, backend_kind="vllm"), repository)
     assert repository.get_job(real_job.id).state == "succeeded"
 
+    plaintext_job = repository.create_job(
+        video.id,
+        0,
+        1,
+        prepared_input_id=prepared.id,
+        model="qwen3-vl-8b-instruct",
+        backend_kind="vllm",
+        preprocessing={"frames": 6, "fps": 5, "resize": 224, "crop": "center"},
+    )
+    sent.clear()
+    plaintext = replace(settings, backend_kind="vllm", inference_base_url="http://gpu.example/v1")
+    assert worker.process_next_job(plaintext, repository)
+    refused = repository.get_job(plaintext_job.id)
+    assert refused.state == "failed" and refused.prediction is None
+    assert "Refusing to send video frames" in refused.error
+    assert sent == {}
+
 
 def test_tampered_frame_array_is_rejected(prepared_video):
     data_dir, _, _, _, prepared = prepared_video
