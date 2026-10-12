@@ -202,14 +202,27 @@ be confirmed:
   no scrubber; its legend counts only windows in that span. The header clock, playhead and result lag follow the server
   watermark.
 - Start, Resume and Restart connect the camera first if needed. Each running
-  period is one capture run (`useLiveCapture`): frames are drawn to a canvas
-  (short edge at most 720 px), JPEG-encoded synchronously so `run_seq` stays
-  contiguous, and uploaded in ordered batches of up to 32 every 250 ms. Transient
-  upload errors back off and retry the same frames. Frames still queued when the
-  session pauses or stops are discarded (the server refuses them once it is not
-  running); this is at most about half a second of capture. A backlog over ten seconds, or
-  a lost-continuity conflict, abandons the run and starts a new one, so the server
-  records the gap. "Not running", "superseded" and the length cap stop capture.
+  period is one capture run (`useLiveCapture`, queue in `captureUploader.ts`):
+  frames are drawn to a canvas with the short edge at most 672 px, the largest
+  model input (`size` ≤ 672), so preparation's `crop_image` never upscales a
+  stored frame that the camera delivered at a larger size (smaller cameras are not
+  upscaled in the browser). Pixels differ slightly from full-resolution capture
+  because the frame is resampled twice. `run_seq`
+  and `capture_seconds` are assigned when the frame is drawn; JPEG encoding is
+  asynchronous (`OffscreenCanvas.convertToBlob`, else `canvas.toBlob`, else a
+  synchronous data URL), and only the contiguous encoded prefix is uploaded, so
+  order comes from `run_seq`, not from when encoding finishes. Frames go out in
+  ordered batches of up to 32 every 250 ms, each request aborted after 10 s.
+  Timeouts, network errors, 408, 429 and 5xx back off and retry the same frames.
+  Frames still queued when the session pauses or stops are discarded (the server
+  refuses them once it is not running); this is at most about half a second of
+  capture. The queue is capped at ten seconds of frames whether or not a request
+  is in flight: reaching the cap, a lost-continuity conflict or an encoding
+  failure abandons the run (aborting any outstanding request, whose late answer is
+  ignored) and starts a new one, so the server records the gap. "Not running",
+  "superseded" and the length cap stop capture. Any other 4xx, such as a 422,
+  cannot succeed on resend: capture stops and the reason is shown as a camera
+  error until the next Start or Resume.
 - Status adds a **Camera** pill: off, connected, or achieved capture rate and upload
   lag. A **Live camera** badge sits next to the backend badge; mock provenance stays
   visible.
