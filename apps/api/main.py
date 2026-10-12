@@ -530,7 +530,14 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
             raise HTTPException(404, "Session not found") from exc
         except InferenceServiceError as exc:
             raise HTTPException(503, str(exc)) from exc
-        except (ValueError, sqlite3.IntegrityError) as exc:
+        except sqlite3.IntegrityError as exc:
+            if "monitoring_sessions.state" in str(exc):
+                raise HTTPException(
+                    409,
+                    "Another monitoring session is running. Pause or stop it before starting this one.",
+                ) from exc
+            raise HTTPException(409, str(exc)) from exc
+        except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
 
     return app

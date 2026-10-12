@@ -16,7 +16,7 @@ export function FramePreview({ video, frameCount, timestamps, prepared, preparin
   return <section className="frame-preview" aria-labelledby="frame-preview-title">
     <div className="frame-preview-heading">
       <div><span className="control-label">Frames for analysis</span><strong id="frame-preview-title">{frameCount} timestamped frames</strong></div>
-      <span className="preview-disclaimer">{video.source === "synthetic" ? "Synthetic preview" : prepared ? "Frames sent to vLLM" : error ? "Preparation failed" : "Preparing frames…"}</span>
+      <span className="preview-disclaimer">{video.source === "synthetic" ? "Synthetic preview" : prepared ? "Frames sent to the model" : error ? "Preparation failed" : "Preparing frames…"}</span>
     </div>
     {preparing && <p className="preview-note" role="status">Decoding the selected video window…</p>}
     {error && <div>

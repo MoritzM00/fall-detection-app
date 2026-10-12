@@ -115,6 +115,17 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
     return () => { clearInterval(timer); fence.current++; media.current?.pause(); const leaving = current.current; if (leaving?.id === id && leaving.state === "running") void commandSession(leaving.id, { action: "pause", command_id: crypto.randomUUID() }).catch(() => {}); };
   }, [id]); // Each selection invalidates every previous asynchronous response.
 
+  useEffect(() => {
+    // Closing the tab skips React cleanup; an orphaned running session would block every other session.
+    function pauseOnExit() {
+      const leaving = current.current;
+      if (leaving?.state !== "running") return;
+      void fetch(`/api/monitoring-sessions/${leaving.id}/commands`, { method: "POST", keepalive: true, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "pause", command_id: crypto.randomUUID() }) }).catch(() => {});
+    }
+    window.addEventListener("pagehide", pauseOnExit);
+    return () => window.removeEventListener("pagehide", pauseOnExit);
+  }, []);
+
   async function send(command: MonitoringCommand, isRetry = false, preserveRetry = false) {
     const saved = current.current;
     if (!saved) return;
@@ -178,7 +189,10 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
   const newestWindow = windows.find(window => window.generation === session?.generation && window.segment_id === session?.segment_id);
   const inferenceState = newestWindow?.job_id ? jobs[newestWindow.job_id]?.state ?? newestWindow.state : newestWindow?.state ?? "waiting for playback";
   const latest = session?.latest_job_id ? jobs[session.latest_job_id] : null;
-  const settingsValid = settings && settings.prompt_text.trim() && Number.isInteger(settings.generation.max_tokens) && settings.prompt_text.length <= 16000 && settings.generation.max_tokens >= 16 && settings.generation.max_tokens <= 4096 && settings.generation.temperature >= 0 && settings.generation.temperature <= 2 && frames >= 2 && frames <= 32 && Number.isInteger(frames) && fps > 0 && fps <= (live || (!id && sourceMode === "camera") ? captureFps : 30) && (frames - 1) / fps <= 30;
+  const minTokens = capabilities?.generation_limits.min_max_tokens ?? 16;
+  const maxTokens = capabilities?.generation_limits.max_max_tokens ?? 4096;
+  const maxFps = live || (!id && sourceMode === "camera") ? captureFps : 30;
+  const settingsValid = settings && settings.prompt_text.trim() && Number.isInteger(settings.generation.max_tokens) && settings.prompt_text.length <= 16000 && settings.generation.max_tokens >= minTokens && settings.generation.max_tokens <= maxTokens && settings.generation.temperature >= 0 && settings.generation.temperature <= 2 && frames >= 2 && frames <= 32 && Number.isInteger(frames) && fps > 0 && fps <= maxFps && (frames - 1) / fps <= 30;
   function configuration(videoId: string) { return { ...settings!, video_id: videoId, frame_count: frames, fps, size }; }
   async function create() {
     if (!source.video || !source.duration || !settingsValid) return;
@@ -209,6 +223,8 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
   }
 
   const duration = session?.duration ?? 0;
+  // Resuming a finished recording would restart the media element at 0 while the session stays at its end.
+  const ended = Boolean(session && !live && session.position >= session.duration);
   const windowSeconds = session ? (session.configuration.preprocessing.frames - 1) / session.configuration.preprocessing.fps : (frames - 1) / fps;
   const stale = !connected || (updated > 0 && now - updated > 3000);
   const systemState = connected ? session?.state ?? "recovering" : "disconnected";
@@ -245,7 +261,7 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
             {video?.source === "synthetic" && <div className="replay-placeholder"><strong>{seconds(Math.min(position, duration))}</strong><span>Synthetic recording · simulated playback clock</span></div>}
           </div>
           {session && <CoverageTimeline windows={windows.filter(window => window.generation === session.generation)} jobs={jobs} from={span.from} to={span.to} position={shown} partial={windows.length >= 100 && !historyComplete} onLoadOlder={() => void older()} seek={live ? null : seek} />}
-          <div className="replay-controls"><button className="button primary" disabled={busy || !session || !connected || session.state === "running" || session.state === "stopped"} onClick={() => void begin(session?.position === 0 ? "start" : "resume")}>{session?.position === 0 ? "Start" : "Resume"}</button><button className="button secondary" disabled={busy || session?.state !== "running"} onClick={() => { media.current?.pause(); void send({ action: "pause" }); }}>Pause</button><button className="button secondary" disabled={busy || !session || session.state === "stopped"} onClick={() => { media.current?.pause(); void send({ action: "stop" }); }}>Stop</button><button className="button secondary restart" disabled={busy || !session || !connected} onClick={() => void begin("restart")}>Restart / retry inference</button></div>
+          <div className="replay-controls"><button className="button primary" disabled={busy || !session || !connected || session.state === "running" || session.state === "stopped" || ended} title={ended ? "The recording has ended. Use Restart to replay it." : undefined} onClick={() => void begin(session?.position === 0 ? "start" : "resume")}>{session?.position === 0 ? "Start" : "Resume"}</button><button className="button secondary" disabled={busy || session?.state !== "running"} onClick={() => { media.current?.pause(); void send({ action: "pause" }); }}>Pause</button><button className="button secondary" disabled={busy || !session || session.state === "stopped"} onClick={() => { media.current?.pause(); void send({ action: "stop" }); }}>Stop</button><button className="button secondary restart" disabled={busy || !session || !connected} onClick={() => void begin("restart")}>Restart / retry inference</button></div>
           <div className="replay-status">
             <p role="status" data-tone={toneOf(systemState)}>System: {systemState}{busy ? " · updating" : ""}{session?.recovery_reason ? ` · ${session.recovery_reason}` : ""}</p>
             <p role="status" data-tone={toneOf(inferenceState)}>Inference: {inferenceState}{newestWindow?.reason ? ` · ${newestWindow.reason}` : ""}</p>
@@ -263,9 +279,10 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
         <section className="monitor-config"><h2>Configuration</h2>
           <label className="setting-row"><span>Frames</span><input aria-label="Monitoring frames" type="number" value={frames} min="2" max="32" onChange={event => setFrames(Number(event.target.value))} /></label>
           {(live || (!id && sourceMode === "camera")) && <div className="setting-row"><span>Capture FPS</span><strong>{captureFps}</strong></div>}
-          <label className="setting-row"><span>Sampling FPS</span><input aria-label="Monitoring FPS" type="number" value={fps} min="0.1" max={live || (!id && sourceMode === "camera") ? captureFps : 30} step="0.1" onChange={event => setFps(Number(event.target.value))} /></label>
+          <label className="setting-row"><span>Sampling FPS</span><input aria-label="Monitoring FPS" type="number" value={fps} min="0.1" max={maxFps} step="0.1" onChange={event => setFps(Number(event.target.value))} /></label>
           <label className="setting-row"><span>Crop size</span><select aria-label="Monitoring crop" value={size} onChange={event => setSize(Number(event.target.value))}><option value={224}>224 × 224</option><option value={448}>448 × 448</option><option value={672}>672 × 672</option></select></label>
           {capabilities && settings && <ExperimentControls capabilities={capabilities} settings={settings} busy={busy} onChange={setSettings} />}
+          {settings && !settingsValid && <p className="error-message" role="alert">Use 2–32 frames, a sampling FPS above 0 and up to {maxFps}, a window of at most 30 s, a nonblank prompt, temperature from 0 to 2, and an integer token limit from {minTokens} to {maxTokens}.</p>}
           {session && <><button className="button secondary wide" disabled={busy || !connected || !settingsValid} onClick={() => void send({ action: "configure", configuration: configuration(session.video_id) })}>Apply new configuration segment</button><p className="preview-note">Current generation {session.generation} · segment {session.segment_id.slice(0, 8)}</p><details className="plain-details"><summary>Saved segment settings</summary><pre className="saved-prompt">{JSON.stringify(session.configuration, null, 2)}</pre></details></>}
         </section>
         <details className="plain-details"><summary>All 16 activity labels</summary><p>{labels.join(", ")}</p></details>

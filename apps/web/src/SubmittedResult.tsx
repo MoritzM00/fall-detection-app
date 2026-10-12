@@ -52,7 +52,7 @@ export function SubmittedResult({
     {!job && <div className="result-placeholder"><span>{currentVideo ? "Ready when you are" : "Start with a clip"}</span><p>{currentVideo?.source === "synthetic" && !simulated ? "Choose a real video for online vLLM analysis." : currentVideo ? simulated ? "Check your window, then run a simulated analysis." : "Check your prepared frames, then run analysis." : "Choose a sample, browse the dataset, or upload a video to get started."}</p></div>}
     {activeJob && <p className="job-status" role="status">{activeJob.state === "queued" ? "A submitted clip is queued for analysis." : activeJob.configuration?.backend_kind === "mock" ? "Generating a simulated result…" : "Analyzing prepared frames…"}</p>}
 
-    {job?.state === "failed" && <div className="result-card failure" role="alert"><span>Processing failed</span><p>{job.error}</p><button className="button secondary" onClick={() => retryJob(job.id).then(onRecord).catch((cause) => onError(String(cause)))} disabled={Boolean(activeJob)}>Retry run</button></div>}
+    {job?.state === "failed" && <div className="result-card failure" role="alert"><span>Processing failed</span><p>{job.error}</p><button className="button secondary" onClick={() => retryJob(job.id).then(onRecord).catch((cause) => onError(cause instanceof Error ? cause.message : "Could not retry run"))} disabled={Boolean(activeJob)}>Retry run</button></div>}
 
     {result && <div className="result-card" aria-live="polite">
       <div className="result-overline"><span>Activity result</span><span>{result.backend_kind === "mock" ? "Simulated" : result.backend_kind}</span></div>
