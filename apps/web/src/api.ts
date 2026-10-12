@@ -70,8 +70,13 @@ export class ApiError extends Error {
   }
 }
 
+/** The API refuses state-changing requests without this header (cross-site request defense). */
+export const CLIENT_HEADERS = { "X-Requested-With": "fall-detection" } as const;
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`/api${path}`, init);
+  const headers = new Headers(init?.headers);
+  for (const [name, value] of Object.entries(CLIENT_HEADERS)) headers.set(name, value);
+  const response = await fetch(`/api${path}`, { ...init, headers });
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as { detail?: unknown } | null;
     const detail = body?.detail;
