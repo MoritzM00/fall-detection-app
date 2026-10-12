@@ -173,6 +173,13 @@ keep their input timestamps and configuration identity.
 - `pause`: the client stops uploading (frames are not buffered for later); the gap
   is recorded when capture resumes.
 - `stop`: as today. `restart`: new generation beginning at the current live edge.
+- Pauses and stops count against `max_seconds`: the next run is placed after the
+  real elapsed time, so the timeline keeps growing while no frames arrive. Once
+  that live edge (last frame time plus elapsed server time, at least one capture
+  interval; the current position before any frame) has reached `max_seconds`,
+  `start`, `resume` and `restart` return 409 "This live session has reached its
+  maximum length; start a new session." without creating a generation or segment,
+  and the page shows that message instead of starting capture.
 - Reload, tab close, `getUserMedia` track end, or an upload outage: when a running
   session receives no frames for `expiration_seconds`, the worker pauses it with
   recovery reason `capture_ended`, but only once no window is pending or preparing,

@@ -470,3 +470,44 @@ def test_failed_session_creation_leaves_no_live_source(live, monkeypatch):
         client.post("/monitoring-sessions/live", json={"capture_fps": 15})
     with repository._connect() as db:
         assert db.execute("SELECT COUNT(*) FROM videos WHERE source='live'").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("stop_action, action", [("pause", "resume"), ("stop", "restart")])
+def test_commands_after_the_length_cap_are_refused(live, stop_action, action):
+    client, _, _, clock = live
+    session = create(client, max_seconds=10)
+    run(client, session["id"], "start")
+    send(client, session["id"], [(i, i * 0.25) for i in range(5)])
+    run(client, session["id"], stop_action)
+    before = client.get(f"/monitoring-sessions/{session['id']}").json()
+    # Time paused or stopped counts against the session length.
+    clock[0] += timedelta(seconds=9)
+    refused = run(client, session["id"], action)
+    assert refused.status_code == 409
+    assert refused.json()["detail"] == (
+        "This live session has reached its maximum length; start a new session."
+    )
+    after = client.get(f"/monitoring-sessions/{session['id']}").json()
+    assert after["state"] == before["state"]
+    assert (after["generation"], after["segment_id"]) == (
+        before["generation"],
+        before["segment_id"],
+    )
+
+
+@pytest.mark.parametrize("stop_action, action", [("pause", "resume"), ("stop", "restart")])
+def test_commands_within_the_length_cap_still_start_capture(live, stop_action, action):
+    client, _, _, clock = live
+    session = create(client, max_seconds=10)
+    run(client, session["id"], "start")
+    send(client, session["id"], [(i, i * 0.25) for i in range(5)])
+    run(client, session["id"], stop_action)
+    before = client.get(f"/monitoring-sessions/{session['id']}").json()
+    clock[0] += timedelta(seconds=8)
+    resumed = run(client, session["id"], action)
+    assert resumed.status_code == 200, resumed.text
+    assert resumed.json()["state"] == "running"
+    expected = before["generation"] + (1 if action == "restart" else 0)
+    assert resumed.json()["generation"] == expected
+    placed = send(client, session["id"], [(0, 0.0)], run_id="run-b")
+    assert placed.status_code == 200 and placed.json()["watermark_seconds"] == 9.0
