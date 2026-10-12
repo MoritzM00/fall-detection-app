@@ -168,4 +168,4 @@ Issue #37 verification: 261 backend tests, 13 frontend unit tests, frontend buil
 and browser TypeScript checks pass. The disposable browser suite has 12 passing
 flows (9 existing clip/comparison and 3 monitoring). Browser failure/restart
 scenarios use controlled API responses; they do not terminate production services.
-Real GPU/model checks remain unperformed because GPU access is unavailable.
+GPU access was unavailable at the time, so no real GPU/model checks were performed.

@@ -25,6 +25,7 @@ from fall_detection.preparation import (
     write_bundle,
 )
 from fall_detection.repository import Repository
+from fall_detection.scheduling import LifecycleReason
 
 LIVE_PREPROCESSING_VERSION = "pillow-live-frames-jpeg-v1"
 MAX_BATCH_FRAMES = 64
@@ -282,7 +283,7 @@ def ingest_frames(
                     """INSERT INTO monitoring_windows
                     (id,session_id,generation,sequence,sequence_end,segment_id,start_seconds,
                      end_seconds,available_seconds,state,reason,created_at)
-                    VALUES (?,?,?,?,?,?,?,?,?,'skipped','ingest_gap',?)""",
+                    VALUES (?,?,?,?,?,?,?,?,?,'skipped',?,?)""",
                     (
                         str(uuid4()),
                         session_id,
@@ -293,6 +294,7 @@ def ingest_frames(
                         min(gap_start, times[0]),
                         times[0],
                         session["position"],
+                        LifecycleReason.INGEST_GAP,
                         timestamp,
                     ),
                 )

@@ -2,8 +2,9 @@
 
 The CPU track (#35–#40, tracked in #43) verifies proposed application behavior:
 real decoding, saved JPEG transport, persistence, replay scheduling, UI, exports,
-and synthetic evaluation. Only model serving is simulated. Research input parity,
-real model quality, network compatibility and GPU capacity remain unverified.
+and synthetic evaluation. Only model serving is simulated. The vLLM request
+contract has since been validated once on a Modal GPU endpoint (#9); research
+input parity, real model quality and GPU capacity remain unverified.
 
 ## Fresh CPU setup and disposable acceptance
 
@@ -105,8 +106,9 @@ frontend tests/build and browser flows. Controlled browser outage fixtures verif
 UI behavior; actual HTTP failures and restarts above verify the application stack.
 GPU validation is opt-in and never part of CPU CI.
 
-When GPU access returns, reuse `scripts/validate_vllm_contract.py` and its generated
-fixture rather than changing the prepared-input contract. Follow
+After changing the serving stack (vLLM, model, processor or serving options),
+revalidate with `scripts/validate_vllm_contract.py` and its generated fixture
+rather than changing the prepared-input contract. Follow
 [live validator instructions](vllm-live-validation.md). Record the exact repository
 commit, UTC run date, validator output/errors, endpoint transport arrangement,
 GPU-host vLLM version, served model alias and model revision, processor class,
@@ -116,9 +118,13 @@ The validator checks saved JPEG bytes, request metadata, parsed label, actual
 timestamps, configuration and explicit unavailable-endpoint failure with no mock
 fallback. Its local fake-response self-test is not real-service evidence.
 
-Target endpoint authentication requirements are unresolved. No authentication
-scheme or credential persistence is introduced here; agree the secured transport
-and required auth mechanism with the endpoint owner before external deployment.
-Do not place credentials in URLs, manifests, exports or logs. #9 remains the real
-transport gate, #41 covers research input parity and measured capacity, and #42
-covers held-out continuous evaluation with targets agreed before final scoring.
+The [Modal GPU endpoint](../deploy/README.md#modal-gpu-endpoint) requires a
+Modal proxy auth token; a vLLM server started with `--api-key` takes a bearer
+token instead. Both come only from the environment (`.env` is Git-ignored) and
+are never saved in run configurations. The worker refuses plaintext HTTP to any
+host other than this machine (redirect hops are tracked in #74). Do not place
+credentials in URLs, manifests, exports or logs. #9 validated the transport
+contract on 12 October 2026
+([record](vllm-live-validation.md#live-run-modal-l4-2026-10-12)), #41 covers
+research input parity and measured capacity, and #42 covers held-out continuous
+evaluation with targets agreed before final scoring.
