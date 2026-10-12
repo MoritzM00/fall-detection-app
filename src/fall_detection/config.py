@@ -17,6 +17,8 @@ class Settings:
     preparation_slots: int = 2
     preparation_wait_seconds: float = 10
     inspection_pngs: bool = False
+    # The API fails expired job leases on this timer so reads never take write locks.
+    lease_recovery_interval_seconds: float = 15
     # Modal app serving vLLM; enables container status that never wakes the GPU.
     modal_app: str | None = None
     inference_api_key: str | None = field(default=None, repr=False)

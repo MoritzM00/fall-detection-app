@@ -1,4 +1,6 @@
 import asyncio
+import sqlite3
+import time
 from dataclasses import replace
 
 import pytest
@@ -323,3 +325,58 @@ def test_dataset_video_registration_rejects_media_outside_data_dir(make_api, tmp
         rejected = test_client.post("/videos/dataset", json={"path": relative})
         assert rejected.status_code == 400
         assert "inside the data directory" in rejected.json()["detail"]
+
+
+def _expire_running_job(repository: Repository) -> str:
+    video = repository.create_sample_video()
+    job = repository.create_job(video.id, 0, 2)
+    assert repository.claim_next_job() is not None
+    with repository._connect() as connection:
+        connection.execute("UPDATE jobs SET lease_expires_at='2000-01-01' WHERE id=?", (job.id,))
+    return job.id
+
+
+def test_api_startup_recovers_expired_leases_without_a_worker(make_api):
+    app, repository, _ = make_api(lease_recovery_interval_seconds=3600)
+    repository.initialize()
+    job_id = _expire_running_job(repository)
+    with TestClient(app) as client:
+        job = client.get(f"/analysis-jobs/{job_id}").json()
+    assert job["state"] == "failed"
+    assert "Retry" in job["error"]
+
+
+def test_api_reads_do_not_recover_leases_but_the_timer_does(make_api):
+    app, repository, _ = make_api(lease_recovery_interval_seconds=3600)
+    with TestClient(app) as client:
+        job_id = _expire_running_job(repository)
+        assert client.get(f"/analysis-jobs/{job_id}").json()["state"] == "running"
+        assert client.get("/analysis-jobs").json()[0]["state"] == "running"
+
+    app, repository, _ = make_api("timer", lease_recovery_interval_seconds=0.05)
+    with TestClient(app) as client:
+        job_id = _expire_running_job(repository)
+        deadline = time.monotonic() + 5
+        while client.get(f"/analysis-jobs/{job_id}").json()["state"] == "running":
+            assert time.monotonic() < deadline, "the recovery timer never ran"
+            time.sleep(0.02)
+        assert client.get(f"/analysis-jobs/{job_id}").json()["state"] == "failed"
+
+
+def test_lease_recovery_timer_survives_a_locked_database(caplog):
+    calls = []
+
+    class StopLoopError(Exception):
+        pass
+
+    class LockedOnce:
+        def recover_expired(self) -> int:
+            calls.append(1)
+            if len(calls) == 1:
+                raise sqlite3.OperationalError("database is locked")
+            raise StopLoopError
+
+    with pytest.raises(StopLoopError):
+        asyncio.run(api.recover_leases_periodically(LockedOnce(), 0))  # ty: ignore[invalid-argument-type]
+    assert len(calls) == 2
+    assert "Lease recovery failed" in caplog.text
