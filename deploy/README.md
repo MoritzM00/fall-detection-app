@@ -40,7 +40,7 @@ export FALL_DETECTION_REQUEST_TIMEOUT_SECONDS=600
 make dev
 ```
 
-Keep these lines in a Git-ignored file such as `.env.modal` (any `.env.*` file is ignored) and load it with `source .env.modal`; never commit the token. To take the endpoint down entirely, run `uvx modal app stop fall-detection-vllm`.
+Keep these lines in a Git-ignored file such as `.env` and load it with `source .env`; never commit the token. To take the endpoint down entirely, run `uvx modal app stop fall-detection-vllm`.
 
 For a vLLM server started with `--api-key` (any host), set `FALL_DETECTION_INFERENCE_API_KEY` instead; the worker sends it as a bearer token.
 
