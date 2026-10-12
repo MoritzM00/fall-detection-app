@@ -7,6 +7,7 @@ from typing import Annotated
 from uuid import uuid4
 
 import av
+import httpx
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
@@ -93,6 +94,13 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
             "models": [settings.inference_model],
             "backend_kind": settings.backend_kind,
             "simulated": settings.backend_kind == "mock",
+            # Where frames are sent, for the privacy notice; never includes credentials.
+            "inference_host": (
+                httpx.URL(settings.inference_base_url).host
+                if settings.backend_kind == "vllm"
+                else None
+            ),
+            "inference_encrypted": httpx.URL(settings.inference_base_url).scheme == "https",
             "prompt_preset": {"id": PRESET_ID, "prompt": THESIS_BASELINE_PROMPT},
             "generation": {"temperature": 0, "max_tokens": 32},
             "generation_limits": {"min_max_tokens": 16, "max_max_tokens": 4096},

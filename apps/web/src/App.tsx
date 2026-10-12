@@ -5,6 +5,7 @@ import { FramePreview } from "./FramePreview";
 import { ExperimentControls } from "./ExperimentControls";
 import { RunComparison } from "./RunComparison";
 import { ServingBadge } from "./ServingBadge";
+import { privacyNotice } from "./privacy";
 import type { Capabilities, ExperimentSettings } from "./api";
 import { SamplingSettings, WindowControls } from "./SamplingControls";
 import { SourceSelection } from "./SourceSelection";
@@ -82,6 +83,7 @@ export default function App() {
         ? <ServingBadge />
         : <span className={`system-state ${capabilities ? "" : "offline"}`}><i /> {capabilities ? "Local simulation" : "Backend unavailable"}</span>}
     </header>
+    {privacyNotice(capabilities) && <p className="privacy-notice" role="note">{privacyNotice(capabilities)}</p>}
 
     <div hidden={mode !== "clip"}>
     <section className="intro" id="top">

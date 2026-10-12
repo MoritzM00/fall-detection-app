@@ -2,7 +2,11 @@ import httpx
 import pytest
 
 from fall_detection.config import Settings
-from fall_detection.inference import InferenceClient, InferenceServiceError
+from fall_detection.inference import (
+    InferenceClient,
+    InferenceServiceError,
+    require_encrypted_transport,
+)
 
 
 @pytest.mark.parametrize(
@@ -85,3 +89,19 @@ def test_inference_client_reads_optional_token_usage(monkeypatch, usage, expecte
     monkeypatch.setattr(httpx, "post", lambda *_args, **_kwargs: response)
     result = InferenceClient("http://test").complete({})
     assert (result.prompt_tokens, result.completion_tokens) == expected
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    ["https://gpu.example/v1", "http://127.0.0.1:8001/v1", "http://localhost:8001/v1"],
+)
+def test_encrypted_or_local_transport_is_allowed(base_url):
+    require_encrypted_transport(base_url)
+
+
+@pytest.mark.parametrize(
+    "base_url", ["http://gpu.example/v1", "http://10.0.0.5:8000/v1", "ftp://gpu.example/v1"]
+)
+def test_plaintext_transport_off_this_machine_is_refused(base_url):
+    with pytest.raises(InferenceServiceError, match="Refusing to send video frames"):
+        require_encrypted_transport(base_url)
