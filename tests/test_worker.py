@@ -1,5 +1,8 @@
+import sqlite3
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Event
 
 import pytest
 
@@ -105,3 +108,153 @@ def test_saved_synthetic_sampling_and_generation_drive_request(tmp_path: Path, m
     assert sent["model"] == "saved-model"
     assert sent["temperature"] == 0.4
     assert sent["max_tokens"] == 19
+
+
+def _succeed(**kwargs):
+    return PipelineResult("fall", "The best answer is: fall", [0, 2], 1, 2)
+
+
+@pytest.mark.parametrize("failing_step", ["claim", "prepare"])
+def test_transient_database_error_does_not_end_worker_loop(queued_job, monkeypatch, failing_step):
+    settings, repository, job = queued_job
+    monkeypatch.setattr(worker, "run_pipeline", _succeed)
+    failures = iter([sqlite3.OperationalError("database is locked")])
+
+    def fail_once(original):
+        def wrapped(*args, **kwargs):
+            error = next(failures, None)
+            if error is not None:
+                raise error
+            return original(*args, **kwargs)
+
+        return wrapped
+
+    if failing_step == "claim":
+        monkeypatch.setattr(repository, "claim_next_job", fail_once(repository.claim_next_job))
+    else:
+        monkeypatch.setattr(
+            worker.Monitoring, "prepare_next", fail_once(worker.Monitoring.prepare_next)
+        )
+    slept: list[float] = []
+
+    def should_stop() -> bool:
+        return repository.get_job(job.id).state == "succeeded" or len(slept) > 10
+
+    worker.run_loop(settings, repository, should_stop, sleep=slept.append)
+    assert repository.get_job(job.id).state == "succeeded"
+    assert slept == [worker.IDLE_SECONDS]
+
+
+def _run_loop_with(settings, repository, monkeypatch, outcomes, stop_after_sleeping=None):
+    """Run the loop against scripted iteration outcomes and return the wait after each."""
+    waits: list[float] = []
+    remaining = list(outcomes)
+
+    def process(*args):
+        waits.append(0.0)
+        outcome = remaining.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    def sleep(seconds: float) -> None:
+        waits[-1] += seconds
+
+    def should_stop() -> bool:
+        if stop_after_sleeping is not None:
+            return sum(waits) >= stop_after_sleeping
+        return not remaining
+
+    monkeypatch.setattr(worker, "process_next_job", process)
+    worker.run_loop(settings, repository, should_stop, sleep=sleep)
+    return waits
+
+
+def test_worker_loop_backs_off_exponentially_and_resets(queued_job, monkeypatch):
+    settings, repository, _job = queued_job
+    outcomes = [KeyError("a"), TypeError("b"), RuntimeError("c"), False, KeyError("d"), False]
+    waits = _run_loop_with(settings, repository, monkeypatch, outcomes)
+    assert waits == pytest.approx([0.4, 0.8, 1.6, 0.4, 0.4, 0.4])
+
+
+def test_worker_loop_backoff_is_capped_and_stops_promptly(queued_job, monkeypatch):
+    settings, repository, _job = queued_job
+    outcomes = [sqlite3.OperationalError("database is locked")] * 20
+    waits = _run_loop_with(settings, repository, monkeypatch, outcomes, stop_after_sleeping=12)
+    assert max(waits) == pytest.approx(worker.MAX_BACKOFF_SECONDS)
+    # The stop request lands mid-backoff and ends the wait within one idle slice.
+    assert 12 <= sum(waits) < 12 + worker.IDLE_SECONDS
+    assert len(waits) == 6
+
+
+def test_unexpected_job_error_fails_job_with_generic_message(queued_job, monkeypatch):
+    settings, repository, job = queued_job
+
+    def explode(**kwargs):
+        raise KeyError("internal secret detail")
+
+    monkeypatch.setattr(worker, "run_pipeline", explode)
+    assert worker.process_next_job(settings, repository)
+    failed = repository.get_job(job.id)
+    assert failed.state == "failed"
+    assert failed.prediction is None
+    assert failed.error == worker.UNEXPECTED_FAILURE
+
+
+class _TickingStop(Event):
+    """Heartbeat stop event that returns immediately and advances a fake clock per tick."""
+
+    def __init__(self, clock: dict[str, float], ticks: list[float]) -> None:
+        super().__init__()
+        self.clock = clock
+        self.ticks = iter(ticks)
+
+    def wait(self, timeout: float | None = None) -> bool:
+        tick = next(self.ticks, None)
+        if tick is None:
+            return True
+        self.clock["now"] = tick
+        return False
+
+
+def test_failed_heartbeat_followed_by_success_keeps_lease(tmp_path: Path, monkeypatch):
+    start = datetime(2026, 10, 12, tzinfo=UTC)
+    clock = {"now": 0.0}
+    repository = Repository(
+        tmp_path / "app.sqlite3", clock=lambda: start + timedelta(seconds=clock["now"])
+    )
+    repository.initialize()
+    video = repository.create_sample_video()
+    job = repository.create_job(video.id, 0, 2, model="queued-model")
+    claimed = repository.claim_next_job()
+    assert claimed is not None and claimed.claim_token is not None
+    renew = repository.renew_claim
+    failures = iter([sqlite3.OperationalError("database is locked")])
+
+    def flaky_renew(job_id: str, claim_token: str) -> bool:
+        error = next(failures, None)
+        if error is not None:
+            raise error
+        return renew(job_id, claim_token)
+
+    monkeypatch.setattr(repository, "renew_claim", flaky_renew)
+    stop = _TickingStop(clock, [20, 40])
+    worker.keep_claim_alive(repository, job.id, claimed.claim_token, stop)
+    # The lease from t=0 ends at t=90; only the retried renewal at t=40 keeps it past t=120.
+    clock["now"] = 120
+    assert repository.complete_job(
+        job.id,
+        _succeed(),
+        backend_kind="mock",
+        model="queued-model",
+        fixture_version="sample-v1",
+        claim_token=claimed.claim_token,
+    )
+
+
+def test_heartbeat_stops_when_claim_is_lost(queued_job):
+    _settings, repository, job = queued_job
+    assert repository.claim_next_job() is not None
+    stop = _TickingStop({}, [1, 2, 3])
+    worker.keep_claim_alive(repository, job.id, "not-the-owner", stop)
+    assert next(stop.ticks, None) == 2

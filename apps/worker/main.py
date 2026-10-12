@@ -1,6 +1,8 @@
 import logging
 import signal
+import sqlite3
 import time
+from collections.abc import Callable
 from threading import Event, Thread
 
 from fall_detection.config import Settings
@@ -12,12 +14,37 @@ from fall_detection.storage import to_video_data_url
 
 logger = logging.getLogger(__name__)
 stopping = False
+HEARTBEAT_SECONDS = 20.0
+IDLE_SECONDS = 0.4
+MAX_BACKOFF_SECONDS = 5.0
+UNEXPECTED_FAILURE = "Unexpected worker error. Retry this run."
 
 
 def request_stop(_signal_number: int, _frame: object) -> None:
     """Ask the polling loop to stop after its current job."""
     global stopping
     stopping = True
+
+
+def keep_claim_alive(
+    repository: Repository,
+    job_id: str,
+    claim_token: str,
+    stop: Event,
+    interval_seconds: float = HEARTBEAT_SECONDS,
+) -> None:
+    """Renew a job lease until stopped or the claim is lost.
+
+    A database error (for example a transient lock) skips one renewal and tries
+    again on the next tick; only a refused renewal ends the heartbeat.
+    """
+    while not stop.wait(interval_seconds):
+        try:
+            if not repository.renew_claim(job_id, claim_token):
+                logger.warning("lost claim on job %s; stopping heartbeat", job_id)
+                return
+        except sqlite3.Error:
+            logger.warning("lease renewal for job %s failed; retrying", job_id, exc_info=True)
 
 
 def process_next_job(settings: Settings, repository: Repository) -> bool:
@@ -30,13 +57,11 @@ def process_next_job(settings: Settings, repository: Repository) -> bool:
         raise RuntimeError("claimed job has no owner token")
     claim_token = job.claim_token
     stop_heartbeat = Event()
-
-    def heartbeat() -> None:
-        while not stop_heartbeat.wait(20):
-            if not repository.renew_claim(job.id, claim_token):
-                return
-
-    heartbeat_thread = Thread(target=heartbeat, daemon=True)
+    heartbeat_thread = Thread(
+        target=keep_claim_alive,
+        args=(repository, job.id, claim_token, stop_heartbeat),
+        daemon=True,
+    )
     heartbeat_thread.start()
     logger.info("processing job %s", job.id)
     try:
@@ -117,6 +142,11 @@ def process_next_job(settings: Settings, repository: Repository) -> bool:
     except (RuntimeError, ValueError, OSError) as exc:
         repository.fail_job(job.id, str(exc), claim_token)
         logger.error("job %s failed: %s", job.id, exc)
+    except Exception:
+        # Unexpected errors may carry internal details, so the stored message
+        # stays generic and the traceback goes to the worker log only.
+        logger.exception("job %s failed unexpectedly", job.id)
+        repository.fail_job(job.id, UNEXPECTED_FAILURE, claim_token)
     finally:
         stop_heartbeat.set()
         heartbeat_thread.join(timeout=2)
@@ -132,9 +162,41 @@ def main() -> None:
     signal.signal(signal.SIGINT, request_stop)
     signal.signal(signal.SIGTERM, request_stop)
     logger.info("worker ready; backend=%s", settings.backend_kind)
-    while not stopping:
-        if not process_next_job(settings, repository):
-            time.sleep(0.4)
+    run_loop(settings, repository, lambda: stopping)
+
+
+def run_loop(
+    settings: Settings,
+    repository: Repository,
+    should_stop: Callable[[], bool],
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
+    """Process jobs until asked to stop, surviving errors in any iteration.
+
+    Errors are logged with their traceback and retried after an exponential
+    backoff capped at ``MAX_BACKOFF_SECONDS``; a successful iteration resets it.
+    The backoff wait is sliced so a stop request still ends the loop promptly.
+    """
+
+    def pause(seconds: float) -> None:
+        remaining = seconds
+        while remaining > 0 and not should_stop():
+            step = min(IDLE_SECONDS, remaining)
+            sleep(step)
+            remaining -= step
+
+    backoff = 0.0
+    while not should_stop():
+        try:
+            found = process_next_job(settings, repository)
+        except Exception:
+            backoff = min(MAX_BACKOFF_SECONDS, backoff * 2 if backoff else IDLE_SECONDS)
+            logger.exception("worker iteration failed; retrying in %.1f s", backoff)
+            pause(backoff)
+            continue
+        backoff = 0.0
+        if not found:
+            sleep(IDLE_SECONDS)
 
 
 if __name__ == "__main__":
