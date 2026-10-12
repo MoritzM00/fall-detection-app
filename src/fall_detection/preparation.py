@@ -141,10 +141,11 @@ def prepare_video(
     inspection_pngs: bool = True,
     *,
     causal: bool = False,
+    rgb_array: bool = False,
 ) -> PreparedInput:
     """Prepare a bundle while maintenance cannot remove its source or output."""
     with storage_lock(data_dir, exclusive=False):
-        return _prepare_video_unlocked(video, request, data_dir, inspection_pngs, causal)
+        return _prepare_video_unlocked(video, request, data_dir, inspection_pngs, causal, rgb_array)
 
 
 def _prepare_video_unlocked(
@@ -153,8 +154,9 @@ def _prepare_video_unlocked(
     data_dir: Path,
     inspection_pngs: bool,
     causal: bool,
+    rgb_array: bool,
 ) -> PreparedInput:
-    """Store verified RGB arrays and JPEG transport frames; PNGs are optional."""
+    """Store JPEG transport frames; the RGB array and PNGs are optional."""
     if video.id != request.video_id or video.storage_key is None:
         raise ValueError("A stored video is required for frame preparation")
     media_path = (data_dir / video.storage_key).resolve()
@@ -204,6 +206,7 @@ def _prepare_video_unlocked(
             "preprocessing_version": version,
         },
         inspection_pngs,
+        rgb_array=rgb_array,
     )
 
 
@@ -214,8 +217,17 @@ def write_bundle(
     timestamps: list[float],
     manifest: dict[str, object],
     inspection_pngs: bool,
+    *,
+    rgb_array: bool = False,
 ) -> PreparedInput:
-    """Publish cropped RGB frames, transport JPEGs and their manifest atomically."""
+    """Publish transport JPEGs and their manifest atomically.
+
+    ``bundle_sha256`` is always computed over the raw cropped RGB stack in memory.
+    The stack itself is stored as ``frames.npy`` only when ``rgb_array`` is set
+    (``FALL_DETECTION_RGB_ARRAYS=1``), for research-parity checks. Storage options
+    are not part of the content-derived ID: an existing bundle is reused unchanged,
+    with or without its array.
+    """
     target = preparation_path(data_dir, prepared_id)
     parent = target.parent
     parent.mkdir(parents=True, exist_ok=True)
@@ -243,7 +255,8 @@ def write_bundle(
                 )
             )
         stack = np.stack(arrays)
-        np.save(temporary / "frames.npy", stack, allow_pickle=False)
+        if rgb_array:
+            np.save(temporary / "frames.npy", stack, allow_pickle=False)
         prepared = PreparedInput.model_validate(
             {
                 **manifest,
@@ -267,11 +280,13 @@ def write_bundle(
             shutil.rmtree(temporary)
 
 
-def load_rgb_frames(data_dir: Path, prepared: PreparedInput) -> np.ndarray:
-    """Verify the stored array before inference or transport."""
+def load_rgb_frames(data_dir: Path, prepared: PreparedInput) -> np.ndarray | None:
+    """Verify a stored RGB array, or return None for a bundle stored without one."""
     path = preparation_path(data_dir, prepared.id) / "frames.npy"
     try:
         frames = np.load(path, allow_pickle=False)
+    except FileNotFoundError:
+        return None
     except (EOFError, ValueError) as exc:
         raise ValueError("Prepared frame array could not be read") from exc
     expected = (prepared.frame_count, prepared.size, prepared.size, 3)
@@ -283,7 +298,12 @@ def load_rgb_frames(data_dir: Path, prepared: PreparedInput) -> np.ndarray:
 
 
 def to_vllm_jpeg_data_url(data_dir: Path, prepared: PreparedInput) -> str:
-    """Send the exact JPEG files displayed by the UI to online vLLM."""
+    """Send the exact JPEG files displayed by the UI to online vLLM.
+
+    Each JPEG is checked against its manifest ``jpeg_sha256`` before transport; a
+    stored RGB array (older bundles, or ``FALL_DETECTION_RGB_ARRAYS=1``) is verified
+    as well.
+    """
     import base64
 
     load_rgb_frames(data_dir, prepared)

@@ -289,6 +289,7 @@ class ReplayScheduler:
                         row["capture_fps"],
                         settings.data_dir,
                         settings.inspection_pngs,
+                        rgb_array=settings.rgb_arrays,
                     )
                 elif video.source != "synthetic":
                     prepared = prepare_video(
@@ -303,6 +304,7 @@ class ReplayScheduler:
                         settings.data_dir,
                         settings.inspection_pngs,
                         causal=True,
+                        rgb_array=settings.rgb_arrays,
                     )
                 elif config.backend_kind != "mock":
                     raise ValueError("Synthetic replay requires mock serving")
