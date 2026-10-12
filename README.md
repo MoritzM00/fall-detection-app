@@ -80,6 +80,7 @@ Open **<http://localhost:5173>**, pick the synthetic sample or a local video, an
 | `FALL_DETECTION_INFERENCE_BASE_URL` | Base URL of the vLLM server |
 | `FALL_DETECTION_INFERENCE_API_KEY` | Bearer token for a vLLM server started with `--api-key` |
 | `FALL_DETECTION_INFERENCE_PROXY_KEY` / `_SECRET` | Modal proxy auth token for the [Modal GPU endpoint](deploy/README.md#modal-gpu-endpoint) |
+| `FALL_DETECTION_MODAL_APP` | Modal app name; enables the [GPU status badge](deploy/README.md#gpu-status-in-the-web-ui) without waking the GPU |
 
 Real inference needs a vLLM version that supports request-level video `media_io_kwargs`. Local OmniFall videos placed under `data/omnifall/videos` are discovered automatically; their `Fall`/`ADL` folder names are source groupings, not ground truth.
 

@@ -28,7 +28,8 @@ Attempt events are persisted transactionally from this release onward: start,
 failure, success, lease expiration and retry request. Existing runs retain their
 attempt count, but missing past events are `partial_legacy_unknown`, never fabricated.
 Each event includes its attempt number and wall-clock time. Request/pipeline timings
-are exported when recorded; processing completion is not the activity timestamp.
+and server-reported `prompt_tokens`/`completion_tokens` are exported when recorded
+(both are null for runs made before usage was stored or when the backend did not report it); processing completion is not the activity timestamp.
 Failures preserve diagnostic SHA-256 identifiers and presence without copying
 freeform exception messages. Known lifecycle skip reasons remain codes; arbitrary
 coverage/recovery diagnostics are redacted. Coverage diagnostic hashes are retained
