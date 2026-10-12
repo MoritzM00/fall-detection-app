@@ -13,7 +13,6 @@ from fastapi.responses import FileResponse, Response
 from fall_detection import live
 from fall_detection.config import Settings
 from fall_detection.exports import ExperimentExports, csv_export, json_export
-from fall_detection.inference import InferenceClient, InferenceServiceError
 from fall_detection.live import (
     FrameMeta,
     IngestConflictError,
@@ -36,12 +35,17 @@ from fall_detection.monitoring import (
     SessionConfiguration,
     SessionCreate,
 )
+from fall_detection.prediction import (
+    ACTIVITY_LABELS,
+    PRESET_ID,
+    THESIS_BASELINE_PROMPT,
+    InferenceClient,
+    InferenceServiceError,
+)
 from fall_detection.preparation import load_prepared_input, preparation_path, prepare_video
 from fall_detection.preparation_queue import PreparationBusyError, PreparationCoordinator
-from fall_detection.prompts import PRESET_ID, THESIS_BASELINE_PROMPT
 from fall_detection.repository import Repository
 from fall_detection.storage_lock import storage_lock
-from fall_detection.taxonomy import ACTIVITY_LABELS
 from fall_detection.upload_limit import UploadBodyLimitMiddleware
 
 

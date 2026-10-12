@@ -16,8 +16,7 @@ from fall_detection.models import (
     SamplingConfiguration,
     VideoAsset,
 )
-from fall_detection.pipeline import PipelineResult
-from fall_detection.prompts import PRESET_ID, THESIS_BASELINE_PROMPT
+from fall_detection.prediction import PRESET_ID, THESIS_BASELINE_PROMPT, PipelineResult
 
 
 def utc_now() -> str:

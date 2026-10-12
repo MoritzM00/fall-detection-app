@@ -10,7 +10,7 @@ import apps.worker.main as worker
 from apps.api.main import create_app
 from fall_detection.config import Settings
 from fall_detection.monitoring import Monitoring, SessionCommand, SessionCreate
-from fall_detection.pipeline import PipelineResult
+from fall_detection.prediction import PipelineResult
 from fall_detection.repository import Repository
 
 

@@ -7,7 +7,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from fall_detection.pipeline import PipelineResult
+from fall_detection.prediction import PipelineResult
 from fall_detection.repository import Repository
 
 

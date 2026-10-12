@@ -7,9 +7,8 @@ import pytest
 
 from fall_detection.evaluation import GroundTruth, evaluate
 from fall_detection.exports import ExperimentExports
-from fall_detection.pipeline import PipelineResult
+from fall_detection.prediction import ACTIVITY_LABELS, PipelineResult
 from fall_detection.repository import Repository
-from fall_detection.taxonomy import ACTIVITY_LABELS
 
 
 @pytest.fixture

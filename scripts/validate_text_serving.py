@@ -6,9 +6,13 @@ import math
 import socket
 from typing import Any
 
-from fall_detection.inference import InferenceClient, InferenceServiceError
-from fall_detection.parsing import PredictionParseError, parse_activity_label
-from fall_detection.taxonomy import ACTIVITY_LABELS
+from fall_detection.prediction import (
+    ACTIVITY_LABELS,
+    InferenceClient,
+    InferenceServiceError,
+    PredictionParseError,
+    parse_activity_label,
+)
 from scripts.validate_vllm_contract import _server_identity
 
 

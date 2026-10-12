@@ -10,7 +10,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from fall_detection.taxonomy import ACTIVITY_LABELS, ActivityLabel
+from fall_detection.prediction import ACTIVITY_LABELS, ActivityLabel
 
 PROTOCOL = "first-sample-raw-window-v1"
 POSITIVE = {"fall", "fallen"}

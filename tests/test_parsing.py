@@ -1,7 +1,6 @@
 import pytest
 
-from fall_detection.parsing import PredictionParseError, parse_activity_label
-from fall_detection.taxonomy import ACTIVITY_LABELS
+from fall_detection.prediction import ACTIVITY_LABELS, PredictionParseError, parse_activity_label
 
 
 @pytest.mark.parametrize("label", ACTIVITY_LABELS)

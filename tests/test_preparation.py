@@ -14,9 +14,8 @@ from PIL import Image
 import apps.api.main as api
 import apps.worker.main as worker
 from fall_detection.config import Settings
-from fall_detection.inference import InferenceResponse
 from fall_detection.models import PreparationRequest
-from fall_detection.pipeline import PipelineResult
+from fall_detection.prediction import InferenceResponse, PipelineResult
 from fall_detection.preparation import (
     _selected_frames,
     load_rgb_frames,

@@ -6,15 +6,14 @@ from fastapi.testclient import TestClient
 
 import apps.api.main as api
 from fall_detection.config import Settings
-from fall_detection.inference import InferenceResponse
-from fall_detection.prompts import PRESET_ID, THESIS_BASELINE_PROMPT
+from fall_detection.prediction import PRESET_ID, THESIS_BASELINE_PROMPT, InferenceResponse
 from fall_detection.repository import Repository
 from fall_detection.upload_limit import MULTIPART_OVERHEAD_BYTES
 
 
 @pytest.fixture(autouse=True)
 def mock_discovery(monkeypatch):
-    from fall_detection.inference import InferenceClient
+    from fall_detection.prediction import InferenceClient
 
     monkeypatch.setattr(InferenceClient, "discover_mock_identity", lambda self: "sample-v1")
 
@@ -62,7 +61,7 @@ def test_api_experiments_preserve_old_runs_and_drive_worker_payload(
     client, api_instance, monkeypatch, custom_response
 ):
     from apps.worker.main import process_next_job
-    from fall_detection.inference import InferenceClient
+    from fall_detection.prediction import InferenceClient
 
     _, repository, data_dir = api_instance
     video = client.post("/videos/sample").json()

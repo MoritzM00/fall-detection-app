@@ -12,9 +12,8 @@ from fall_detection.config import Settings
 from fall_detection.exports import ExperimentExports, csv_export, json_export
 from fall_detection.models import PreparedFrame, PreparedInput
 from fall_detection.monitoring import Monitoring, SessionCreate
-from fall_detection.pipeline import PipelineResult
+from fall_detection.prediction import ACTIVITY_LABELS, PipelineResult
 from fall_detection.repository import Repository
-from fall_detection.taxonomy import ACTIVITY_LABELS
 
 
 @pytest.fixture

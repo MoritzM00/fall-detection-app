@@ -10,7 +10,7 @@ from uuid import uuid4
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from fall_detection.models import GenerationConfiguration, RunConfiguration, SamplingConfiguration
-from fall_detection.prompts import PRESET_ID, THESIS_BASELINE_PROMPT
+from fall_detection.prediction import PRESET_ID, THESIS_BASELINE_PROMPT
 from fall_detection.repository import Repository
 
 

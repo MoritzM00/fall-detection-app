@@ -2,7 +2,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from fall_detection.taxonomy import ActivityLabel
+from fall_detection.prediction import ActivityLabel
 
 type JobState = Literal["queued", "running", "succeeded", "failed", "cancelled", "skipped"]
 

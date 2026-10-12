@@ -1,6 +1,6 @@
 import pytest
 
-from fall_detection.sampling import sample_timestamps
+from fall_detection.prediction import sample_timestamps
 
 
 def test_sample_timestamps_preserve_window_edges() -> None:

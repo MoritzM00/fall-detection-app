@@ -1,7 +1,7 @@
 import httpx
 import pytest
 
-from fall_detection.inference import InferenceClient, InferenceServiceError
+from fall_detection.prediction import InferenceClient, InferenceServiceError
 
 
 @pytest.mark.parametrize(

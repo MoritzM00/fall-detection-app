@@ -4,10 +4,9 @@ import time
 from threading import Event, Thread
 
 from fall_detection.config import Settings
-from fall_detection.inference import InferenceClient
 from fall_detection.media import to_video_data_url
 from fall_detection.monitoring import Monitoring
-from fall_detection.pipeline import run_pipeline
+from fall_detection.prediction import InferenceClient, run_pipeline
 from fall_detection.preparation import load_prepared_input, to_vllm_jpeg_data_url
 from fall_detection.repository import Repository
 
