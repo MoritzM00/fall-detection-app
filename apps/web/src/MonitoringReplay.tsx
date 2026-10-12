@@ -154,6 +154,8 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
       }
       if (payload.action === "position" && (current.current?.generation !== next.generation || current.current.segment_id !== next.segment_id)) return;
       if (!preserveRetry) retry.current = null; current.current = next; adopt(next); setConnected(true);
+      // Hydrate a segment created by this command now; a later poll would overwrite edits made in between.
+      if (hydrated.current !== next.segment_id) { hydrated.current = next.segment_id; hydrate(next.configuration); }
       if (payload.action !== "position") {
         syntheticPosition.current = next.position; setPosition(next.position);
         if (media.current && Math.abs(media.current.currentTime - next.position) > 0.1) media.current.currentTime = next.position;

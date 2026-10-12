@@ -42,13 +42,16 @@ type DialogProps = {
 /** Modal side sheet for settings that most runs leave at the baseline. */
 export function SettingsDialog({ open, title, onClose, children, footer }: DialogProps) {
   const dialog = useRef<HTMLDialogElement>(null);
+  // The native close event also fires for closes driven by `open`; only report the ones the user started (Escape).
+  const expectedOpen = useRef(open);
+  expectedOpen.current = open;
   useEffect(() => {
     const element = dialog.current;
     if (!element) return;
     if (open && !element.open) element.showModal();
     if (!open && element.open) element.close();
   }, [open]);
-  return <dialog ref={dialog} className="settings-dialog" aria-label={title} onClose={onClose}
+  return <dialog ref={dialog} className="settings-dialog" aria-label={title} onClose={() => { if (expectedOpen.current) onClose(); }}
     onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <header><h2>{title}</h2><button type="button" className="dialog-close" aria-label="Close settings" onClick={onClose}>×</button></header>
     <div className="settings-body">{children}</div>

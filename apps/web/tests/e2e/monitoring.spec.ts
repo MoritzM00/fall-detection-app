@@ -51,6 +51,16 @@ test("recorded sample lifecycle retains old generations and recovers after reloa
   // Applying unchanged settings would only create an identical segment.
   await expect(panel.getByRole("button", { name: "Apply new configuration segment" })).toBeDisabled();
   await panel.getByLabel("Monitoring frames").fill("8");
+  let failConfigure = true;
+  await page.route("**/api/monitoring-sessions/*/commands", async route => {
+    if (failConfigure && route.request().postDataJSON().action === "configure") { failConfigure = false; await route.fulfill({ status: 503, json: { detail: "temporary configure failure" } }); return; }
+    await route.fallback();
+  });
+  await panel.getByRole("button", { name: "Apply new configuration segment" }).click();
+  await expect(panel.getByRole("alert")).toContainText("temporary configure failure");
+  // A failed apply keeps the pending edits so it can be retried.
+  await panel.getByRole("button", { name: "Settings", exact: true }).click();
+  await expect(panel.getByLabel("Monitoring frames")).toHaveValue("8");
   await panel.getByRole("button", { name: "Apply new configuration segment" }).click();
   await expect(panel.locator(".settings-summary")).toContainText("8 frames");
   await expect(panel.locator(".settings-summary")).toContainText("Custom settings");
