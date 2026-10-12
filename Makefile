@@ -1,4 +1,7 @@
-.PHONY: setup dev check browser-test demo gpu-warm
+.PHONY: setup dev dev-gpu check browser-test demo gpu-warm
+
+# Committed non-secret GPU settings, then the Git-ignored token in .env.
+GPU_ENV = set -a; . deploy/modal.env; [ ! -f .env ] || . ./.env; set +a;
 
 setup:
 	UV_CACHE_DIR=.uv-cache uv sync
@@ -6,6 +9,10 @@ setup:
 
 dev:
 	UV_CACHE_DIR=.uv-cache uv run python scripts/dev.py
+
+dev-gpu:
+	@[ -f .env ] || { echo "Missing .env: copy .env.example and add your Modal proxy token" >&2; exit 1; }
+	$(GPU_ENV) UV_CACHE_DIR=.uv-cache uv run python scripts/dev.py
 
 check:
 	UV_CACHE_DIR=.uv-cache uv run ruff check .
@@ -24,4 +31,4 @@ demo:
 	.venv/bin/python -m scripts.demo
 
 gpu-warm:
-	[ ! -f .env ] || . ./.env; UV_CACHE_DIR=.uv-cache uv run python scripts/warm_gpu.py
+	$(GPU_ENV) UV_CACHE_DIR=.uv-cache uv run python scripts/warm_gpu.py

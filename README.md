@@ -68,6 +68,7 @@ Open **<http://localhost:5173>**, pick the synthetic sample or a local video, an
 | `make check` | Lint, format check, type check, Python tests, web build and unit tests |
 | `make browser-test` | End-to-end browser flows |
 | `make demo` | Disposable CPU-only acceptance scenarios ([runbook](docs/runbook.md)) |
+| `make dev-gpu` | Run against the [Modal GPU endpoint](deploy/README.md#modal-gpu-endpoint); needs a `.env` from `.env.example` |
 
 <details>
 <summary><b>Configuration</b></summary>
