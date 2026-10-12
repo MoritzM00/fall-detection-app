@@ -1,7 +1,17 @@
-"""SQLite schema creation and in-place migrations for the shared database."""
+"""SQLite schema creation, in-place migrations and row decoding for the shared database."""
 
+import json
 import sqlite3
 from time import monotonic, sleep
+
+from fall_detection.models import (
+    AnalysisJob,
+    GenerationConfiguration,
+    PredictionResult,
+    RunConfiguration,
+    SamplingConfiguration,
+    VideoAsset,
+)
 
 SCHEMA_VERSION = 6
 
@@ -192,3 +202,87 @@ def _migrate_monitoring(connection: sqlite3.Connection) -> None:
     run_columns = {row[1] for row in connection.execute("PRAGMA table_info(live_runs)")}
     if "run_order" not in run_columns:
         connection.execute("ALTER TABLE live_runs ADD COLUMN run_order INTEGER")
+
+
+# Row decoding lives beside the table layout: adding a column changes both together.
+# One read statement returns a job with its configuration snapshot and result.
+JOB_SELECT = """SELECT j.*, c.model AS c_model, c.prompt_preset AS c_prompt_preset,
+    c.prompt_text AS c_prompt_text, c.preprocessing_json AS c_preprocessing_json,
+    c.generation_json AS c_generation_json, c.backend_kind AS c_backend_kind,
+    c.fixture_version AS c_fixture_version, p.id AS p_id, p.label AS p_label,
+    p.raw_response AS p_raw_response, p.sampled_timestamps_json AS p_sampled_timestamps_json,
+    p.backend_kind AS p_backend_kind, p.model AS p_model, p.fixture_version AS p_fixture_version,
+    p.request_duration_ms AS p_request_duration_ms, p.total_duration_ms AS p_total_duration_ms,
+    p.completed_at AS p_completed_at, p.prompt_tokens AS p_prompt_tokens,
+    p.completion_tokens AS p_completion_tokens
+    FROM jobs j LEFT JOIN configurations c ON c.id = j.configuration_id
+    LEFT JOIN predictions p ON p.job_id = j.id"""
+
+
+def video_from_row(row: sqlite3.Row) -> VideoAsset:
+    """Decode one ``videos`` row."""
+    return VideoAsset(
+        id=row["id"],
+        filename=row["filename"],
+        source=row["source"],
+        storage_key=row["storage_key"],
+        duration_seconds=row["duration_seconds"],
+        created_at=row["created_at"],
+    )
+
+
+def job_from_row(row: sqlite3.Row) -> AnalysisJob:
+    """Decode one ``JOB_SELECT`` row with its configuration snapshot and result."""
+    if row["c_model"] is None:
+        raise ValueError("job configuration no longer exists")
+    return AnalysisJob(
+        id=row["id"],
+        video_id=row["video_id"],
+        configuration_id=row["configuration_id"],
+        prepared_input_id=row["prepared_input_id"],
+        state=row["state"],
+        start_seconds=row["start_seconds"],
+        end_seconds=row["end_seconds"],
+        attempt_count=row["attempt_count"],
+        error=row["error"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+        claim_token=row["claim_token"],
+        lease_expires_at=row["lease_expires_at"],
+        configuration=configuration_from_row(row, "c_"),
+        prediction=prediction_from_row(row, "p_") if row["p_id"] is not None else None,
+    )
+
+
+def configuration_from_row(row: sqlite3.Row, prefix: str = "") -> RunConfiguration:
+    """Decode a saved run configuration, optionally from prefixed join columns."""
+    preprocessing = json.loads(row[f"{prefix}preprocessing_json"])
+    # Historic snapshots did not contain FPS. Their backend is deliberately unknown.
+    preprocessing.setdefault("fps", 7.5)
+    return RunConfiguration(
+        model=row[f"{prefix}model"],
+        prompt_preset=row[f"{prefix}prompt_preset"],
+        prompt_text=row[f"{prefix}prompt_text"],
+        preprocessing=SamplingConfiguration.model_validate(preprocessing),
+        generation=GenerationConfiguration.model_validate_json(row[f"{prefix}generation_json"]),
+        backend_kind=row[f"{prefix}backend_kind"],
+        fixture_version=row[f"{prefix}fixture_version"],
+    )
+
+
+def prediction_from_row(row: sqlite3.Row, prefix: str = "") -> PredictionResult:
+    """Decode a persisted prediction, optionally from prefixed join columns."""
+    return PredictionResult(
+        id=row[f"{prefix}id"],
+        label=row[f"{prefix}label"],
+        raw_response=row[f"{prefix}raw_response"],
+        sampled_timestamps=json.loads(row[f"{prefix}sampled_timestamps_json"]),
+        backend_kind=row[f"{prefix}backend_kind"],
+        model=row[f"{prefix}model"],
+        fixture_version=row[f"{prefix}fixture_version"],
+        request_duration_ms=row[f"{prefix}request_duration_ms"],
+        total_duration_ms=row[f"{prefix}total_duration_ms"],
+        completed_at=row[f"{prefix}completed_at"],
+        prompt_tokens=row[f"{prefix}prompt_tokens"],
+        completion_tokens=row[f"{prefix}completion_tokens"],
+    )

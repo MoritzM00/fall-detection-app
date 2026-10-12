@@ -153,7 +153,7 @@ def ingest_frames(
     for blob in blobs:
         _check_jpeg(blob)
     digests = [hashlib.sha256(blob).hexdigest() for blob in blobs]
-    with repository._connect() as connection:
+    with repository.transaction(immediate=False) as connection:
         policy = connection.execute(
             "SELECT source_kind,capture_fps FROM monitoring_sessions WHERE id=?", (session_id,)
         ).fetchone()
@@ -185,8 +185,7 @@ def ingest_frames(
     monitor = Monitoring(repository)
     # Admit windows completed before this batch, so a gap cannot swallow them.
     monitor.tick()
-    with repository._connect() as connection:
-        connection.execute("BEGIN IMMEDIATE")
+    with repository.transaction() as connection:
         session = connection.execute(
             "SELECT * FROM monitoring_sessions WHERE id=?", (session_id,)
         ).fetchone()
@@ -238,7 +237,7 @@ def ingest_frames(
                 (video.id,),
             ).fetchone()
             first = new[0][0]
-            timestamp = repository._timestamp()
+            timestamp = repository.timestamp()
             if run is None:
                 if first.run_seq != 0:
                     raise IngestConflictError("A new capture run must start at run_seq 0")
@@ -320,7 +319,6 @@ def ingest_frames(
                     session_id,
                 ),
             )
-        connection.commit()
         run_high = connection.execute(
             "SELECT MAX(run_seq) FROM live_frames WHERE video_id=? AND run_id=?",
             (video.id, run_id),
@@ -349,7 +347,7 @@ def prepare_frames(
         raise ValueError("Frame-log preparation requires a live source")
     end_seconds = request.start_seconds + (request.frame_count - 1) / request.fps
     tolerance = gap_tolerance(capture_fps)
-    with repository._connect() as connection:
+    with repository.transaction(immediate=False) as connection:
         rows = connection.execute(
             """SELECT seq,capture_seconds,sha256 FROM live_frames WHERE video_id=?
             AND capture_seconds BETWEEN ? AND ? ORDER BY seq""",

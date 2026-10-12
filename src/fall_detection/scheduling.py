@@ -3,11 +3,18 @@
 import math
 from datetime import datetime
 from enum import StrEnum
+from typing import Literal
 from uuid import uuid4
 
 from fall_detection.models import RunConfiguration
 from fall_detection.repository import Repository
 from fall_detection.storage import storage_lock
+
+# Every value stored in monitoring_sessions.state, monitoring_sessions.source_kind and
+# monitoring_windows.state. A window's job carries its own state (``models.JobState``).
+type SessionState = Literal["running", "paused", "stopped"]
+type SourceKind = Literal["recording", "live"]
+type WindowState = Literal["pending", "preparing", "submitted", "skipped", "failed"]
 
 
 class LifecycleReason(StrEnum):
@@ -39,15 +46,14 @@ class ReplayScheduler:
 
     def tick(self) -> None:
         """Admit only completed playback intervals, coalescing backlog into explicit coverage."""
-        with self.repository._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
+        with self.repository.transaction() as connection:
             # Recovery must also sweep paused sessions before any later resume.
             abandoned = connection.execute(
                 "SELECT id,session_id,created_at FROM monitoring_windows WHERE state='preparing'"
             ).fetchall()
             for candidate in abandoned:
                 if (
-                    self.repository._clock() - datetime.fromisoformat(candidate["created_at"])
+                    self.repository.now() - datetime.fromisoformat(candidate["created_at"])
                 ).total_seconds() > 90:
                     connection.execute(
                         "UPDATE monitoring_windows SET state='failed',reason=? WHERE id=?",
@@ -62,7 +68,7 @@ class ReplayScheduler:
                 WHERE j.state='queued'""").fetchall()
             for candidate in queued:
                 age = (
-                    self.repository._clock() - datetime.fromisoformat(candidate["created_at"])
+                    self.repository.now() - datetime.fromisoformat(candidate["created_at"])
                 ).total_seconds()
                 if (
                     age > candidate["expiration"]
@@ -70,7 +76,7 @@ class ReplayScheduler:
                 ):
                     connection.execute(
                         "UPDATE jobs SET state='skipped',error='Monitoring window expired before claim',updated_at=? WHERE id=? AND state='queued'",
-                        (self.repository._timestamp(), candidate["job_id"]),
+                        (self.repository.timestamp(), candidate["job_id"]),
                     )
                     connection.execute(
                         "UPDATE monitoring_windows SET state='skipped',reason=? WHERE id=?",
@@ -80,7 +86,6 @@ class ReplayScheduler:
                 "SELECT * FROM monitoring_sessions WHERE state='running' AND duration_verified=1"
             ).fetchone()
             if row is None:
-                connection.commit()
                 return
             # Like playback end, a lost camera pauses only once admitted windows, whose
             # frames are already stored, have been prepared or have expired normally.
@@ -88,7 +93,7 @@ class ReplayScheduler:
                 row["source_kind"] == "live"
                 and row["last_frame_at"] is not None
                 and (
-                    self.repository._clock() - datetime.fromisoformat(row["last_frame_at"])
+                    self.repository.now() - datetime.fromisoformat(row["last_frame_at"])
                 ).total_seconds()
                 > row["expiration"]
                 and connection.execute(
@@ -100,9 +105,8 @@ class ReplayScheduler:
                 connection.execute(
                     """UPDATE monitoring_sessions SET state='paused',recovery_reason=?,
                     updated_at=? WHERE id=?""",
-                    (LifecycleReason.CAPTURE_ENDED, self.repository._timestamp(), row["id"]),
+                    (LifecycleReason.CAPTURE_ENDED, self.repository.timestamp(), row["id"]),
                 )
-                connection.commit()
                 return
             config = RunConfiguration.model_validate_json(
                 connection.execute(
@@ -118,13 +122,12 @@ class ReplayScheduler:
                 (row["id"],),
             ).fetchone()
             if pending is not None and pending["state"] == "preparing":
-                connection.commit()
                 return
             if pending is not None and (
                 pending["sequence"] < last
                 or row["position"] - pending["end_seconds"] > row["expiration"]
                 or (
-                    self.repository._clock() - datetime.fromisoformat(pending["created_at"])
+                    self.repository.now() - datetime.fromisoformat(pending["created_at"])
                 ).total_seconds()
                 > row["expiration"]
             ):
@@ -139,7 +142,9 @@ class ReplayScheduler:
                         connection, row, seq, last - 1, width, "skipped", LifecycleReason.SUPERSEDED
                     )
                 end = row["origin"] + last * row["stride"] + width
-                state = "skipped" if row["position"] - end > row["expiration"] else "pending"
+                state: WindowState = (
+                    "skipped" if row["position"] - end > row["expiration"] else "pending"
+                )
                 self._window(
                     connection,
                     row,
@@ -181,12 +186,20 @@ class ReplayScheduler:
             ):
                 connection.execute(
                     "UPDATE monitoring_sessions SET state='paused',updated_at=? WHERE id=?",
-                    (self.repository._timestamp(), row["id"]),
+                    (self.repository.timestamp(), row["id"]),
                 )
-            connection.commit()
 
     def _window(
-        self, connection, row, seq, last, width, state, reason: LifecycleReason | None, *, end=None
+        self,
+        connection,
+        row,
+        seq,
+        last,
+        width,
+        state: WindowState,
+        reason: LifecycleReason | None,
+        *,
+        end=None,
     ):
         connection.execute(
             """INSERT INTO monitoring_windows
@@ -204,7 +217,7 @@ class ReplayScheduler:
                 row["position"],
                 state,
                 reason,
-                self.repository._timestamp(),
+                self.repository.timestamp(),
             ),
         )
 
@@ -212,7 +225,7 @@ class ReplayScheduler:
         """Read source playback bounds on the worker before any real-window admission."""
         import av
 
-        with self.repository._connect() as connection:
+        with self.repository.transaction(immediate=False) as connection:
             row = connection.execute(
                 "SELECT * FROM monitoring_sessions WHERE state='running' AND duration_verified=0"
             ).fetchone()
@@ -233,8 +246,7 @@ class ReplayScheduler:
                     if stream is None:
                         raise ValueError("Replay requires a video stream")
                     duration = min(row["duration"], source_duration(container, stream))
-                with self.repository._connect() as connection:
-                    connection.execute("BEGIN IMMEDIATE")
+                with self.repository.transaction() as connection:
                     current = connection.execute(
                         "SELECT origin,state FROM monitoring_sessions WHERE id=?", (row["id"],)
                     ).fetchone()
@@ -248,9 +260,8 @@ class ReplayScheduler:
                         "UPDATE monitoring_sessions SET duration=?,position=MIN(position,?),duration_verified=1 WHERE id=?",
                         (duration, duration, row["id"]),
                     )
-                    connection.commit()
         except (ValueError, OSError, av.error.FFmpegError) as exc:
-            with self.repository._connect() as connection:
+            with self.repository.transaction(immediate=False) as connection:
                 connection.execute(
                     "UPDATE monitoring_sessions SET state='paused',recovery_reason=? WHERE id=? AND state='running' AND generation=? AND segment_id=?",
                     (str(exc), row["id"], row["generation"], row["segment_id"]),
@@ -266,8 +277,7 @@ class ReplayScheduler:
 
         self.verify_source(settings)
         self.tick()
-        with self.repository._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
+        with self.repository.transaction() as connection:
             # Global monitoring work bound includes obsolete generations still running.
             if (
                 connection.execute("""SELECT 1 FROM jobs WHERE state IN ('queued','running')
@@ -277,13 +287,11 @@ class ReplayScheduler:
                 (SELECT job_id FROM monitoring_windows WHERE job_id IS NOT NULL)"""
                 ).fetchone()
             ):
-                connection.commit()
                 return False
             row = connection.execute("""SELECT w.*,s.video_id,s.capture_fps FROM monitoring_windows w
                 JOIN monitoring_sessions s ON s.id=w.session_id WHERE w.state='pending'
                 AND s.state='running' AND s.generation=w.generation AND s.segment_id=w.segment_id""").fetchone()
             if row is None:
-                connection.commit()
                 return False
             connection.execute(
                 "UPDATE monitoring_windows SET state='preparing' WHERE id=?", (row["id"],)
@@ -294,7 +302,6 @@ class ReplayScheduler:
                     (row["segment_id"],),
                 ).fetchone()[0]
             )
-            connection.commit()
         prepared = None
         try:
             video = self.repository.get_video(row["video_id"])
@@ -335,8 +342,7 @@ class ReplayScheduler:
                     )
                 elif config.backend_kind != "mock":
                     raise ValueError("Synthetic replay requires mock serving")
-                with self.repository._connect() as connection:
-                    connection.execute("BEGIN IMMEDIATE")
+                with self.repository.transaction() as connection:
                     current = connection.execute(
                         "SELECT * FROM monitoring_sessions WHERE id=?", (row["session_id"],)
                     ).fetchone()
@@ -350,7 +356,7 @@ class ReplayScheduler:
                         and window["state"] == "preparing"
                     )
                     if (
-                        self.repository._clock() - datetime.fromisoformat(row["created_at"])
+                        self.repository.now() - datetime.fromisoformat(row["created_at"])
                     ).total_seconds() > current["expiration"] or current["position"] - row[
                         "end_seconds"
                     ] > current["expiration"]:
@@ -358,14 +364,12 @@ class ReplayScheduler:
                             "UPDATE monitoring_windows SET state='skipped',reason=? WHERE id=? AND state='preparing'",
                             (LifecycleReason.EXPIRED, row["id"]),
                         )
-                        connection.commit()
                         return True
                     if not eligible:
                         connection.execute(
                             "UPDATE monitoring_windows SET state='skipped',reason=COALESCE(reason,?) WHERE id=? AND state='preparing'",
                             (LifecycleReason.LIFECYCLE_CHANGED, row["id"]),
                         )
-                        connection.commit()
                         return True
                     if prepared:
                         config = config.model_copy(
@@ -379,7 +383,7 @@ class ReplayScheduler:
                             }
                         )
                     job_id, configuration_id = str(uuid4()), str(uuid4())
-                    timestamp = self.repository._timestamp()
+                    timestamp = self.repository.timestamp()
                     connection.execute(
                         """INSERT INTO configurations
                         (id,schema_version,model,prompt_preset,prompt_text,preprocessing_json,
@@ -415,15 +419,14 @@ class ReplayScheduler:
                         "UPDATE monitoring_windows SET state='submitted',prepared_input_id=?,job_id=? WHERE id=?",
                         (prepared.id if prepared else None, job_id, row["id"]),
                     )
-                    connection.commit()
         except IngestGapError:
-            with self.repository._connect() as connection:
+            with self.repository.transaction(immediate=False) as connection:
                 connection.execute(
                     "UPDATE monitoring_windows SET state='skipped',reason=? WHERE id=? AND state='preparing'",
                     (LifecycleReason.INGEST_GAP, row["id"]),
                 )
         except (ValueError, OSError, av.error.FFmpegError) as exc:
-            with self.repository._connect() as connection:
+            with self.repository.transaction(immediate=False) as connection:
                 connection.execute(
                     "UPDATE monitoring_windows SET state='failed',reason=? WHERE id=? AND state='preparing'",
                     (str(exc), row["id"]),
