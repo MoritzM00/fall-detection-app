@@ -1,7 +1,6 @@
 """Proposed recorded replay behavior; independent of research inference policy."""
 
 import json
-import sqlite3
 from typing import Literal
 from uuid import uuid4
 
@@ -67,59 +66,6 @@ class SessionCommand(BaseModel):
     position_seconds: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     configuration: SessionConfiguration | None = None
     command_id: str | None = Field(default=None, min_length=1, max_length=128)
-
-
-SCHEMA = (
-    """CREATE TABLE IF NOT EXISTS monitoring_commands (
-        session_id TEXT NOT NULL REFERENCES monitoring_sessions(id), command_id TEXT NOT NULL,
-        payload TEXT NOT NULL, PRIMARY KEY(session_id, command_id))""",
-    """CREATE TABLE IF NOT EXISTS monitoring_sessions (
-        id TEXT PRIMARY KEY, schema_version INTEGER NOT NULL DEFAULT 1,
-        video_id TEXT NOT NULL REFERENCES videos(id), state TEXT NOT NULL,
-        generation INTEGER NOT NULL, segment_id TEXT NOT NULL,
-        position REAL NOT NULL, duration REAL NOT NULL, duration_verified INTEGER NOT NULL DEFAULT 0, origin REAL NOT NULL,
-        next_sequence INTEGER NOT NULL, stride REAL NOT NULL, expiration REAL NOT NULL,
-        created_at TEXT NOT NULL, updated_at TEXT NOT NULL, recovery_reason TEXT)""",
-    """CREATE UNIQUE INDEX IF NOT EXISTS one_running_session
-        ON monitoring_sessions(state) WHERE state = 'running'""",
-    """CREATE TABLE IF NOT EXISTS monitoring_segments (
-        id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES monitoring_sessions(id),
-        generation INTEGER NOT NULL, start_seconds REAL NOT NULL,
-        configuration_json TEXT NOT NULL, created_at TEXT NOT NULL)""",
-    """CREATE TABLE IF NOT EXISTS monitoring_windows (
-        id TEXT PRIMARY KEY, schema_version INTEGER NOT NULL DEFAULT 1, session_id TEXT NOT NULL REFERENCES monitoring_sessions(id),
-        generation INTEGER NOT NULL, sequence INTEGER NOT NULL, sequence_end INTEGER NOT NULL,
-        segment_id TEXT NOT NULL REFERENCES monitoring_segments(id),
-        start_seconds REAL NOT NULL, end_seconds REAL NOT NULL, available_seconds REAL NOT NULL,
-        state TEXT NOT NULL, reason TEXT, prepared_input_id TEXT, job_id TEXT REFERENCES jobs(id),
-        created_at TEXT NOT NULL, UNIQUE(session_id, generation, sequence))""",
-    """CREATE UNIQUE INDEX IF NOT EXISTS one_pending_window
-        ON monitoring_windows(session_id) WHERE state IN ('pending', 'preparing')""",
-    """CREATE TABLE IF NOT EXISTS live_runs (
-        video_id TEXT NOT NULL REFERENCES videos(id), run_id TEXT NOT NULL,
-        offset_seconds REAL NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(video_id, run_id))""",
-    """CREATE TABLE IF NOT EXISTS live_frames (
-        video_id TEXT NOT NULL REFERENCES videos(id), seq INTEGER NOT NULL,
-        run_id TEXT NOT NULL, run_seq INTEGER NOT NULL,
-        capture_seconds REAL NOT NULL, sha256 TEXT NOT NULL, received_at TEXT NOT NULL,
-        PRIMARY KEY(video_id, seq), UNIQUE(video_id, run_id, run_seq))""",
-)
-
-
-def migrate(connection: sqlite3.Connection) -> None:
-    """Add replay tables without rewriting clip jobs or saved configurations."""
-    for statement in SCHEMA:
-        connection.execute(statement)
-    columns = {row[1] for row in connection.execute("PRAGMA table_info(monitoring_sessions)")}
-    # Live sessions: capture policy and the newest ingest time; recordings keep the defaults.
-    if "source_kind" not in columns:
-        connection.execute(
-            "ALTER TABLE monitoring_sessions ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'recording'"
-        )
-    if "capture_fps" not in columns:
-        connection.execute("ALTER TABLE monitoring_sessions ADD COLUMN capture_fps REAL")
-    if "last_frame_at" not in columns:
-        connection.execute("ALTER TABLE monitoring_sessions ADD COLUMN last_frame_at TEXT")
 
 
 class Monitoring(ReplayScheduler):
