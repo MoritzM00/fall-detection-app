@@ -90,8 +90,38 @@ def live_edge(
     ).fetchone()
     if last is None:
         return session["position"]
-    elapsed = (repository._clock() - datetime.fromisoformat(last["received_at"])).total_seconds()
+    elapsed = (repository.now() - datetime.fromisoformat(last["received_at"])).total_seconds()
     return last["capture_seconds"] + max(elapsed, 1 / session["capture_fps"])
+
+
+def cancel_unprepared(
+    connection: sqlite3.Connection,
+    reason: LifecycleReason,
+    timestamp: str,
+    session_id: str | None = None,
+) -> None:
+    """Skip windows not yet prepared or claimed and cancel their queued jobs.
+
+    The one owner of this fence: a lifecycle command passes its session, process
+    recovery passes none and fences every session. Cancelled jobs keep the reason
+    code as their error.
+    """
+    scope = (session_id, session_id)
+    connection.execute(
+        """UPDATE monitoring_windows SET state='skipped',reason=?
+        WHERE (? IS NULL OR session_id=?) AND state IN ('pending','preparing')""",
+        (reason, *scope),
+    )
+    connection.execute(
+        """UPDATE monitoring_windows SET state='skipped',reason=? WHERE (? IS NULL OR session_id=?)
+        AND job_id IN (SELECT id FROM jobs WHERE state='queued')""",
+        (reason, *scope),
+    )
+    connection.execute(
+        """UPDATE jobs SET state='cancelled',error=?,updated_at=? WHERE state='queued'
+        AND id IN (SELECT job_id FROM monitoring_windows WHERE ? IS NULL OR session_id=?)""",
+        (reason, timestamp, *scope),
+    )
 
 
 class Monitoring(ReplayScheduler):
@@ -140,9 +170,8 @@ class Monitoring(ReplayScheduler):
         ingested frames instead of playback.
         """
         session_id, segment = str(uuid4()), str(uuid4())
-        timestamp = self.repository._timestamp()
-        with self.repository._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
+        timestamp = self.repository.timestamp()
+        with self.repository.transaction() as connection:
             if capture_fps is not None:
                 connection.execute(
                     """INSERT INTO videos
@@ -207,7 +236,6 @@ class Monitoring(ReplayScheduler):
                 connection.execute(
                     "UPDATE monitoring_sessions SET duration_verified=1 WHERE id=?", (session_id,)
                 )
-            connection.commit()
         return self.get(session_id)
 
     def get(self, session_id: str) -> dict:
@@ -222,7 +250,7 @@ class Monitoring(ReplayScheduler):
         return self._read_sessions("ORDER BY s.created_at DESC LIMIT ?", (limit,))
 
     def _read_sessions(self, clause: str, parameters: tuple) -> list[dict]:
-        with self.repository._connect() as connection:
+        with self.repository.transaction(immediate=False) as connection:
             rows = connection.execute(
                 f"""SELECT s.*, seg.configuration_json AS _configuration_json,
                 (SELECT w.job_id FROM monitoring_windows w JOIN jobs j ON j.id=w.job_id
@@ -246,7 +274,7 @@ class Monitoring(ReplayScheduler):
         self.get(session_id)
         if not 1 <= limit <= 100:
             raise ValueError("limit must be between 1 and 100")
-        with self.repository._connect() as connection:
+        with self.repository.transaction(immediate=False) as connection:
             rows = connection.execute(
                 """SELECT rowid AS cursor,* FROM monitoring_windows
                 WHERE session_id=? AND (? IS NULL OR rowid < ?) ORDER BY rowid DESC LIMIT ?""",
@@ -256,27 +284,14 @@ class Monitoring(ReplayScheduler):
 
     def recover(self) -> None:
         """Pause replay on process startup; never silently resume a playback timeline."""
-        with self.repository._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
+        timestamp = self.repository.timestamp()
+        with self.repository.transaction() as connection:
             connection.execute(
                 """UPDATE monitoring_sessions SET state='paused',
                 recovery_reason=?,updated_at=? WHERE state='running'""",
-                (LifecycleReason.PROCESS_RESTART, self.repository._timestamp()),
+                (LifecycleReason.PROCESS_RESTART, timestamp),
             )
-            connection.execute(
-                """UPDATE monitoring_windows SET state='skipped',reason=?
-                WHERE state IN ('pending','preparing')""",
-                (LifecycleReason.PROCESS_RESTART,),
-            )
-            connection.execute(
-                "UPDATE monitoring_windows SET state='skipped',reason=? WHERE job_id IN (SELECT id FROM jobs WHERE state='queued')",
-                (LifecycleReason.PROCESS_RESTART,),
-            )
-            connection.execute(
-                "UPDATE jobs SET state='cancelled',error='process_restart',updated_at=? WHERE state='queued' AND id IN (SELECT job_id FROM monitoring_windows)",
-                (self.repository._timestamp(),),
-            )
-            connection.commit()
+            cancel_unprepared(connection, LifecycleReason.PROCESS_RESTART, timestamp)
 
     def command(
         self,
@@ -285,8 +300,7 @@ class Monitoring(ReplayScheduler):
         configuration: RunConfiguration | None = None,
     ) -> dict:
         """Apply timeline-preserving pause/resume or fence a changed playback generation."""
-        with self.repository._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
+        with self.repository.transaction() as connection:
             row = connection.execute(
                 "SELECT * FROM monitoring_sessions WHERE id=?", (session_id,)
             ).fetchone()
@@ -300,7 +314,6 @@ class Monitoring(ReplayScheduler):
                 if previous:
                     if previous[0] != command.model_dump_json():
                         raise ValueError("Command identity was already used with another payload")
-                    connection.commit()
                     return self.get(session_id)
                 connection.execute(
                     "INSERT INTO monitoring_commands VALUES (?,?,?)",
@@ -347,21 +360,8 @@ class Monitoring(ReplayScheduler):
             elif action == "position" and command.position_seconds is None:
                 raise ValueError("Position command requires an explicit position")
             if action in {"stop", "seek", "restart", "configure"}:
-                reason = LifecycleReason(action)
-                connection.execute(
-                    """UPDATE monitoring_windows SET state='skipped',reason=?
-                    WHERE session_id=? AND state IN ('pending','preparing')""",
-                    (reason, session_id),
-                )
-                connection.execute(
-                    "UPDATE monitoring_windows SET state='skipped',reason=? WHERE session_id=? AND job_id IN (SELECT id FROM jobs WHERE state='queued')",
-                    (reason, session_id),
-                )
-                connection.execute(
-                    """UPDATE jobs SET state='cancelled',error=?,updated_at=?
-                    WHERE state='queued' AND id IN
-                    (SELECT job_id FROM monitoring_windows WHERE session_id=?)""",
-                    (action, self.repository._timestamp(), session_id),
+                cancel_unprepared(
+                    connection, LifecycleReason(action), self.repository.timestamp(), session_id
                 )
                 if action != "configure":
                     values["generation"] += 1
@@ -390,7 +390,7 @@ class Monitoring(ReplayScheduler):
                         values["generation"],
                         values["position"],
                         configuration.model_dump_json(),
-                        self.repository._timestamp(),
+                        self.repository.timestamp(),
                     ),
                 )
                 values["segment_id"] = segment
@@ -402,7 +402,7 @@ class Monitoring(ReplayScheduler):
                 )
             if live and values["state"] == "running" and row["state"] != "running":
                 # Starting capture takes a moment; count the ingest timeout from here.
-                values["last_frame_at"] = self.repository._timestamp()
+                values["last_frame_at"] = self.repository.timestamp()
             connection.execute(
                 """UPDATE monitoring_sessions SET state=?,generation=?,segment_id=?,position=?,
                 origin=?,next_sequence=?,updated_at=?,recovery_reason=NULL,last_frame_at=?
@@ -414,10 +414,9 @@ class Monitoring(ReplayScheduler):
                     values["position"],
                     values["origin"],
                     values["next_sequence"],
-                    self.repository._timestamp(),
+                    self.repository.timestamp(),
                     values["last_frame_at"],
                     session_id,
                 ),
             )
-            connection.commit()
         return self.get(session_id)

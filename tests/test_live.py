@@ -6,11 +6,14 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 from PIL import Image
 
 import apps.worker.main as worker
 from apps.api.main import create_app
+from apps.api.monitoring import MonitoringSessionView, MonitoringWindowView
 from apps.api.request_guards import CLIENT_HEADERS
 from fall_detection import live as live_module
 from fall_detection.config import Settings
@@ -516,3 +519,38 @@ def test_commands_within_the_length_cap_still_start_capture(live, stop_action, a
     assert resumed.json()["generation"] == expected
     placed = send(client, session["id"], [(0, 0.0)], run_id="run-b")
     assert placed.status_code == 200 and placed.json()["watermark_seconds"] == 9.0
+
+
+def test_session_views_serialize_every_stored_field_unchanged(live):
+    """Response models neither drop, add nor retype a field clients received as a dict."""
+    client, settings, repository, _ = live
+    session = create(client)
+    assert run(client, session["id"], "start").status_code == 200
+    assert send(client, session["id"], [(i, i * 0.25) for i in range(9)]).status_code == 200
+    drain(settings, repository)
+    monitor = Monitoring(repository)
+
+    def as_dict_route(content) -> str:
+        return bytes(JSONResponse(jsonable_encoder(content)).body).decode()
+
+    assert monitor.get(session["id"])["latest_job_id"] is not None
+    assert client.get(f"/monitoring-sessions/{session['id']}").text == as_dict_route(
+        monitor.get(session["id"])
+    )
+    assert client.get("/monitoring-sessions").text == as_dict_route(monitor.recent(100))
+    assert client.get(f"/monitoring-sessions/{session['id']}/windows").text == as_dict_route(
+        monitor.history(session["id"])
+    )
+    with repository.transaction(immediate=False) as connection:
+        session_columns = [
+            row["name"] for row in connection.execute("PRAGMA table_info(monitoring_sessions)")
+        ]
+        window_columns = [
+            row["name"] for row in connection.execute("PRAGMA table_info(monitoring_windows)")
+        ]
+    assert list(MonitoringSessionView.model_fields) == [
+        *session_columns,
+        "configuration",
+        "latest_job_id",
+    ]
+    assert list(MonitoringWindowView.model_fields) == ["cursor", *window_columns]

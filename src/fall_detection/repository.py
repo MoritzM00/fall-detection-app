@@ -1,7 +1,7 @@
 import hashlib
 import json
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -10,13 +10,19 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 from fall_detection.models import (
     AnalysisJob,
     GenerationConfiguration,
-    PredictionResult,
     RunConfiguration,
     SamplingConfiguration,
     VideoAsset,
 )
 from fall_detection.prediction import PRESET_ID, THESIS_BASELINE_PROMPT, PipelineResult
-from fall_detection.schema import enable_wal, migrate
+from fall_detection.schema import (
+    JOB_SELECT,
+    configuration_from_row,
+    enable_wal,
+    job_from_row,
+    migrate,
+    video_from_row,
+)
 
 
 def utc_now() -> str:
@@ -26,18 +32,6 @@ def utc_now() -> str:
 
 _EXPIRED_SELECT = """SELECT id FROM jobs WHERE state = 'running'
     AND (lease_expires_at IS NULL OR lease_expires_at <= ?)"""
-# One read statement returns a job with its configuration snapshot and result.
-_JOB_SELECT = """SELECT j.*, c.model AS c_model, c.prompt_preset AS c_prompt_preset,
-    c.prompt_text AS c_prompt_text, c.preprocessing_json AS c_preprocessing_json,
-    c.generation_json AS c_generation_json, c.backend_kind AS c_backend_kind,
-    c.fixture_version AS c_fixture_version, p.id AS p_id, p.label AS p_label,
-    p.raw_response AS p_raw_response, p.sampled_timestamps_json AS p_sampled_timestamps_json,
-    p.backend_kind AS p_backend_kind, p.model AS p_model, p.fixture_version AS p_fixture_version,
-    p.request_duration_ms AS p_request_duration_ms, p.total_duration_ms AS p_total_duration_ms,
-    p.completed_at AS p_completed_at, p.prompt_tokens AS p_prompt_tokens,
-    p.completion_tokens AS p_completion_tokens
-    FROM jobs j LEFT JOIN configurations c ON c.id = j.configuration_id
-    LEFT JOIN predictions p ON p.job_id = j.id"""
 
 
 class Repository:
@@ -48,11 +42,34 @@ class Repository:
         self._database_path = database_path
         self._clock = clock or (lambda: datetime.now(UTC))
 
-    def _timestamp(self) -> str:
-        return self._clock().astimezone(UTC).isoformat()
+    def now(self) -> datetime:
+        """Read the injectable clock that every lifecycle age is measured against."""
+        return self._clock()
+
+    def timestamp(self) -> str:
+        """Return :meth:`now` as the UTC ISO 8601 text stored in lifecycle columns."""
+        return self.now().astimezone(UTC).isoformat()
 
     @contextmanager
-    def _connect(self, *, foreign_keys: bool = True):
+    def transaction(self, *, immediate: bool = True) -> Iterator[sqlite3.Connection]:
+        """Run statements in one transaction, committed on exit and rolled back on error.
+
+        ``immediate`` takes the write lock up front (``BEGIN IMMEDIATE``), so a
+        read-check-write sequence cannot interleave with another writer. With
+        ``immediate=False`` the transaction is deferred: a consistent snapshot for
+        reads, or a single write statement, which is atomic on its own.
+        """
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
+            try:
+                yield connection
+            except BaseException:
+                connection.rollback()
+                raise
+            connection.commit()
+
+    @contextmanager
+    def _connect(self, *, foreign_keys: bool = True) -> Iterator[sqlite3.Connection]:
         """Open a connection with the pragmas SQLite does not persist in the file.
 
         ``timeout`` sets the busy timeout. WAL mode is persistent and is set once
@@ -72,7 +89,7 @@ class Repository:
         with self._connect(foreign_keys=False) as connection:
             enable_wal(connection)
             connection.execute("BEGIN IMMEDIATE")
-            migrate(connection, self._timestamp())
+            migrate(connection, self.timestamp())
             if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
                 raise RuntimeError("Migration would violate foreign keys")
             connection.commit()
@@ -89,7 +106,7 @@ class Repository:
                 (sample_id, "Synthetic corridor clip", utc_now()),
             )
             row = connection.execute("SELECT * FROM videos WHERE id = ?", (sample_id,)).fetchone()
-        return self._video_from_row(row)
+        return video_from_row(row)
 
     def create_uploaded_video(self, filename: str, storage_key: str) -> VideoAsset:
         """Persist uploaded media metadata after its bytes are safely stored."""
@@ -103,7 +120,7 @@ class Repository:
                 (video_id, filename, storage_key, created_at),
             )
             row = connection.execute("SELECT * FROM videos WHERE id = ?", (video_id,)).fetchone()
-        return self._video_from_row(row)
+        return video_from_row(row)
 
     def create_dataset_video(self, filename: str, storage_key: str) -> VideoAsset:
         """Create or return a stable record for a prepared local dataset video."""
@@ -117,13 +134,13 @@ class Repository:
                 (video_id, filename, storage_key, utc_now()),
             )
             row = connection.execute("SELECT * FROM videos WHERE id = ?", (video_id,)).fetchone()
-        return self._video_from_row(row)
+        return video_from_row(row)
 
     def get_video(self, video_id: str) -> VideoAsset | None:
         """Read one asset without exposing its machine-local path."""
         with self._connect() as connection:
             row = connection.execute("SELECT * FROM videos WHERE id = ?", (video_id,)).fetchone()
-        return self._video_from_row(row) if row is not None else None
+        return video_from_row(row) if row is not None else None
 
     def create_job(
         self,
@@ -153,11 +170,9 @@ class Repository:
             raise ValueError("Unsupported backend kind")
         if not prompt_text.strip() or len(prompt_text) > 16000:
             raise ValueError("Prompt must contain 1–16000 characters")
-        with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
+        with self.transaction() as connection:
             video = connection.execute("SELECT id FROM videos WHERE id = ?", (video_id,)).fetchone()
             if video is None:
-                connection.rollback()
                 raise KeyError(video_id)
             connection.execute(
                 """INSERT INTO configurations
@@ -192,7 +207,6 @@ class Repository:
                     timestamp,
                 ),
             )
-            connection.commit()
         job = self.get_job(job_id)
         if job is None:
             raise RuntimeError("created job could not be read back")
@@ -217,13 +231,13 @@ class Repository:
             ).fetchone()
         if row is None:
             raise ValueError("job configuration no longer exists")
-        return self._configuration_from_row(row)
+        return configuration_from_row(row)
 
     def get_job(self, job_id: str) -> AnalysisJob | None:
         """Read a job with its configuration and persisted result; never writes."""
         with self._connect() as connection:
-            row = connection.execute(f"{_JOB_SELECT} WHERE j.id = ?", (job_id,)).fetchone()
-        return self._job_from_row(row) if row is not None else None
+            row = connection.execute(f"{JOB_SELECT} WHERE j.id = ?", (job_id,)).fetchone()
+        return job_from_row(row) if row is not None else None
 
     def list_jobs(self, limit: int = 20) -> list[AnalysisJob]:
         """List every active job and a bounded number of recent terminal jobs.
@@ -235,19 +249,18 @@ class Repository:
             raise ValueError("limit must be between 1 and 100")
         with self._connect() as connection:
             rows = connection.execute(
-                f"""{_JOB_SELECT} WHERE j.state IN ('queued', 'running')
+                f"""{JOB_SELECT} WHERE j.state IN ('queued', 'running')
                 OR j.id IN (SELECT id FROM jobs
                     WHERE state NOT IN ('queued', 'running')
                     ORDER BY created_at DESC, rowid DESC LIMIT ?)
                 ORDER BY j.created_at DESC, j.rowid DESC""",
                 (limit,),
             ).fetchall()
-        return [self._job_from_row(row) for row in rows]
+        return [job_from_row(row) for row in rows]
 
     def claim_next_job(self) -> AnalysisJob | None:
         """Atomically claim the oldest queued job for one worker."""
-        with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
+        with self.transaction() as connection:
             self._recover_expired_locked(connection)
             row = connection.execute(
                 """SELECT id FROM jobs WHERE state = 'queued' ORDER BY
@@ -255,11 +268,10 @@ class Repository:
                 created_at, rowid LIMIT 1"""
             ).fetchone()
             if row is None:
-                connection.commit()
                 return None
-            timestamp = self._timestamp()
+            timestamp = self.timestamp()
             token = str(uuid4())
-            expires = (self._clock().astimezone(UTC) + timedelta(seconds=90)).isoformat()
+            expires = (self.now().astimezone(UTC) + timedelta(seconds=90)).isoformat()
             connection.execute(
                 """UPDATE jobs SET state = 'running', attempt_count = attempt_count + 1,
                 updated_at = ?, claim_token = ?, lease_expires_at = ?
@@ -267,7 +279,6 @@ class Repository:
                 (timestamp, token, expires, row["id"]),
             )
             self._attempt_event(connection, row["id"], "started", timestamp)
-            connection.commit()
         claimed = self.get_job(row["id"])
         # The lease may have expired between commit and this read. Never hand
         # another worker's newer token to the original claimant.
@@ -286,9 +297,8 @@ class Repository:
         claim_token: str,
     ) -> bool:
         """Commit a result only for the current unexpired attempt."""
-        with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            completed_at = self._timestamp()
+        with self.transaction() as connection:
+            completed_at = self.timestamp()
             changed = connection.execute(
                 """UPDATE jobs SET state = 'succeeded', error = NULL, updated_at = ?,
                 claim_token = NULL, lease_expires_at = NULL
@@ -297,7 +307,6 @@ class Repository:
                 (completed_at, job_id, claim_token, completed_at),
             ).rowcount
             if changed != 1:
-                connection.rollback()
                 return False
             connection.execute(
                 """INSERT INTO predictions
@@ -322,14 +331,12 @@ class Repository:
                 ),
             )
             self._attempt_event(connection, job_id, "succeeded", completed_at)
-            connection.commit()
             return True
 
     def fail_job(self, job_id: str, error: str, claim_token: str) -> bool:
         """Persist an explicit processing failure without inventing a label."""
-        with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            now = self._timestamp()
+        with self.transaction() as connection:
+            now = self.timestamp()
             changed = connection.execute(
                 """UPDATE jobs SET state = 'failed', error = ?, updated_at = ?,
                 claim_token = NULL, lease_expires_at = NULL WHERE id = ?
@@ -338,25 +345,22 @@ class Repository:
             ).rowcount
             if changed:
                 self._attempt_event(connection, job_id, "failed", now, error)
-            connection.commit()
         return changed == 1
 
     def renew_claim(self, job_id: str, claim_token: str) -> bool:
         """Extend only the current unexpired worker claim."""
-        with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            now = self._timestamp()
-            expires = (self._clock().astimezone(UTC) + timedelta(seconds=90)).isoformat()
+        with self.transaction() as connection:
+            now = self.timestamp()
+            expires = (self.now().astimezone(UTC) + timedelta(seconds=90)).isoformat()
             changed = connection.execute(
                 """UPDATE jobs SET lease_expires_at = ?, updated_at = ? WHERE id = ?
                 AND state = 'running' AND claim_token = ? AND lease_expires_at > ?""",
                 (expires, now, job_id, claim_token, now),
             ).rowcount
-            connection.commit()
         return changed == 1
 
     def _recover_expired_locked(self, connection: sqlite3.Connection) -> int:
-        now = self._timestamp()
+        now = self.timestamp()
         expired = connection.execute(_EXPIRED_SELECT, (now,)).fetchall()
         for row in expired:
             self._attempt_event(connection, row["id"], "lease_expired", now)
@@ -375,7 +379,7 @@ class Repository:
         write lock is taken only when a read finds an expired lease.
         """
         with self._connect() as connection:
-            if connection.execute(_EXPIRED_SELECT, (self._timestamp(),)).fetchone() is None:
+            if connection.execute(_EXPIRED_SELECT, (self.timestamp(),)).fetchone() is None:
                 return 0
             connection.execute("BEGIN IMMEDIATE")
             changed = self._recover_expired_locked(connection)
@@ -384,8 +388,7 @@ class Repository:
 
     def retry_job(self, job_id: str) -> AnalysisJob:
         """Requeue a failed logical run with its original input and settings."""
-        with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
+        with self.transaction() as connection:
             self._recover_expired_locked(connection)
             if connection.execute(
                 "SELECT 1 FROM monitoring_windows WHERE job_id=?", (job_id,)
@@ -396,11 +399,10 @@ class Repository:
             changed = connection.execute(
                 """UPDATE jobs SET state = 'queued', error = NULL, updated_at = ?
                 WHERE id = ? AND state = 'failed'""",
-                (self._timestamp(), job_id),
+                (self.timestamp(), job_id),
             ).rowcount
             if changed:
-                self._attempt_event(connection, job_id, "retry_requested", self._timestamp())
-            connection.commit()
+                self._attempt_event(connection, job_id, "retry_requested", self.timestamp())
         if changed != 1:
             raise ValueError("Only a failed job can be retried")
         job = self.get_job(job_id)
@@ -426,69 +428,4 @@ class Repository:
                 hashlib.sha256(error.encode()).hexdigest() if error else None,
                 job_id,
             ),
-        )
-
-    @staticmethod
-    def _video_from_row(row: sqlite3.Row) -> VideoAsset:
-        return VideoAsset(
-            id=row["id"],
-            filename=row["filename"],
-            source=row["source"],
-            storage_key=row["storage_key"],
-            duration_seconds=row["duration_seconds"],
-            created_at=row["created_at"],
-        )
-
-    @classmethod
-    def _job_from_row(cls, row: sqlite3.Row) -> AnalysisJob:
-        if row["c_model"] is None:
-            raise ValueError("job configuration no longer exists")
-        return AnalysisJob(
-            id=row["id"],
-            video_id=row["video_id"],
-            configuration_id=row["configuration_id"],
-            prepared_input_id=row["prepared_input_id"],
-            state=row["state"],
-            start_seconds=row["start_seconds"],
-            end_seconds=row["end_seconds"],
-            attempt_count=row["attempt_count"],
-            error=row["error"],
-            created_at=row["created_at"],
-            updated_at=row["updated_at"],
-            claim_token=row["claim_token"],
-            lease_expires_at=row["lease_expires_at"],
-            configuration=cls._configuration_from_row(row, "c_"),
-            prediction=cls._prediction_from_row(row, "p_") if row["p_id"] is not None else None,
-        )
-
-    @staticmethod
-    def _configuration_from_row(row: sqlite3.Row, prefix: str = "") -> RunConfiguration:
-        preprocessing = json.loads(row[f"{prefix}preprocessing_json"])
-        # Historic snapshots did not contain FPS. Their backend is deliberately unknown.
-        preprocessing.setdefault("fps", 7.5)
-        return RunConfiguration(
-            model=row[f"{prefix}model"],
-            prompt_preset=row[f"{prefix}prompt_preset"],
-            prompt_text=row[f"{prefix}prompt_text"],
-            preprocessing=SamplingConfiguration.model_validate(preprocessing),
-            generation=GenerationConfiguration.model_validate_json(row[f"{prefix}generation_json"]),
-            backend_kind=row[f"{prefix}backend_kind"],
-            fixture_version=row[f"{prefix}fixture_version"],
-        )
-
-    @staticmethod
-    def _prediction_from_row(row: sqlite3.Row, prefix: str = "") -> PredictionResult:
-        return PredictionResult(
-            id=row[f"{prefix}id"],
-            label=row[f"{prefix}label"],
-            raw_response=row[f"{prefix}raw_response"],
-            sampled_timestamps=json.loads(row[f"{prefix}sampled_timestamps_json"]),
-            backend_kind=row[f"{prefix}backend_kind"],
-            model=row[f"{prefix}model"],
-            fixture_version=row[f"{prefix}fixture_version"],
-            request_duration_ms=row[f"{prefix}request_duration_ms"],
-            total_duration_ms=row[f"{prefix}total_duration_ms"],
-            completed_at=row[f"{prefix}completed_at"],
-            prompt_tokens=row[f"{prefix}prompt_tokens"],
-            completion_tokens=row[f"{prefix}completion_tokens"],
         )

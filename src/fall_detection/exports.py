@@ -5,12 +5,14 @@ import hashlib
 import io
 import json
 import sqlite3
+from collections.abc import Iterable
 from pathlib import Path
+from typing import Any, NotRequired, TypedDict, cast
 
 from fall_detection.prediction import ACTIVITY_LABELS
 from fall_detection.preparation import load_prepared_input
 from fall_detection.repository import Repository
-from fall_detection.scheduling import LifecycleReason
+from fall_detection.scheduling import LifecycleReason, SessionState, WindowState
 from fall_detection.storage import storage_lock
 
 SCHEMA_VERSION = 1
@@ -21,9 +23,55 @@ def provenance(backend: str | None) -> str:
     return {"mock": "simulated", "vllm": "online_unverified"}.get(backend, "unknown")
 
 
-def fields(row: sqlite3.Row, names: str) -> dict:
+def fields(row: sqlite3.Row, names: str | Iterable[str]) -> dict:
     """Select explicit public fields, never paths, claim tokens or payloads."""
-    return {name: row[name] for name in names.split()}
+    return {name: row[name] for name in (names.split() if isinstance(names, str) else names)}
+
+
+class SessionRecord(TypedDict):
+    """Exported session; its keys are the allowlisted ``monitoring_sessions`` columns."""
+
+    id: str
+    schema_version: int
+    video_id: str
+    state: SessionState
+    generation: int
+    segment_id: str
+    position: float
+    duration: float
+    duration_verified: int
+    origin: float
+    next_sequence: int
+    stride: float
+    expiration: float
+    created_at: str
+    updated_at: str
+    recovery_reason: str | None
+
+
+class CoverageRecord(TypedDict):
+    """Exported window; required keys are the allowlisted ``monitoring_windows`` columns."""
+
+    id: str
+    schema_version: int
+    generation: int
+    sequence: int
+    sequence_end: int
+    segment_id: str
+    start_seconds: float
+    end_seconds: float
+    available_seconds: float
+    state: WindowState
+    reason: str | None
+    prepared_input_id: str | None
+    job_id: str | None
+    created_at: str
+    diagnostic_sha256: NotRequired[str | None]
+
+
+def columns(record: Any) -> list[str]:
+    """Required keys of a record type in declaration order: the columns an export reads."""
+    return [name for name in record.__annotations__ if name in record.__required_keys__]
 
 
 # Allowlisted in the first export schema but never written by the current lifecycle.
@@ -132,8 +180,10 @@ class ExperimentExports:
 
     def snapshot(self, kind: str, identity: str) -> dict:
         """Export every selected record without mutating lifecycle or applying UI limits."""
-        with storage_lock(self.data_dir, exclusive=False), self.repository._connect() as connection:
-            connection.execute("BEGIN")
+        with (
+            storage_lock(self.data_dir, exclusive=False),
+            self.repository.transaction(immediate=False) as connection,
+        ):
             result = {
                 "schema_version": SCHEMA_VERSION,
                 "kind": kind,
@@ -153,15 +203,13 @@ class ExperimentExports:
                 ).fetchone()
                 if session is None:
                     raise KeyError(identity)
-                result["session"] = fields(
-                    session,
-                    "id schema_version video_id state generation segment_id position duration duration_verified origin next_sequence stride expiration created_at updated_at recovery_reason",
-                )
+                saved_session = cast(SessionRecord, fields(session, columns(SessionRecord)))
+                saved_session["recovery_reason"] = safe_reason(session["recovery_reason"])
+                result["session"] = saved_session
                 source = connection.execute(
                     "SELECT * FROM videos WHERE id=?", (session["video_id"],)
                 ).fetchone()
                 result["source"] = fields(source, "id source duration_seconds created_at")
-                result["session"]["recovery_reason"] = safe_reason(session["recovery_reason"])
                 segments = connection.execute(
                     "SELECT * FROM monitoring_segments WHERE session_id=? ORDER BY generation,created_at,id",
                     (identity,),
@@ -177,14 +225,12 @@ class ExperimentExports:
                     "SELECT * FROM monitoring_windows WHERE session_id=? ORDER BY generation,sequence,id",
                     (identity,),
                 ).fetchall()
-                result["coverage"] = [
-                    fields(
-                        window,
-                        "id schema_version generation sequence sequence_end segment_id start_seconds end_seconds available_seconds state reason prepared_input_id job_id created_at",
-                    )
+                coverage = [
+                    cast(CoverageRecord, fields(window, columns(CoverageRecord)))
                     for window in windows
                 ]
-                for item in result["coverage"]:
+                result["coverage"] = coverage
+                for item in coverage:
                     reason = item["reason"]
                     item["reason"] = safe_reason(reason)
                     item["diagnostic_sha256"] = (
@@ -197,7 +243,6 @@ class ExperimentExports:
                     (identity,),
                 ).fetchall()
                 result["runs"] = [self._run(connection, row) for row in rows]
-            connection.commit()
         return result
 
 
