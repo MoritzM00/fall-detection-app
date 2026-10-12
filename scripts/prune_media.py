@@ -1,10 +1,34 @@
-"""Preview or apply conservative cleanup of managed upload and preparation storage."""
+"""Preview or apply conservative cleanup of managed uploads, bundles and ended sessions."""
 
 import argparse
 from datetime import timedelta
 
 from fall_detection.config import Settings
-from fall_detection.retention import prune_media
+from fall_detection.retention import PruneReport, prune_media
+
+
+def _megabytes(size: int) -> str:
+    return f"{size / 1_000_000:.1f} MB"
+
+
+def session_summary(report: PruneReport) -> list[str]:
+    """One line per ended session: eligible bundles and live frames with their size."""
+    usage: dict[str, dict[str, list[int]]] = {}
+    for candidate in report.candidates:
+        for session_id in candidate.session_ids:
+            totals = usage.setdefault(session_id, {}).setdefault(candidate.kind, [0, 0, 0])
+            totals[0] += 1
+            totals[1] += candidate.file_count
+            totals[2] += candidate.size_bytes
+    lines = []
+    for session_id, kinds in sorted(usage.items()):
+        bundles = kinds.get("prepared", [0, 0, 0])
+        frames = kinds.get("live", [0, 0, 0])
+        lines.append(
+            f"session {session_id}: {bundles[0]} prepared bundles ({_megabytes(bundles[2])}), "
+            f"{frames[1]} live frames ({_megabytes(frames[2])})"
+        )
+    return lines
 
 
 def main() -> None:
@@ -17,21 +41,40 @@ def main() -> None:
         default=168,
         help="minimum age of each resource and upload record (default: 168)",
     )
+    parser.add_argument(
+        "--session-age-days",
+        type=float,
+        default=30,
+        help="prune prepared inputs and live frames of monitoring sessions stopped "
+        "more than this many days ago (default: 30)",
+    )
+    parser.add_argument(
+        "--keep-sessions",
+        action="store_true",
+        help="leave all monitoring session data in place",
+    )
     args = parser.parse_args()
     settings = Settings.from_env()
     report = prune_media(
         settings.data_dir,
         settings.database_path,
         min_age=timedelta(hours=args.min_age_hours),
+        session_age=None if args.keep_sessions else timedelta(days=args.session_age_days),
         apply=args.apply,
     )
     print(f"Managed data: {settings.data_dir.resolve()}")
     print(f"Mode: {'apply' if args.apply else 'dry run'}")
     for candidate in report.candidates:
-        print(f"eligible {candidate.kind}: {candidate.path} ({candidate.reason})")
+        print(
+            f"eligible {candidate.kind}: {candidate.path} ({candidate.reason}; "
+            f"{candidate.file_count} files, {_megabytes(candidate.size_bytes)})"
+        )
+    for line in session_summary(report):
+        print(line)
+    total = sum(candidate.size_bytes for candidate in report.candidates)
     print(
-        f"Eligible: {len(report.candidates)}; removed: {len(report.removed)}; "
-        f"skipped after recheck: {len(report.skipped)}"
+        f"Eligible: {len(report.candidates)} ({_megabytes(total)}); "
+        f"removed: {len(report.removed)}; skipped after recheck: {len(report.skipped)}"
     )
 
 
