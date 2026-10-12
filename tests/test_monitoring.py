@@ -382,6 +382,40 @@ def test_end_of_playback_admits_final_window_before_pausing(replay, monkeypatch)
     assert not worker.process_next_job(replay[0], replay[1])
 
 
+def test_session_list_reads_every_session_with_one_connection(replay, monkeypatch):
+    import sqlite3
+
+    import fall_detection.repository as repository_module
+
+    command(replay, "start", 1)
+    replay[2].prepare_next(replay[0])
+    claimed = replay[1].claim_next_job()
+    assert replay[1].complete_job(
+        claimed.id,
+        PipelineResult("walk", "walk", [0, 1], 1, 2),
+        backend_kind="mock",
+        model="model",
+        fixture_version="sample-v1",
+        claim_token=claimed.claim_token,
+    )
+    replay[-1][0] += timedelta(seconds=1)
+    second = replay[2].create(replay[4], replay[5])
+    connect = sqlite3.connect
+    opened = []
+    monkeypatch.setattr(
+        repository_module.sqlite3,
+        "connect",
+        lambda *args, **kwargs: opened.append(1) or connect(*args, **kwargs),
+    )
+    with TestClient(create_app(replay[0], replay[1])) as client:
+        expected = [replay[2].get(second["id"]), replay[2].get(replay[3]["id"])]
+        opened.clear()
+        listed = client.get("/monitoring-sessions").json()
+        assert len(opened) == 1
+    assert expected[1]["latest_job_id"] == claimed.id
+    assert listed == expected
+
+
 def write_matroska(path, codec, frames=16, rate=8, options=None):
     """Write a small Matroska/WebM clip; ``live`` muxing omits duration and cues."""
     import av

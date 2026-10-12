@@ -20,7 +20,7 @@ Also persist backend kind (`mock` or `vllm`) and mock fixture/scenario version w
 
 ## Job lifecycle
 
-Implemented transitions are queued → running → succeeded/failed, with explicit failed → queued retry. Worker claims use owner tokens, 90-second leases, and 20-second heartbeats; expired work becomes failed and requires an explicit retry. Startup handles concurrent WAL setup before serializing migrations. Cancelled/skipped are reserved states; no cancellation or monitoring scheduler is implemented. Skipped is intended to denote intentionally unprocessed monitoring coverage. Retries reuse logical job identity and its saved configuration/input. A failed parse produces no valid activity label.
+Implemented transitions are queued → running → succeeded/failed, with explicit failed → queued retry. Worker claims use owner tokens, 90-second leases, and 20-second heartbeats; expired work becomes failed and requires an explicit retry. Lease recovery runs when the worker claims work, at API startup, and on an API timer every 15 seconds, so an expired job shows as failed within about 15 seconds even when no worker is running. Read endpoints never recover leases or take a write lock; until recovery runs, a read can still report an expired job as running. Startup sets WAL once (the mode persists in the database file) and handles concurrent WAL setup before serializing migrations. Cancelled/skipped are reserved states; no cancellation or monitoring scheduler is implemented. Skipped is intended to denote intentionally unprocessed monitoring coverage. Retries reuse logical job identity and its saved configuration/input. A failed parse produces no valid activity label.
 
 ## API surface
 

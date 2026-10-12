@@ -68,7 +68,8 @@ allows current work to finish, then the launcher applies its bounded kill/reap.
 configured serving kind/model. `/v1/mock/identity` confirms the effective mock
 fixture; `/v1/models` discovers serving aliases. A live API does not prove a live
 worker or model: inspect queued/running jobs and explicit errors. Worker leases
-and heartbeat fence abandoned inference; retry failed clip jobs explicitly.
+and heartbeat fence abandoned inference; the API marks expired leases failed at
+startup and every 15 seconds, even without a worker. Retry failed clip jobs explicitly.
 Replay after API restart requires Resume; monitoring failures require a new
 generation via Restart/retry inference, not a clip-job retry. See
 [monitoring lifecycle and bounds](monitoring.md) for expiration, the 90-second

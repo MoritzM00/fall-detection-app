@@ -17,6 +17,8 @@ class Settings:
     preparation_slots: int = 2
     preparation_wait_seconds: float = 10
     inspection_pngs: bool = False
+    # The API fails expired job leases on this timer so reads never take write locks.
+    lease_recovery_interval_seconds: float = 15
     # Keep the raw RGB stack (frames.npy) in prepared bundles for parity checks.
     rgb_arrays: bool = False
     # Modal app serving vLLM; enables container status that never wakes the GPU.
