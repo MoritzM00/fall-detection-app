@@ -2,10 +2,11 @@
 
 import json
 import sqlite3
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import uuid4
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from pydantic import BaseModel
 
 from fall_detection import live
 from fall_detection.config import Settings
@@ -23,7 +24,70 @@ from fall_detection.prediction import (
     InferenceServiceError,
 )
 from fall_detection.repository import Repository
+from fall_detection.scheduling import SessionState, SourceKind, WindowState
 from fall_detection.storage import storage_lock
+
+
+class MonitoringSessionView(BaseModel):
+    """A session as clients read it: every stored column plus derived read fields.
+
+    Internal scheduling columns (``origin``, ``next_sequence``, ``duration_verified``,
+    ``last_frame_at``) stay in the contract because tests and diagnostics read them;
+    removing one is now an explicit change here rather than a side effect of SQL.
+    """
+
+    id: str
+    schema_version: int
+    video_id: str
+    state: SessionState
+    generation: int
+    segment_id: str
+    position: float
+    duration: float
+    duration_verified: int
+    origin: float
+    next_sequence: int
+    stride: float
+    expiration: float
+    created_at: str
+    updated_at: str
+    recovery_reason: str | None
+    source_kind: SourceKind
+    capture_fps: float | None
+    last_frame_at: str | None
+    # The saved segment configuration, exactly as stored; legacy snapshots may lack fields.
+    configuration: dict[str, Any]
+    latest_job_id: str | None
+
+
+class MonitoringWindowView(BaseModel):
+    """One coverage record with its paging cursor; ``reason`` may be a freeform diagnostic."""
+
+    cursor: int
+    id: str
+    schema_version: int
+    session_id: str
+    generation: int
+    sequence: int
+    sequence_end: int
+    segment_id: str
+    start_seconds: float
+    end_seconds: float
+    available_seconds: float
+    state: WindowState
+    reason: str | None
+    prepared_input_id: str | None
+    job_id: str | None
+    created_at: str
+
+
+class FrameBatchView(BaseModel):
+    """Acknowledgement of one ingested frame batch."""
+
+    accepted: int
+    run_seq_high: int | None
+    watermark_seconds: float
+    state: SessionState
 
 
 def monitoring_router(settings: Settings, repository: Repository) -> APIRouter:
@@ -53,7 +117,7 @@ def monitoring_router(settings: Settings, repository: Repository) -> APIRouter:
             request, settings.inference_model, settings.backend_kind, fixture
         )
 
-    @router.post("/monitoring-sessions", status_code=201)
+    @router.post("/monitoring-sessions", status_code=201, response_model=MonitoringSessionView)
     def create_monitoring_session(request: SessionCreate) -> dict:
         """Persist replay policy without decoding in the API request."""
         try:
@@ -77,7 +141,7 @@ def monitoring_router(settings: Settings, repository: Repository) -> APIRouter:
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
 
-    @router.post("/monitoring-sessions/live", status_code=201)
+    @router.post("/monitoring-sessions/live", status_code=201, response_model=MonitoringSessionView)
     def create_live_session(request: LiveSessionCreate) -> dict:
         """Register a camera frame log and a paused session that follows it."""
         try:
@@ -92,7 +156,7 @@ def monitoring_router(settings: Settings, repository: Repository) -> APIRouter:
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
 
-    @router.post("/monitoring-sessions/{session_id}/frames")
+    @router.post("/monitoring-sessions/{session_id}/frames", response_model=FrameBatchView)
     def ingest_live_frames(
         session_id: str,
         run_id: Annotated[str, Form()],
@@ -122,12 +186,12 @@ def monitoring_router(settings: Settings, repository: Repository) -> APIRouter:
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
 
-    @router.get("/monitoring-sessions")
+    @router.get("/monitoring-sessions", response_model=list[MonitoringSessionView])
     def list_monitoring_sessions() -> list[dict]:
         """List retained sessions for refresh recovery."""
         return Monitoring(repository).recent(100)
 
-    @router.get("/monitoring-sessions/{session_id}")
+    @router.get("/monitoring-sessions/{session_id}", response_model=MonitoringSessionView)
     def get_monitoring_session(session_id: str) -> dict:
         """Read session lifecycle and latest eligible job identity."""
         try:
@@ -135,7 +199,9 @@ def monitoring_router(settings: Settings, repository: Repository) -> APIRouter:
         except KeyError as exc:
             raise HTTPException(404, "Session not found") from exc
 
-    @router.get("/monitoring-sessions/{session_id}/windows")
+    @router.get(
+        "/monitoring-sessions/{session_id}/windows", response_model=list[MonitoringWindowView]
+    )
     def monitoring_history(
         session_id: str, limit: int = 100, before: int | None = None
     ) -> list[dict]:
@@ -147,7 +213,7 @@ def monitoring_router(settings: Settings, repository: Repository) -> APIRouter:
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
 
-    @router.post("/monitoring-sessions/{session_id}/commands")
+    @router.post("/monitoring-sessions/{session_id}/commands", response_model=MonitoringSessionView)
     def monitoring_command(session_id: str, request: SessionCommand) -> dict:
         """Apply explicit playback updates and lifecycle commands."""
         try:
