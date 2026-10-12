@@ -106,7 +106,8 @@ Real inference needs a vLLM version that supports request-level video `media_io_
 | [`apps/api`](apps/api) | FastAPI upload, preparation, job and session API |
 | [`apps/worker`](apps/worker) | Persisted-job worker that calls the inference backend |
 | [`apps/mock_inference`](apps/mock_inference) | Local vLLM-compatible HTTP substitute |
-| [`src/fall_detection`](src/fall_detection) | Shared taxonomy, sampling, prompts, inference client, parsing, persistence, monitoring and evaluation |
+| [`src/fall_detection`](src/fall_detection) | Shared prediction path (taxonomy, prompt, sampling, inference client, parsing), preparation, persistence and schema, monitoring and scheduling, exports, evaluation, retention |
+| [`scripts`](scripts) | Command-line entry points: dev stack, demo, evaluation, media pruning, validation harnesses |
 | [`deploy`](deploy/README.md) | Application and GPU serving configuration |
 | [`tests`](tests/README.md) | Python test suite |
 
