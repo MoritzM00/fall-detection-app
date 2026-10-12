@@ -1,6 +1,8 @@
 """Proposed recorded replay behavior; independent of research inference policy."""
 
 import json
+import sqlite3
+from datetime import datetime
 from typing import Literal
 from uuid import uuid4
 
@@ -66,6 +68,30 @@ class SessionCommand(BaseModel):
     position_seconds: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     configuration: SessionConfiguration | None = None
     command_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+LIVE_LENGTH_REACHED = "This live session has reached its maximum length; start a new session."
+
+
+def live_edge(
+    repository: Repository, connection: sqlite3.Connection, session: sqlite3.Row
+) -> float:
+    """Timeline position where a live session's next capture run would begin.
+
+    Before any frame this is the session position. Afterwards it is the previous
+    run's last frame plus the time elapsed on the server clock since that frame was
+    received, and at least one capture interval, so pauses and stops stay real gaps
+    and count against the session's maximum length.
+    """
+    last = connection.execute(
+        """SELECT capture_seconds,received_at FROM live_frames
+        WHERE video_id=? ORDER BY seq DESC LIMIT 1""",
+        (session["video_id"],),
+    ).fetchone()
+    if last is None:
+        return session["position"]
+    elapsed = (repository._clock() - datetime.fromisoformat(last["received_at"])).total_seconds()
+    return last["capture_seconds"] + max(elapsed, 1 / session["capture_fps"])
 
 
 class Monitoring(ReplayScheduler):
@@ -280,6 +306,13 @@ class Monitoring(ReplayScheduler):
                 and command.configuration.fps > row["capture_fps"]
             ):
                 raise ValueError("Sampling FPS cannot exceed the capture FPS")
+            if (
+                live
+                and action in {"start", "resume", "restart"}
+                and live_edge(self.repository, connection, row) >= row["duration"]
+            ):
+                # Every frame of a new run would exceed the cap; say so before capture starts.
+                raise ValueError(LIVE_LENGTH_REACHED)
             if command.position_seconds is not None:
                 if command.position_seconds > row["duration"]:
                     raise ValueError("Position exceeds playback bound")
