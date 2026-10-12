@@ -3,11 +3,18 @@
 import math
 from datetime import datetime
 from enum import StrEnum
+from typing import Literal
 from uuid import uuid4
 
 from fall_detection.models import RunConfiguration
 from fall_detection.repository import Repository
 from fall_detection.storage import storage_lock
+
+# Every value stored in monitoring_sessions.state, monitoring_sessions.source_kind and
+# monitoring_windows.state. A window's job carries its own state (``models.JobState``).
+type SessionState = Literal["running", "paused", "stopped"]
+type SourceKind = Literal["recording", "live"]
+type WindowState = Literal["pending", "preparing", "submitted", "skipped", "failed"]
 
 
 class LifecycleReason(StrEnum):
@@ -135,7 +142,9 @@ class ReplayScheduler:
                         connection, row, seq, last - 1, width, "skipped", LifecycleReason.SUPERSEDED
                     )
                 end = row["origin"] + last * row["stride"] + width
-                state = "skipped" if row["position"] - end > row["expiration"] else "pending"
+                state: WindowState = (
+                    "skipped" if row["position"] - end > row["expiration"] else "pending"
+                )
                 self._window(
                     connection,
                     row,
@@ -181,7 +190,16 @@ class ReplayScheduler:
                 )
 
     def _window(
-        self, connection, row, seq, last, width, state, reason: LifecycleReason | None, *, end=None
+        self,
+        connection,
+        row,
+        seq,
+        last,
+        width,
+        state: WindowState,
+        reason: LifecycleReason | None,
+        *,
+        end=None,
     ):
         connection.execute(
             """INSERT INTO monitoring_windows
