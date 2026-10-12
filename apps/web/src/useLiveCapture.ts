@@ -110,7 +110,7 @@ export function useLiveCapture(sessionId: string | null, running: boolean, captu
     let lastCapture = -Infinity;
     const uploader = createCaptureUploader({
       captureFps,
-      post: (runId, frames, signal) => postFrames(sessionId, runId, frames, signal),
+      post: (run, frames, signal) => postFrames(sessionId, run, frames, signal),
       onStats: setStats,
       onEnded: (reason, failure) => {
         clearInterval(capture);

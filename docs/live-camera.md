@@ -230,9 +230,13 @@ be confirmed:
   refuses them once it is not running); this is at most about half a second of
   capture. The queue is capped at ten seconds of frames whether or not a request
   is in flight: reaching the cap, a lost-continuity conflict or an encoding
-  failure abandons the run (aborting any outstanding request, whose late answer is
-  ignored) and starts a new one, so the server records the gap. "Not running",
-  "superseded" and the length cap stop capture. Any other 4xx, such as a 422,
+  failure abandons the run (aborting any outstanding request) and starts a new one
+  with a larger `run_order`, so the server records the gap. An abort only stops
+  the page waiting: the server may still process the request, and then refuses it
+  if the new run is already stored. Any answer for an abandoned run, success or
+  refusal, is ignored and never ends or changes the current run. For the current
+  run, "not running", "superseded" and the length cap stop capture. Any other 4xx,
+  such as a 422 or "started before a newer run" (another page runs this session),
   cannot succeed on resend: capture stops and the reason is shown as a camera
   error until the next Start or Resume.
 - Status adds a **Camera** pill: off, connected, or achieved capture rate and upload
