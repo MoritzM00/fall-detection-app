@@ -1,68 +1,124 @@
-# Fall Detection Product
+<div align="center">
 
-Local MVP for a video activity-recognition application built on the master's thesis work in `fall-detection-mllm`.
+# 🧍‍↘️ Fall Detection
 
-**Status:** clip analysis and persisted recorded monitoring run end to end against simulated HTTP serving. Deterministic faults, reproducible exports and synthetic offline evaluation are implemented. Uploaded and dataset videos are decoded into immutable frame bundles before analysis. The online vLLM path is implemented but has not been tested against the GPU server yet.
+**Video activity recognition with a vision-language model: analyze clips, replay recordings, or watch a live camera, and see a timestamped activity label for every window.**
 
-## Product modes
+[![CI](https://github.com/MoritzM00/fall-detection-app/actions/workflows/ci.yml/badge.svg)](https://github.com/MoritzM00/fall-detection-app/actions/workflows/ci.yml)
+![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)
+![React](https://img.shields.io/badge/UI-React%20%2B%20TypeScript-61DAFB?logo=react&logoColor=black)
+![Model](https://img.shields.io/badge/model-Qwen3--VL--8B-7B61FF)
 
-- **Clip analysis:** upload a clip, select its time range, inspect sampled frames, edit the resolved prompt, temperature, token limit, and sampling settings, run inference, and compare saved runs.
-- **Monitoring:** replay a recording as live, process successive windows, and show timestamped activity predictions. Real camera ingestion follows later.
+</div>
 
-Both modes use the same prediction pipeline and preserve the 16-class taxonomy. Start with Qwen3-VL-8B-Instruct without an adapter on the existing GPU server. Adapter support is a later configuration option.
+---
 
-## Repository outline
+## What it does
 
-| Path | Planned responsibility |
+This application turns the fall-detection research from the master's thesis (`fall-detection-mllm`) into an interactive tool. It samples timestamped frames from a video window, sends them to **Qwen3-VL-8B-Instruct** served by vLLM, and classifies what the person is doing into one of **16 activity labels**.
+
+| Mode | What you do | What you get |
+| --- | --- | --- |
+| 🎬 **Clip analysis** | Upload a clip or pick a dataset video, choose a time window, tweak the prompt and sampling | The exact frames sent to the model, its raw answer, the parsed label, and side-by-side comparison of saved runs |
+| 📼 **Recorded monitoring** | Replay a recording as if it were live | Successive windows at a configurable stride, a timestamped prediction timeline, and explicit coverage gaps |
+| 📷 **Live camera** | Start your browser camera | The same windowed timeline, fed by frames captured in real time |
+
+All three modes share one prediction pipeline. Every prediction keeps its input timestamps, the frames it saw, and the full configuration that produced it, so any result can be traced and reproduced.
+
+### Activity labels
+
+| Falls | Static postures | Transitions | Movement |
+| --- | --- | --- | --- |
+| `fall` · `fallen` | `standing` · `sitting` · `lying` · `kneeling` · `squatting` | `sit_down` · `stand_up` · `lie_down` · `kneel_down` · `squat_down` | `walk` · `crawl` · `jump` · `other` |
+
+A processing failure is never reported as `other`. Failed, skipped or expired windows are recorded as such, with a reason.
+
+## How it works
+
+```mermaid
+flowchart LR
+    SRC["🎬 Clip / 📼 Recording / 📷 Camera"] --> PREP["Frame preparation<br/>decode · sample · crop · JPEG"]
+    PREP --> BUNDLE[("Immutable<br/>frame bundle")]
+    BUNDLE --> WORKER["Worker<br/>persisted jobs"]
+    WORKER -->|chat completions<br/>video frames| MODEL{{"vLLM · Qwen3-VL<br/>or mock server"}}
+    MODEL --> PARSE["Parse → 1 of 16 labels"]
+    PARSE --> DB[("SQLite<br/>runs · sessions")]
+    DB --> UI["🖥️ Web UI<br/>timeline · comparison · exports"]
+```
+
+- **Frame preparation** decodes video with PyAV, keeps real frame timestamps, and writes the exact JPEGs the model will receive. The UI shows those same frames.
+- **The worker** processes persisted jobs with leases and heartbeats. Interrupted work is recovered, and a model request is only repeated when you retry explicitly.
+- **Inference backend** is either a real vLLM server or a local mock that speaks the same HTTP contract. The worker never silently falls back to the mock, and mock results are always labeled as simulated.
+- **Exports and evaluation** produce JSON/CSV run and session records, plus an offline evaluation CLI that scores them against annotated intervals.
+
+## Quick start
+
+Requirements: Python 3.12+, [`uv`](https://docs.astral.sh/uv/), Node.js and pnpm. No GPU needed.
+
+```bash
+make setup   # install Python and web dependencies
+make dev     # start web UI, API, worker and mock inference
+```
+
+Open **<http://localhost:5173>**, pick the synthetic sample or a local video, and run an analysis. Runtime state goes to the Git-ignored `data/` directory.
+
+| Command | Purpose |
 | --- | --- |
-| [apps/web](apps/web) | React/TypeScript clip-analysis interface |
-| [apps/api](apps/api) | FastAPI upload, capability, and job API |
-| [apps/worker](apps/worker) | Asynchronous persisted-job worker |
-| [apps/mock_inference](apps/mock_inference) | Local vLLM-compatible HTTP substitute |
-| [src/fall_detection](src/fall_detection) | Shared taxonomy, sampling, prompts, inference client, parsing, and persistence |
-| [deploy](deploy/README.md) | Future application and GPU serving configuration |
-| [tests](tests/README.md) | Planned validation boundaries |
+| `make check` | Lint, format check, type check, Python tests, web build and unit tests |
+| `make browser-test` | End-to-end browser flows |
+| `make demo` | Disposable CPU-only acceptance scenarios ([runbook](docs/runbook.md)) |
 
-## Planning documents
+<details>
+<summary><b>Configuration</b></summary>
 
-1. [Architecture and data flows](docs/architecture.md)
-2. [Product behavior](docs/product.md)
-3. [Draft data and API contracts](docs/contracts.md)
-4. [Research baseline and migration](docs/research-baseline.md)
-5. [Implementation milestones](docs/roadmap.md)
-6. [Decisions and open questions](docs/decisions.md)
-7. [Local mock inference](docs/mock-inference.md)
-8. [Live camera monitoring](docs/live-camera.md)
+| Variable | Effect |
+| --- | --- |
+| `MOCK_INFERENCE_LABEL` | Label the mock server returns (default `fall`) |
+| `MOCK_INFERENCE_DELAY_MS` | Artificial mock latency |
+| `FALL_DETECTION_BACKEND_KIND=vllm` | Use a real vLLM server instead of the mock |
+| `FALL_DETECTION_INFERENCE_BASE_URL` | Base URL of the vLLM server |
 
-## Run locally
+Real inference needs a vLLM version that supports request-level video `media_io_kwargs`. Local OmniFall videos placed under `data/omnifall/videos` are discovered automatically; their `Fall`/`ADL` folder names are source groupings, not ground truth.
 
-Requirements: Python 3.12+, `uv`, Node.js, and pnpm.
+</details>
 
-```bash
-make setup
-make dev
-```
+## Project status
 
-Open <http://localhost:5173>, choose the synthetic sample or a prepared local OmniFall video, and run analysis. Four local processes start: the web UI, application API, worker, and mock inference service. Runtime state is written to the ignored `data/` directory.
+> [!NOTE]
+> Everything below runs end to end **against the mock inference server**. The real vLLM path is implemented but **not yet validated on the GPU server**, so no claims about model accuracy or research parity are made yet.
 
-```bash
-make check
-```
+| Area | Status |
+| --- | --- |
+| Clip analysis, prompt editing, run comparison | ✅ Implemented |
+| Recorded monitoring with replay controls and recovery | ✅ Implemented |
+| Live browser camera ingest and capture | ✅ Implemented (raw-frame retention pending) |
+| JSON/CSV exports and offline evaluation harness | ✅ Implemented |
+| Deterministic mock scenarios and CPU demo | ✅ Implemented |
+| Real GPU service validation | ⏳ Open: [#9](https://github.com/MoritzM00/fall-detection-app/issues/9), [#41](https://github.com/MoritzM00/fall-detection-app/issues/41) |
+| Real-model continuous evaluation | ⏳ Open: [#42](https://github.com/MoritzM00/fall-detection-app/issues/42), tracked in [#43](https://github.com/MoritzM00/fall-detection-app/issues/43) |
 
-The mock returns `fall` after a short delay. Override its deterministic behavior with `MOCK_INFERENCE_LABEL` or `MOCK_INFERENCE_DELAY_MS`. Mock provenance remains attached to every result. Set `FALL_DETECTION_BACKEND_KIND=vllm` and `FALL_DETECTION_INFERENCE_BASE_URL` to use a compatible online vLLM server for prepared real videos. The worker never silently falls back to mock inference.
+## Repository layout
 
-## Current MVP limits
+| Path | Responsibility |
+| --- | --- |
+| [`apps/web`](apps/web) | React/TypeScript interface |
+| [`apps/api`](apps/api) | FastAPI upload, preparation, job and session API |
+| [`apps/worker`](apps/worker) | Persisted-job worker that calls the inference backend |
+| [`apps/mock_inference`](apps/mock_inference) | Local vLLM-compatible HTTP substitute |
+| [`src/fall_detection`](src/fall_detection) | Shared taxonomy, sampling, prompts, inference client, parsing, persistence, monitoring and evaluation |
+| [`deploy`](deploy/README.md) | Application and GPU serving configuration |
+| [`tests`](tests/README.md) | Python test suite |
 
-- The built-in corridor source is a synthetic animated preview, not committed video data.
-- Prepared videos under `data/omnifall/videos` are discovered locally and remain ignored by Git. Dataset folder names such as `Fall` and `ADL` are source groupings, not model predictions.
-- Uploaded and dataset clips are decoded with PyAV using the selected window, frame count, sampling FPS, and center-crop size. The UI shows the same JPEG frame files sent in the online request; jobs retain the prepared input ID.
-- Both mock and real vLLM backends use the online chat-completions `video_url` frame-sequence format. Real inference requires a configured vLLM server with a version that supports request-level video `media_io_kwargs`; it is not GPU-tested here.
-- Submitted runs survive reloads and selection changes. Worker leases and explicit retries preserve input and configuration identity.
-- Run comparison shows saved settings, responses, timestamps, and timings for the same source/window; differing or unknown frame identities are identified explicitly.
-- Recorded monitoring includes replay controls, timestamped history, bounded scheduling and explicit recovery. Server-sent events and PostgreSQL migration remain planned.
+## Documentation
 
-See [prepared video input](docs/prepared-video.md) for the frame and vLLM payload contracts.
-
-CPU-only disposable acceptance: `uv run python -m scripts.demo` (or `make demo`). See the [operational runbook and GPU handoff](docs/runbook.md).
-
-Complete run/session JSON and CSV downloads: [export contract](docs/exports.md).
+| | |
+| --- | --- |
+| 🏗️ [Architecture](docs/architecture.md) | Components and data flows |
+| 🎯 [Product behavior](docs/product.md) | What each mode does and why |
+| 📜 [Contracts](docs/contracts.md) · [Prepared video](docs/prepared-video.md) | API, data and vLLM payload contracts |
+| 📼 [Monitoring](docs/monitoring.md) · 📷 [Live camera](docs/live-camera.md) | Windowing, scheduling and coverage |
+| 📦 [Exports](docs/exports.md) · 📊 [Evaluation](docs/evaluation.md) | Run records and offline scoring |
+| 🧪 [Mock inference](docs/mock-inference.md) · 🛠️ [Runbook](docs/runbook.md) | Local serving and GPU handoff |
+| 🔬 [Research baseline](docs/research-baseline.md) | Relationship to the thesis research code |
+| 🗺️ [Roadmap](docs/roadmap.md) · 🧭 [Decisions](docs/decisions.md) | Milestones and open questions |
