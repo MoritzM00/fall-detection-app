@@ -1,90 +1,15 @@
 """Proposed protocol v1: offline metrics, never research accuracy evidence."""
 
-import argparse
 import hashlib
 import json
 import math
 import re
-from pathlib import Path
-from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
-
-from fall_detection.prediction import ACTIVITY_LABELS, ActivityLabel
+from fall_detection.ground_truth import TIMEBASE, GroundTruth, GroundTruthSource
+from fall_detection.prediction import ACTIVITY_LABELS
 
 PROTOCOL = "first-sample-raw-window-v1"
 POSITIVE = {"fall", "fallen"}
-TIMEBASE = "source_relative_seconds"
-
-
-class Interval(BaseModel):
-    """A finite, positive half-open source-relative interval."""
-
-    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
-    start_seconds: float = Field(ge=0, allow_inf_nan=False)
-    end_seconds: float = Field(gt=0, allow_inf_nan=False)
-
-    @model_validator(mode="after")
-    def positive(self) -> "Interval":
-        """Reject reversed and empty intervals."""
-        if self.end_seconds <= self.start_seconds:
-            raise ValueError("interval must have positive duration")
-        return self
-
-
-class Annotation(Interval):
-    """An explicit activity annotation; folders cannot supply this label."""
-
-    label: ActivityLabel
-
-
-class GroundTruthSource(BaseModel):
-    """Bind annotations and declared observation to one exact decoded source."""
-
-    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
-    source_id: str = Field(min_length=1)
-    source_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
-    timebase: Literal["source_relative_seconds"]
-    observations: list[Interval]
-    annotations: list[Annotation]
-
-    @model_validator(mode="after")
-    def ordered(self) -> "GroundTruthSource":
-        """Disallow overlap and annotations outside declared observation."""
-        for intervals in (self.observations, self.annotations):
-            if any(
-                a.end_seconds > b.start_seconds
-                for a, b in zip(intervals, intervals[1:], strict=False)
-            ):
-                raise ValueError("intervals must be ordered and nonoverlapping")
-        for annotation in self.annotations:
-            if not any(
-                o.start_seconds <= annotation.start_seconds
-                and annotation.end_seconds <= o.end_seconds
-                for o in self.observations
-            ):
-                raise ValueError("annotation outside observation interval")
-        return self
-
-
-class GroundTruth(BaseModel):
-    """Explicit dataset/split identity, independent of prediction exports."""
-
-    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
-    schema_version: Literal[1]
-    dataset_id: str = Field(min_length=1)
-    split_id: str = Field(min_length=1)
-    purpose: Literal["tuning", "final", "synthetic"]
-    annotation_version: str = Field(min_length=1)
-    sources: list[GroundTruthSource] = Field(min_length=1)
-
-    @model_validator(mode="after")
-    def unique(self) -> "GroundTruth":
-        """Prevent repeated sources from multiplying evaluation exposure."""
-        for key in ("source_id", "source_sha256"):
-            if len({getattr(s, key) for s in self.sources}) != len(self.sources):
-                raise ValueError(f"duplicate {key}")
-        return self
 
 
 def canonical_sha256(value: dict) -> str:
@@ -552,43 +477,3 @@ def evaluate(ground_truth: dict, exports: list[dict], *, synthetic: bool = False
             "mean_detection_delay_seconds": _ratio(sum(delays), len(delays)),
         },
     }
-
-
-def _load_json(path: Path) -> dict:
-    def unique_keys(pairs: list[tuple[str, object]]) -> dict:
-        result = {}
-        for key, value in pairs:
-            if key in result:
-                raise ValueError(f"duplicate JSON key: {key}")
-            result[key] = value
-        return result
-
-    result = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique_keys)
-    if not isinstance(result, dict):
-        raise ValueError("JSON manifest must be an object")
-    return result
-
-
-def main() -> None:
-    """Write deterministic evaluation JSON from saved exports and explicit annotations."""
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--ground-truth", required=True, type=Path)
-    parser.add_argument("--export", required=True, action="append", type=Path)
-    parser.add_argument("--output", required=True, type=Path)
-    parser.add_argument("--synthetic", action="store_true")
-    args = parser.parse_args()
-    try:
-        if args.output.resolve() in {path.resolve() for path in [args.ground_truth, *args.export]}:
-            raise ValueError("output must not overwrite an input manifest")
-        truth = _load_json(args.ground_truth)
-        exports = [_load_json(path) for path in args.export]
-        report = evaluate(truth, exports, synthetic=args.synthetic)
-        args.output.write_text(
-            json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8"
-        )
-    except (ValueError, KeyError, TypeError, OSError) as exc:
-        parser.exit(2, f"Evaluation rejected: {exc}\n")
-
-
-if __name__ == "__main__":
-    main()
