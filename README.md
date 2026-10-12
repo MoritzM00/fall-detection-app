@@ -79,7 +79,7 @@ Open **<http://localhost:5173>**, pick the synthetic sample or a local video, an
 | `FALL_DETECTION_BACKEND_KIND=vllm` | Use a real vLLM server instead of the mock |
 | `FALL_DETECTION_INFERENCE_BASE_URL` | Base URL of the vLLM server |
 | `FALL_DETECTION_INFERENCE_API_KEY` | Bearer token for a vLLM server started with `--api-key` |
-| `FALL_DETECTION_INFERENCE_PROXY_KEY` / `_SECRET` | Modal proxy auth token for the [Modal GPU endpoint](deploy/README.md#modal-gpu-endpoint-proposed-not-yet-validated) |
+| `FALL_DETECTION_INFERENCE_PROXY_KEY` / `_SECRET` | Modal proxy auth token for the [Modal GPU endpoint](deploy/README.md#modal-gpu-endpoint) |
 
 Real inference needs a vLLM version that supports request-level video `media_io_kwargs`. Local OmniFall videos placed under `data/omnifall/videos` are discovered automatically; their `Fall`/`ADL` folder names are source groupings, not ground truth.
 
@@ -88,7 +88,7 @@ Real inference needs a vLLM version that supports request-level video `media_io_
 ## Project status
 
 > [!NOTE]
-> Everything below runs end to end **against the mock inference server**. The real vLLM path is implemented but **not yet validated on the GPU server**, so no claims about model accuracy or research parity are made yet.
+> Everything below runs end to end **against the mock inference server**. The real vLLM request contract has been [validated once on a Modal L4](docs/vllm-live-validation.md#live-run-modal-l4-2026-10-12), but no claims about model accuracy or research parity are made yet.
 
 | Area | Status |
 | --- | --- |
@@ -97,7 +97,7 @@ Real inference needs a vLLM version that supports request-level video `media_io_
 | Live browser camera ingest and capture | ✅ Implemented (raw-frame retention pending) |
 | JSON/CSV exports and offline evaluation harness | ✅ Implemented |
 | Deterministic mock scenarios and CPU demo | ✅ Implemented |
-| Real GPU service validation | ⏳ Open: [#9](https://github.com/MoritzM00/fall-detection-app/issues/9), [#41](https://github.com/MoritzM00/fall-detection-app/issues/41) |
+| Real GPU service validation | ✅ Contract validated on Modal ([#9](https://github.com/MoritzM00/fall-detection-app/issues/9)); ⏳ parity and capacity open ([#41](https://github.com/MoritzM00/fall-detection-app/issues/41)) |
 | Real-model continuous evaluation | ⏳ Open: [#42](https://github.com/MoritzM00/fall-detection-app/issues/42), tracked in [#43](https://github.com/MoritzM00/fall-detection-app/issues/43) |
 
 ## Repository layout

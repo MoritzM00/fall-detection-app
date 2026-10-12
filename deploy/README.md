@@ -12,15 +12,15 @@ vLLM will serve `Qwen/Qwen3-VL-8B-Instruct`, optionally under an application ali
 
 Later: process supervision, private networking or HTTPS, secrets injection, health checks, backup/restore, and retention jobs. Server memory/parallelism/loading options are not ordinary browser-editable inference settings.
 
-## Modal GPU endpoint (proposed, not yet validated)
+## Modal GPU endpoint
 
-[`modal_vllm.py`](modal_vllm.py) serves `Qwen/Qwen3-VL-8B-Instruct` with vLLM on a rented Modal GPU. The application keeps running locally (`make dev`), and only the worker talks to the endpoint. **No successful live request has been made against it yet**, so the vLLM version, GPU size and context length are untested starting points. A first start with a 16k context ran out of KV cache memory on the L4; the context is now 5,120 tokens (see [vLLM live validation](../docs/vllm-live-validation.md)).
+[`modal_vllm.py`](modal_vllm.py) serves `Qwen/Qwen3-VL-8B-Instruct` with vLLM on a rented Modal GPU. The application keeps running locally (`make dev`), and only the worker talks to the endpoint. The request contract was [validated live on an L4](../docs/vllm-live-validation.md#live-run-modal-l4-2026-10-12) on 2026-10-12; capacity and research parity have not been measured yet.
 
 Cost and access controls:
 
 - **Scale to zero.** The GPU container stops 10 minutes after the last request and is billed per second while it runs. `max_containers=1` means at most one GPU runs at a time. Set a workspace spending limit in the Modal dashboard as a hard cap.
 - **Proxy auth.** Modal rejects requests without a valid proxy auth token at its edge, before any container starts, so a request without credentials never starts the GPU.
-- **Cold start.** The first request after idling waits for the container to start and the model to load, which can take a few minutes; the first deploy also downloads about 17 GB of weights into a Modal volume. Raise `FALL_DETECTION_REQUEST_TIMEOUT_SECONDS` so the first window does not time out.
+- **Cold start.** The first request after idling waits for the container to start and the model to load: about 3.5 minutes in the first measured start, including a 74 s `torch.compile` that is now cached. The very first start also downloads about 17 GB of weights into a Modal volume. Run `make gpu-warm` when you start a session so the GPU is ready by the time you submit, and raise `FALL_DETECTION_REQUEST_TIMEOUT_SECONDS` so a window sent during a cold start does not time out.
 
 Setup:
 
@@ -40,7 +40,7 @@ export FALL_DETECTION_REQUEST_TIMEOUT_SECONDS=600
 make dev
 ```
 
-Keep these lines in a Git-ignored file such as `.env` and load it with `source .env`; never commit the token. To take the endpoint down entirely, run `uvx modal app stop fall-detection-vllm`.
+Keep these lines in a Git-ignored file such as `.env` and load it with `source .env`; never commit the token. `make gpu-warm` loads `.env` itself, wakes the endpoint and prints how long it took to become ready. To take the endpoint down entirely, run `uvx modal app stop fall-detection-vllm`.
 
 For a vLLM server started with `--api-key` (any host), set `FALL_DETECTION_INFERENCE_API_KEY` instead; the worker sends it as a bearer token.
 
