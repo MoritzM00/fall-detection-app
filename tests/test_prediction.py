@@ -64,6 +64,10 @@ def test_sample_timestamps_reject_invalid_numbers(start, end) -> None:
         sample_timestamps(start, end)
 
 
+def respond(response: httpx.Response) -> httpx.MockTransport:
+    return httpx.MockTransport(lambda _request: response)
+
+
 @pytest.mark.parametrize(
     "response",
     [
@@ -73,37 +77,89 @@ def test_sample_timestamps_reject_invalid_numbers(start, end) -> None:
         httpx.Response(200, json={"id": "x", "choices": [{"message": {"content": ["not text"]}}]}),
     ],
 )
-def test_inference_boundary_rejects_http_and_envelope_errors(monkeypatch, response):
-    response.request = httpx.Request("POST", "http://test/chat/completions")
-    monkeypatch.setattr(httpx, "post", lambda *_args, **_kwargs: response)
+def test_inference_boundary_rejects_http_and_envelope_errors(response):
     with pytest.raises(InferenceServiceError, match="inference"):
-        InferenceClient("http://test").complete({})
+        InferenceClient("http://test", transport=respond(response)).complete({})
 
 
-def test_inference_boundary_reports_timeout(monkeypatch):
-    def timeout(*_args, **_kwargs):
+def test_inference_boundary_reports_timeout():
+    def timeout(_request):
         raise httpx.ReadTimeout("timed out")
 
-    monkeypatch.setattr(httpx, "post", timeout)
+    client = InferenceClient("http://test", transport=httpx.MockTransport(timeout))
     with pytest.raises(InferenceServiceError, match="timed out"):
-        InferenceClient("http://test").complete({})
+        client.complete({})
 
 
-def test_inference_client_sends_configured_credentials(monkeypatch):
+def test_inference_client_sends_configured_credentials():
     sent = {}
 
-    def post(url, **kwargs):
-        assert kwargs["follow_redirects"] is True
-        sent.update(kwargs["headers"])
-        response = httpx.Response(
-            200, json={"id": "x", "choices": [{"message": {"content": "fall"}}]}
-        )
-        response.request = httpx.Request("POST", url)
-        return response
+    def handler(request):
+        sent.update(request.headers)
+        return httpx.Response(200, json={"id": "x", "choices": [{"message": {"content": "fall"}}]})
 
-    monkeypatch.setattr(httpx, "post", post)
-    InferenceClient("http://test", auth_headers={"Authorization": "Bearer k"}).complete({})
-    assert sent == {"Authorization": "Bearer k"}
+    InferenceClient(
+        "http://test",
+        auth_headers={"Authorization": "Bearer dummy-key"},
+        transport=httpx.MockTransport(handler),
+    ).complete({})
+    assert sent["authorization"] == "Bearer dummy-key"
+
+
+COMPLETION = {"id": "x", "choices": [{"message": {"content": "The best answer is: fall"}}]}
+DUMMY_PROXY_HEADERS = {"Modal-Key": "dummy-key", "Modal-Secret": "dummy-secret"}
+
+
+def test_inference_client_follows_same_origin_303_to_poll_for_the_result():
+    seen = []
+
+    def handler(request):
+        seen.append((request.method, str(request.url), request.headers.get("modal-key")))
+        if request.method == "POST":
+            return httpx.Response(303, headers={"Location": "/v1/result?call=dummy"})
+        return httpx.Response(200, json=COMPLETION)
+
+    response = InferenceClient(
+        "https://gpu.test/v1",
+        auth_headers=DUMMY_PROXY_HEADERS,
+        transport=httpx.MockTransport(handler),
+    ).complete({"frames": "dummy"})
+    assert response.content == "The best answer is: fall"
+    assert seen == [
+        ("POST", "https://gpu.test/v1/chat/completions", "dummy-key"),
+        ("GET", "https://gpu.test/v1/result?call=dummy", "dummy-key"),
+    ]
+
+
+@pytest.mark.parametrize(
+    "location",
+    [
+        "https://elsewhere.test/v1/chat/completions",
+        "http://gpu.test/v1/chat/completions",
+        "https://gpu.test:8443/v1/chat/completions",
+    ],
+)
+@pytest.mark.parametrize("status", [302, 303, 307, 308])
+def test_inference_client_refuses_redirects_off_the_configured_origin(location, status):
+    configured, foreign = [], []
+
+    def handler(request):
+        if (request.url.scheme, request.url.host, request.url.port) != ("https", "gpu.test", None):
+            foreign.append(request)
+            return httpx.Response(200, json=COMPLETION)
+        configured.append(request)
+        return httpx.Response(status, headers={"Location": location})
+
+    client = InferenceClient(
+        "https://gpu.test/v1",
+        auth_headers=DUMMY_PROXY_HEADERS,
+        transport=httpx.MockTransport(handler),
+    )
+    with pytest.raises(InferenceServiceError, match="Refusing redirect") as refused:
+        client.complete({"frames": "dummy"})
+    assert len(configured) == 1
+    assert foreign == []
+    assert "dummy" not in str(refused.value)
 
 
 def test_settings_build_auth_headers_and_hide_secrets(monkeypatch):
@@ -135,14 +191,13 @@ def test_settings_reject_half_configured_proxy_token(monkeypatch):
         ({"prompt_tokens": -1}, (None, None)),
     ],
 )
-def test_inference_client_reads_optional_token_usage(monkeypatch, usage, expected):
+def test_inference_client_reads_optional_token_usage(usage, expected):
     body = {"id": "x", "choices": [{"message": {"content": "fall"}}]}
     if usage is not None:
         body["usage"] = usage
-    response = httpx.Response(200, json=body)
-    response.request = httpx.Request("POST", "http://test/chat/completions")
-    monkeypatch.setattr(httpx, "post", lambda *_args, **_kwargs: response)
-    result = InferenceClient("http://test").complete({})
+    result = InferenceClient(
+        "http://test", transport=respond(httpx.Response(200, json=body))
+    ).complete({})
     assert (result.prompt_tokens, result.completion_tokens) == expected
 
 

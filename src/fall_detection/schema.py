@@ -1,8 +1,27 @@
 """SQLite schema creation and in-place migrations for the shared database."""
 
 import sqlite3
+from time import monotonic, sleep
 
 SCHEMA_VERSION = 6
+
+
+def enable_wal(connection: sqlite3.Connection) -> None:
+    """Switch the database file to WAL; the mode persists for later connections."""
+    # Changing journal mode can return SQLITE_BUSY immediately, even with
+    # busy_timeout configured, when another startup connection holds a lock.
+    deadline = monotonic() + 10
+    while True:
+        try:
+            connection.execute("PRAGMA journal_mode = WAL")
+            return
+        except sqlite3.OperationalError as exc:
+            if (
+                getattr(exc, "sqlite_errorcode", 0) & 0xFF != sqlite3.SQLITE_BUSY
+                or monotonic() >= deadline
+            ):
+                raise
+            sleep(0.01)
 
 
 def migrate(connection: sqlite3.Connection, timestamp: str) -> None:

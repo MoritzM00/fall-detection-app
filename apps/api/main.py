@@ -1,6 +1,8 @@
+import asyncio
+import logging
 import subprocess
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Annotated
 from uuid import uuid4
@@ -48,6 +50,20 @@ from fall_detection.repository import Repository
 from fall_detection.serving_status import ServingStatus, ShutdownBlockedError, StatusSnapshot
 from fall_detection.storage import list_dataset_video_paths, resolve_dataset_video, storage_lock
 
+logger = logging.getLogger(__name__)
+
+
+async def recover_leases_periodically(repository: Repository, interval_seconds: float) -> None:
+    """Fail expired leases even without a live worker; reads never recover them."""
+    while True:
+        await asyncio.sleep(interval_seconds)
+        try:
+            await asyncio.to_thread(repository.recover_expired)
+        except Exception:
+            # Any failure (locked or corrupt database, constraint, clock) must not end the
+            # timer: nobody awaits it before shutdown, so recovery would silently stop.
+            logger.warning("Lease recovery failed; retrying next interval", exc_info=True)
+
 
 def create_app(settings: Settings | None = None, repository: Repository | None = None) -> FastAPI:
     """Build one API instance with its own settings, storage, and preparation capacity."""
@@ -63,10 +79,19 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        """Initialize this application's durable state at startup."""
+        """Initialize durable state, then recover expired job leases on a timer."""
         repository.initialize()
         Monitoring(repository).recover()
-        yield
+        repository.recover_expired()
+        recovery = asyncio.create_task(
+            recover_leases_periodically(repository, settings.lease_recovery_interval_seconds)
+        )
+        try:
+            yield
+        finally:
+            recovery.cancel()
+            with suppress(asyncio.CancelledError):
+                await recovery
 
     app = FastAPI(title="Fall Detection API", version="0.1.0", lifespan=lifespan)
     app.add_middleware(
@@ -358,7 +383,13 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
             key = (video.id, request.start_seconds, request.frame_count, request.fps, request.size)
             return preparation_coordinator.run(
                 key,
-                lambda: prepare_video(video, request, settings.data_dir, settings.inspection_pngs),
+                lambda: prepare_video(
+                    video,
+                    request,
+                    settings.data_dir,
+                    settings.inspection_pngs,
+                    rgb_array=settings.rgb_arrays,
+                ),
             )
         except PreparationBusyError as exc:
             raise HTTPException(

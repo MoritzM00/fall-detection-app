@@ -53,13 +53,15 @@ def prepared_video(tmp_path: Path):
     repository.initialize()
     video = repository.create_uploaded_video("test.mp4", "media/test.mp4")
     request = PreparationRequest(video_id=video.id, start_seconds=0, frame_count=6, fps=5, size=224)
-    prepared = prepare_video(video, request, data_dir)
+    # Opt into the RGB array so array verification stays covered.
+    prepared = prepare_video(video, request, data_dir, rgb_array=True)
     return data_dir, repository, video, request, prepared
 
 
 def test_prepared_pixels_and_online_frame_sequence(prepared_video):
     data_dir, _, video, request, prepared = prepared_video
     frames = load_rgb_frames(data_dir, prepared)
+    assert frames is not None
     assert frames.shape == (6, 224, 224, 3)
     assert prepared.end_seconds == 1
     assert [frame.requested_seconds for frame in prepared.frames] == [0, 0.2, 0.4, 0.6, 0.8, 1]
@@ -187,6 +189,50 @@ def test_job_references_prepared_input_and_worker_sends_selected_frames(
     assert refused.state == "failed" and refused.prediction is None
     assert "Refusing to send video frames" in refused.error
     assert sent == {}
+
+
+def test_default_bundle_has_no_rgb_array_but_same_identity_and_jpegs(prepared_video, tmp_path):
+    data_dir, repository, video, request, with_array = prepared_video
+    other_dir = tmp_path / "default"
+    (other_dir / "media").mkdir(parents=True)
+    (other_dir / "media" / "test.mp4").write_bytes((data_dir / "media" / "test.mp4").read_bytes())
+
+    prepared = prepare_video(video, request, other_dir)
+
+    directory = preparation_path(other_dir, prepared.id)
+    assert not (directory / "frames.npy").exists()
+    assert prepared == with_array
+    assert load_rgb_frames(other_dir, prepared) is None
+    for frame in prepared.frames:
+        name = f"{frame.index:02d}.jpg"
+        assert (directory / name).read_bytes() == (
+            preparation_path(data_dir, with_array.id) / name
+        ).read_bytes()
+    assert to_vllm_jpeg_data_url(other_dir, prepared) == to_vllm_jpeg_data_url(data_dir, with_array)
+    (directory / "00.jpg").write_bytes(b"corrupted")
+    with pytest.raises(ValueError, match="JPEG frame failed integrity check"):
+        to_vllm_jpeg_data_url(other_dir, prepared)
+
+
+def test_storage_option_does_not_change_or_rewrite_an_existing_bundle(prepared_video, tmp_path):
+    data_dir, _, video, request, with_array = prepared_video
+    # A bundle stored with its array keeps it, and keeps verifying it, when the flag is off.
+    assert prepare_video(video, request, data_dir) == with_array
+    array_path = preparation_path(data_dir, with_array.id) / "frames.npy"
+    assert array_path.exists()
+    frames = np.load(array_path, allow_pickle=False)
+    frames[0, 0, 0, 0] ^= 1
+    np.save(array_path, frames, allow_pickle=False)
+    with pytest.raises(ValueError, match="integrity"):
+        to_vllm_jpeg_data_url(data_dir, with_array)
+
+    # A bundle stored without the array is reused unchanged when the flag is on.
+    other_dir = tmp_path / "default"
+    (other_dir / "media").mkdir(parents=True)
+    (other_dir / "media" / "test.mp4").write_bytes((data_dir / "media" / "test.mp4").read_bytes())
+    without_array = prepare_video(video, request, other_dir)
+    assert prepare_video(video, request, other_dir, rgb_array=True) == without_array
+    assert not (preparation_path(other_dir, without_array.id) / "frames.npy").exists()
 
 
 def test_tampered_frame_array_is_rejected(prepared_video):

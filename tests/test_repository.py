@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Barrier, Event
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -15,6 +16,7 @@ from fall_detection.repository import Repository
 def wal_setup_faults(tmp_path, monkeypatch):
     """Inject SQLite boundary errors while using a real disposable database."""
     import fall_detection.repository as module
+    import fall_detection.schema as schema
 
     connect = sqlite3.connect
     failures = []
@@ -38,7 +40,7 @@ def wal_setup_faults(tmp_path, monkeypatch):
         return proxy
 
     monkeypatch.setattr(module.sqlite3, "connect", open_connection)
-    monkeypatch.setattr(module, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(schema, "sleep", lambda _seconds: None)
     return Repository(tmp_path / "faults.sqlite3"), failures, connections, attempts
 
 
@@ -61,12 +63,12 @@ def test_wal_setup_retries_busy_then_creates_usable_database(wal_setup_faults):
 
 @pytest.mark.parametrize("code", [sqlite3.SQLITE_BUSY, sqlite3.SQLITE_ERROR])
 def test_wal_setup_failure_is_bounded_and_closes_connection(wal_setup_faults, monkeypatch, code):
-    import fall_detection.repository as module
+    import fall_detection.schema as schema
 
     repository, failures, connections, attempts = wal_setup_faults
     failures.extend([sqlite_setup_error(code)] * 3)
     clock = iter([0, 0.1, 10])
-    monkeypatch.setattr(module, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(schema, "monotonic", lambda: next(clock))
     with pytest.raises(sqlite3.OperationalError, match="injected WAL setup error"):
         repository.initialize()
     assert len(attempts) == (2 if code == sqlite3.SQLITE_BUSY else 1)
@@ -185,6 +187,9 @@ def test_expired_claim_is_visible_and_stale_owner_cannot_write(tmp_path: Path) -
     assert repository.renew_claim(first.id, first.claim_token)
     now += timedelta(seconds=91)
     assert not repository.renew_claim(first.id, first.claim_token)
+    stale = repository.get_job(first.id)
+    assert stale is not None and stale.state == "running"  # reads never recover leases
+    assert repository.recover_expired() == 1  # worker loop / API startup and timer path
     interrupted = repository.get_job(first.id)
     assert interrupted is not None and interrupted.state == "failed"
     assert "Retry" in (interrupted.error or "")
@@ -347,6 +352,7 @@ def test_owner_transition_checks_clock_after_acquiring_write_lock(
             now += timedelta(seconds=2)
             blocker.commit()
             assert not attempt.result(timeout=5)
+    assert repository.recover_expired() == 1
     interrupted = repository.get_job(claimed.id)
     assert interrupted is not None and interrupted.state == "failed"
     assert interrupted.prediction is None
@@ -380,6 +386,7 @@ def test_claim_does_not_return_a_new_owners_token(
         first = pool.submit(first_repository.claim_next_job)
         assert entered_read.wait(2)
         now += timedelta(seconds=91)
+        assert second_repository.recover_expired() == 1
         interrupted = second_repository.get_job(job.id)
         assert interrupted is not None and interrupted.state == "failed"
         second_repository.retry_job(job.id)
@@ -387,3 +394,67 @@ def test_claim_does_not_return_a_new_owners_token(
         assert second is not None and second.claim_token is not None
         resume_read.set()
         assert first.result(timeout=5) is None
+
+
+@pytest.fixture
+def sqlite_activity(monkeypatch):
+    """Count opened connections and every statement they run."""
+    import fall_detection.repository as module
+
+    connect = sqlite3.connect
+    activity = SimpleNamespace(connections=0, statements=[])
+
+    def open_connection(*args, **kwargs):
+        connection = connect(*args, **kwargs)
+        activity.connections += 1
+        connection.set_trace_callback(activity.statements.append)
+        return connection
+
+    monkeypatch.setattr(module.sqlite3, "connect", open_connection)
+    return activity
+
+
+@pytest.mark.parametrize("job_count", [3, 60])
+def test_job_reads_use_one_connection_and_never_write(
+    tmp_path: Path, sqlite_activity, job_count: int
+) -> None:
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+
+    def clock() -> datetime:
+        return now
+
+    repository = Repository(tmp_path / "app.sqlite3", clock=clock)
+    repository.initialize()
+    video = repository.create_sample_video()
+    queued = [repository.create_job(video.id, 0, 2) for _ in range(job_count)]
+    claimed = repository.claim_next_job()
+    assert claimed is not None and claimed.claim_token is not None
+    assert repository.complete_job(
+        claimed.id,
+        PipelineResult("fall", "fall", [0, 2], 1, 2),
+        backend_kind="mock",
+        model="m",
+        fixture_version=None,
+        claim_token=claimed.claim_token,
+    )
+    running = repository.claim_next_job()
+    assert running is not None
+    now += timedelta(seconds=91)  # the lease is expired, but nothing has recovered it yet
+    sqlite_activity.connections = 0
+    sqlite_activity.statements.clear()
+
+    listed = repository.list_jobs(50)
+    single = repository.get_job(claimed.id)
+
+    assert sqlite_activity.connections == 2
+    statements = " ".join(sqlite_activity.statements).upper()
+    assert "JOURNAL_MODE" not in statements
+    assert not any(word in statements for word in ("BEGIN", "INSERT", "UPDATE", "DELETE"))
+    # One succeeded job; every other job is active and always listed.
+    assert [job.id for job in listed] == [job.id for job in reversed(queued)]
+    by_id = {job.id: job for job in listed}
+    assert single == by_id[claimed.id]
+    assert single is not None and single.prediction is not None
+    assert single.prediction.label == "fall"
+    assert by_id[running.id].state == "running"
+    assert all(job.configuration == queued[0].configuration for job in listed)
