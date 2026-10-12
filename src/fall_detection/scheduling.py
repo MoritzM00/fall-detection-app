@@ -2,11 +2,34 @@
 
 import math
 from datetime import datetime
+from enum import StrEnum
 from uuid import uuid4
 
 from fall_detection.models import RunConfiguration
 from fall_detection.repository import Repository
 from fall_detection.storage import storage_lock
+
+
+class LifecycleReason(StrEnum):
+    """Every fixed code written to window ``reason`` or session ``recovery_reason``.
+
+    Writers bind these members instead of SQL literals, and exports keep exactly
+    these codes; any other stored reason is a freeform diagnostic and is redacted.
+    """
+
+    PROCESS_RESTART = "process_restart"
+    PREPARATION_INTERRUPTED = "preparation_interrupted"
+    EXPIRED = "expired"
+    SUPERSEDED = "superseded"
+    INCOMPLETE_TAIL = "incomplete_tail"
+    LIFECYCLE_CHANGED = "lifecycle_changed"
+    PAUSE = "pause"
+    STOP = "stop"
+    SEEK = "seek"
+    RESTART = "restart"
+    CONFIGURE = "configure"
+    INGEST_GAP = "ingest_gap"
+    CAPTURE_ENDED = "capture_ended"
 
 
 class ReplayScheduler:
@@ -27,12 +50,12 @@ class ReplayScheduler:
                     self.repository._clock() - datetime.fromisoformat(candidate["created_at"])
                 ).total_seconds() > 90:
                     connection.execute(
-                        "UPDATE monitoring_windows SET state='failed',reason='preparation_interrupted' WHERE id=?",
-                        (candidate["id"],),
+                        "UPDATE monitoring_windows SET state='failed',reason=? WHERE id=?",
+                        (LifecycleReason.PREPARATION_INTERRUPTED, candidate["id"]),
                     )
                     connection.execute(
-                        "UPDATE monitoring_sessions SET state=CASE WHEN state='running' THEN 'paused' ELSE state END,recovery_reason='preparation_interrupted' WHERE id=?",
-                        (candidate["session_id"],),
+                        "UPDATE monitoring_sessions SET state=CASE WHEN state='running' THEN 'paused' ELSE state END,recovery_reason=? WHERE id=?",
+                        (LifecycleReason.PREPARATION_INTERRUPTED, candidate["session_id"]),
                     )
             queued = connection.execute("""SELECT w.*,s.position,s.expiration FROM monitoring_windows w
                 JOIN monitoring_sessions s ON s.id=w.session_id JOIN jobs j ON j.id=w.job_id
@@ -50,8 +73,8 @@ class ReplayScheduler:
                         (self.repository._timestamp(), candidate["job_id"]),
                     )
                     connection.execute(
-                        "UPDATE monitoring_windows SET state='skipped',reason='expired' WHERE id=?",
-                        (candidate["id"],),
+                        "UPDATE monitoring_windows SET state='skipped',reason=? WHERE id=?",
+                        (LifecycleReason.EXPIRED, candidate["id"]),
                     )
             row = connection.execute(
                 "SELECT * FROM monitoring_sessions WHERE state='running' AND duration_verified=1"
@@ -75,9 +98,9 @@ class ReplayScheduler:
                 is None
             ):
                 connection.execute(
-                    """UPDATE monitoring_sessions SET state='paused',recovery_reason='capture_ended',
+                    """UPDATE monitoring_sessions SET state='paused',recovery_reason=?,
                     updated_at=? WHERE id=?""",
-                    (self.repository._timestamp(), row["id"]),
+                    (LifecycleReason.CAPTURE_ENDED, self.repository._timestamp(), row["id"]),
                 )
                 connection.commit()
                 return
@@ -106,13 +129,15 @@ class ReplayScheduler:
                 > row["expiration"]
             ):
                 connection.execute(
-                    "UPDATE monitoring_windows SET state='skipped',reason='expired' WHERE id=?",
-                    (pending["id"],),
+                    "UPDATE monitoring_windows SET state='skipped',reason=? WHERE id=?",
+                    (LifecycleReason.EXPIRED, pending["id"]),
                 )
                 pending = None
             if seq <= last:
                 if seq < last:
-                    self._window(connection, row, seq, last - 1, width, "skipped", "superseded")
+                    self._window(
+                        connection, row, seq, last - 1, width, "skipped", LifecycleReason.SUPERSEDED
+                    )
                 end = row["origin"] + last * row["stride"] + width
                 state = "skipped" if row["position"] - end > row["expiration"] else "pending"
                 self._window(
@@ -122,7 +147,7 @@ class ReplayScheduler:
                     last,
                     width,
                     state,
-                    "expired" if state == "skipped" else None,
+                    LifecycleReason.EXPIRED if state == "skipped" else None,
                 )
                 seq = last + 1
             start = row["origin"] + seq * row["stride"]
@@ -138,7 +163,7 @@ class ReplayScheduler:
                     seq,
                     width,
                     "skipped",
-                    "incomplete_tail",
+                    LifecycleReason.INCOMPLETE_TAIL,
                     end=row["duration"],
                 )
                 seq += 1
@@ -160,7 +185,9 @@ class ReplayScheduler:
                 )
             connection.commit()
 
-    def _window(self, connection, row, seq, last, width, state, reason, *, end=None):
+    def _window(
+        self, connection, row, seq, last, width, state, reason: LifecycleReason | None, *, end=None
+    ):
         connection.execute(
             """INSERT INTO monitoring_windows
             (id,session_id,generation,sequence,sequence_end,segment_id,start_seconds,end_seconds,
@@ -326,15 +353,15 @@ class ReplayScheduler:
                         "end_seconds"
                     ] > current["expiration"]:
                         connection.execute(
-                            "UPDATE monitoring_windows SET state='skipped',reason='expired' WHERE id=? AND state='preparing'",
-                            (row["id"],),
+                            "UPDATE monitoring_windows SET state='skipped',reason=? WHERE id=? AND state='preparing'",
+                            (LifecycleReason.EXPIRED, row["id"]),
                         )
                         connection.commit()
                         return True
                     if not eligible:
                         connection.execute(
-                            "UPDATE monitoring_windows SET state='skipped',reason=COALESCE(reason,'lifecycle_changed') WHERE id=? AND state='preparing'",
-                            (row["id"],),
+                            "UPDATE monitoring_windows SET state='skipped',reason=COALESCE(reason,?) WHERE id=? AND state='preparing'",
+                            (LifecycleReason.LIFECYCLE_CHANGED, row["id"]),
                         )
                         connection.commit()
                         return True
@@ -390,8 +417,8 @@ class ReplayScheduler:
         except IngestGapError:
             with self.repository._connect() as connection:
                 connection.execute(
-                    "UPDATE monitoring_windows SET state='skipped',reason='ingest_gap' WHERE id=? AND state='preparing'",
-                    (row["id"],),
+                    "UPDATE monitoring_windows SET state='skipped',reason=? WHERE id=? AND state='preparing'",
+                    (LifecycleReason.INGEST_GAP, row["id"]),
                 )
         except (ValueError, OSError, av.error.FFmpegError) as exc:
             with self.repository._connect() as connection:
