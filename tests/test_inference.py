@@ -34,6 +34,7 @@ def test_inference_client_sends_configured_credentials(monkeypatch):
     sent = {}
 
     def post(url, **kwargs):
+        assert kwargs["follow_redirects"] is True
         sent.update(kwargs["headers"])
         response = httpx.Response(
             200, json={"id": "x", "choices": [{"message": {"content": "fall"}}]}

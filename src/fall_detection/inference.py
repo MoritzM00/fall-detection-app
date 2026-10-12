@@ -64,6 +64,8 @@ class InferenceClient:
                 f"{self._base_url}/chat/completions",
                 json=payload,
                 timeout=self._timeout_seconds,
+                # Modal answers requests running past ~150 s with a 303 to poll for the result.
+                follow_redirects=True,
                 headers={
                     **self._auth_headers,
                     **(

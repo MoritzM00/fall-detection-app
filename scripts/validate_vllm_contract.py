@@ -43,10 +43,14 @@ def _server_identity(base_url: str, model: str, headers: dict[str, str]) -> tupl
     """Read the serving version and model IDs before sending video data."""
     root = base_url.removesuffix("/v1")
     # A scale-to-zero endpoint may need to start a container before it answers.
-    version_response = httpx.get(f"{root}/version", headers=headers, timeout=600)
+    version_response = httpx.get(
+        f"{root}/version", headers=headers, timeout=600, follow_redirects=True
+    )
     version_response.raise_for_status()
     version = version_response.json().get("version")
-    models_response = httpx.get(f"{base_url}/models", headers=headers, timeout=60)
+    models_response = httpx.get(
+        f"{base_url}/models", headers=headers, timeout=60, follow_redirects=True
+    )
     models_response.raise_for_status()
     models = [item["id"] for item in models_response.json()["data"]]
     if not isinstance(version, str) or not version:
