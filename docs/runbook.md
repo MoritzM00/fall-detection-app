@@ -79,16 +79,22 @@ Set `FALL_DETECTION_DATA_DIR`, `FALL_DETECTION_DATABASE_PATH`,
 `FALL_DETECTION_INFERENCE_BASE_URL`, `FALL_DETECTION_INFERENCE_MODEL`, and
 `FALL_DETECTION_REQUEST_TIMEOUT_SECONDS` consistently. API upload/preparation
 limits are `FALL_DETECTION_UPLOAD_MAX_BYTES`, `FALL_DETECTION_PREPARATION_SLOTS`
-and `FALL_DETECTION_PREPARATION_WAIT_SECONDS`. Mock manifest and durable retry
+and `FALL_DETECTION_PREPARATION_WAIT_SECONDS`. Prepared bundles store the raw RGB
+array only with `FALL_DETECTION_RGB_ARRAYS=1` (for parity checks) and inspection
+PNGs only with `FALL_DETECTION_INSPECTION_PNGS=1`. Mock manifest and durable retry
 state are described in [mock inference](mock-inference.md). Fixture changes require
 new submissions; changed fixture identities cannot silently execute old jobs.
 All 16 labels remain valid; failures and skipped windows have no activity class.
 
 Back up the database and managed media together with the application stopped.
 Sources, prepared bundles and histories are linked: copying only SQLite loses
-inputs. Retention is manual, defaults to preview and protects all retained job
-and session references. Follow [retention](retention.md); never prune user data
-as part of demo/test cleanup. Histories have no automatic total disk quota.
+inputs. Retention is manual, defaults to preview and protects all retained clip
+jobs and open sessions; inputs and live frames of sessions stopped longer than the
+session age become eligible. A pruned session can no longer feed a real evaluation
+report, so export its manifests before `--apply` or use `--keep-sessions` while
+evaluation is pending; the preview warns about sessions with vLLM predictions.
+Follow [retention](retention.md); never prune user data as part of demo/test
+cleanup. Histories have no automatic total disk quota.
 Export reproducible [run/session manifests](exports.md) before analysis; evaluate
 with the [ground-truth protocol](evaluation.md). Synthetic reports test arithmetic
 and contracts and cannot demonstrate model quality.

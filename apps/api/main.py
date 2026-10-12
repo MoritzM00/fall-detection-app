@@ -344,7 +344,13 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
             key = (video.id, request.start_seconds, request.frame_count, request.fps, request.size)
             return preparation_coordinator.run(
                 key,
-                lambda: prepare_video(video, request, settings.data_dir, settings.inspection_pngs),
+                lambda: prepare_video(
+                    video,
+                    request,
+                    settings.data_dir,
+                    settings.inspection_pngs,
+                    rgb_array=settings.rgb_arrays,
+                ),
             )
         except PreparationBusyError as exc:
             raise HTTPException(

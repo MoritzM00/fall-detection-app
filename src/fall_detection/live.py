@@ -333,6 +333,8 @@ def prepare_frames(
     capture_fps: float,
     data_dir: Path,
     inspection_pngs: bool = True,
+    *,
+    rgb_array: bool = False,
 ) -> PreparedInput:
     """Select causal frames from the log and publish an ordinary prepared bundle."""
     if video.source != "live" or video.id != request.video_id:
@@ -382,7 +384,11 @@ def prepare_frames(
         return load_prepared_input(data_dir, prepared_id)
     frames = []
     for row in selected:
-        data = _frame_path(data_dir, video, row["seq"]).read_bytes()
+        try:
+            data = _frame_path(data_dir, video, row["seq"]).read_bytes()
+        except FileNotFoundError as exc:
+            # Frame-log rows outlive frames removed by manual retention.
+            raise ValueError("Stored live frame is no longer available") from exc
         if hashlib.sha256(data).hexdigest() != row["sha256"]:
             raise ValueError("Stored live frame failed integrity check")
         with Image.open(io.BytesIO(data)) as image:
@@ -405,4 +411,5 @@ def prepare_frames(
             "preprocessing_version": LIVE_PREPROCESSING_VERSION,
         },
         inspection_pngs,
+        rgb_array=rgb_array,
     )
