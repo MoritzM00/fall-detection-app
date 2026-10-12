@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from fall_detection.models import GenerationConfiguration, RunConfiguration, SamplingConfiguration
 from fall_detection.prediction import PRESET_ID, THESIS_BASELINE_PROMPT
 from fall_detection.repository import Repository
-from fall_detection.scheduling import ReplayScheduler
+from fall_detection.scheduling import LifecycleReason, ReplayScheduler
 
 
 class SessionConfiguration(BaseModel):
@@ -227,13 +227,17 @@ class Monitoring(ReplayScheduler):
             connection.execute("BEGIN IMMEDIATE")
             connection.execute(
                 """UPDATE monitoring_sessions SET state='paused',
-                recovery_reason='process_restart',updated_at=? WHERE state='running'""",
-                (self.repository._timestamp(),),
+                recovery_reason=?,updated_at=? WHERE state='running'""",
+                (LifecycleReason.PROCESS_RESTART, self.repository._timestamp()),
             )
-            connection.execute("""UPDATE monitoring_windows SET state='skipped',reason='process_restart'
-                WHERE state IN ('pending','preparing')""")
             connection.execute(
-                "UPDATE monitoring_windows SET state='skipped',reason='process_restart' WHERE job_id IN (SELECT id FROM jobs WHERE state='queued')"
+                """UPDATE monitoring_windows SET state='skipped',reason=?
+                WHERE state IN ('pending','preparing')""",
+                (LifecycleReason.PROCESS_RESTART,),
+            )
+            connection.execute(
+                "UPDATE monitoring_windows SET state='skipped',reason=? WHERE job_id IN (SELECT id FROM jobs WHERE state='queued')",
+                (LifecycleReason.PROCESS_RESTART,),
             )
             connection.execute(
                 "UPDATE jobs SET state='cancelled',error='process_restart',updated_at=? WHERE state='queued' AND id IN (SELECT job_id FROM monitoring_windows)",
@@ -303,14 +307,15 @@ class Monitoring(ReplayScheduler):
             elif action == "position" and command.position_seconds is None:
                 raise ValueError("Position command requires an explicit position")
             if action in {"stop", "seek", "restart", "configure"}:
+                reason = LifecycleReason(action)
                 connection.execute(
                     """UPDATE monitoring_windows SET state='skipped',reason=?
                     WHERE session_id=? AND state IN ('pending','preparing')""",
-                    (action, session_id),
+                    (reason, session_id),
                 )
                 connection.execute(
                     "UPDATE monitoring_windows SET state='skipped',reason=? WHERE session_id=? AND job_id IN (SELECT id FROM jobs WHERE state='queued')",
-                    (action, session_id),
+                    (reason, session_id),
                 )
                 connection.execute(
                     """UPDATE jobs SET state='cancelled',error=?,updated_at=?
@@ -352,8 +357,8 @@ class Monitoring(ReplayScheduler):
             # Pause drops only the not-yet-prepared candidate; resume uses the same cursor.
             if action == "pause":
                 connection.execute(
-                    "UPDATE monitoring_windows SET state='skipped',reason='pause' WHERE session_id=? AND state='pending'",
-                    (session_id,),
+                    "UPDATE monitoring_windows SET state='skipped',reason=? WHERE session_id=? AND state='pending'",
+                    (LifecycleReason.PAUSE, session_id),
                 )
             if live and values["state"] == "running" and row["state"] != "running":
                 # Starting capture takes a moment; count the ingest timeout from here.
