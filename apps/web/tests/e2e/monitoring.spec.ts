@@ -61,6 +61,12 @@ test("recorded sample lifecycle retains old generations and recovers after reloa
   // A failed apply keeps the pending edits so it can be retried.
   await panel.getByRole("button", { name: "Settings", exact: true }).click();
   await expect(panel.getByLabel("Monitoring frames")).toHaveValue("8");
+  // Discarding them also drops the failed command, so Retry cannot apply discarded settings.
+  await panel.getByRole("button", { name: "Close settings" }).click();
+  await expect(panel.getByRole("button", { name: "Retry connection / command" })).toHaveCount(0);
+  await panel.getByRole("button", { name: "Settings", exact: true }).click();
+  await expect(panel.getByLabel("Monitoring frames")).toHaveValue("16");
+  await panel.getByLabel("Monitoring frames").fill("8");
   await panel.getByRole("button", { name: "Apply new configuration segment" }).click();
   await expect(panel.locator(".settings-summary")).toContainText("8 frames");
   await expect(panel.locator(".settings-summary")).toContainText("Custom settings");

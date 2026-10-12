@@ -81,8 +81,11 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
     && settings.generation.temperature === active.generation.temperature && settings.generation.max_tokens === active.generation.max_tokens;
   function closeSettings(discard: boolean) {
     setSettingsOpen(false);
+    if (!discard) return;
     // Unapplied edits would otherwise linger and misdescribe the running segment.
-    if (discard && current.current) hydrate(current.current);
+    if (current.current) hydrate(current.current);
+    // A failed apply waiting for retry would otherwise reapply the settings just discarded.
+    if (retry.current?.command.action === "configure") { retry.current = null; poll.setError(null); }
   }
   function resetSettings() {
     setFrames(BASELINE_SAMPLING.frames); setFps(BASELINE_SAMPLING.fps); setSize(BASELINE_SAMPLING.size);
