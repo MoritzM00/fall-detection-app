@@ -164,6 +164,7 @@ class ServingStatus:
         self._warmup_error: str | None = None
         self._ready_at = float("-inf")
         self._stopped_at: float | None = None
+        self._stopping_now = False
 
     def snapshot(self) -> StatusSnapshot:
         """Report serving state; reads container counts at most once per cache period."""
@@ -186,12 +187,14 @@ class ServingStatus:
                 # The container scaled down since the warm-up, so its readiness is stale.
                 self._warmup = "idle"
             if self._stopped_at is not None and (
-                stats is None
-                or stats.containers == 0
-                or stats.running_inputs + stats.backlog > 0
-                or time.monotonic() - self._stopped_at > STOPPING_GRACE_SECONDS
+                time.monotonic() - self._stopped_at > STOPPING_GRACE_SECONDS
+                or (
+                    stats is not None
+                    and (stats.containers == 0 or stats.running_inputs + stats.backlog > 0)
+                )
             ):
-                # Gone, or new work started a fresh container that is not stopping.
+                # Gone, or new work started a fresh container that is not stopping. A failed
+                # read says neither, so it keeps the state.
                 self._stopped_at = None
             return StatusSnapshot(
                 state=self._state(stats, error),
@@ -206,6 +209,8 @@ class ServingStatus:
         if self._settings.backend_kind != "vllm":
             raise ValueError("Warm-up applies only to the vllm backend")
         with self._lock:
+            if self._stopping_now:
+                raise ValueError("A shutdown is in progress; warm up once it has finished")
             if self._warmup != "warming":
                 self._warmup = "warming"
                 self._warmup_started = time.monotonic()
@@ -225,17 +230,32 @@ class ServingStatus:
         if self._settings.backend_kind != "vllm" or app_name is None:
             raise ValueError("Shutdown needs the vllm backend and FALL_DETECTION_MODAL_APP")
         group = (self, *others)
-        for status in group:
-            status._ensure_stoppable(app_name)
-        self._stop(app_name)
-        for status in group:
-            status._reset()
+        claimed: list[ServingStatus] = []
+        try:
+            # Claim every model first, so no warm-up starts while the containers are stopped.
+            for status in group:
+                status._claim_stop()
+                claimed.append(status)
+            for status in group:
+                status._ensure_no_work(app_name)
+            self._stop(app_name)
+            for status in group:
+                status._reset()
+        finally:
+            for status in claimed:
+                with status._lock:
+                    status._stopping_now = False
         return self.snapshot()
 
-    def _ensure_stoppable(self, app_name: str) -> None:
+    def _claim_stop(self) -> None:
         with self._lock:
             if self._warmup == "warming":
                 raise ShutdownBlockedError(f"A warm-up of {self.endpoint.model} is in progress")
+            if self._stopping_now:
+                raise ShutdownBlockedError("A shutdown is already in progress")
+            self._stopping_now = True
+
+    def _ensure_no_work(self, app_name: str) -> None:
         # Read fresh counts: Modal reschedules cancelled requests on a new container.
         stats = self._stats_reader(app_name)
         in_flight = stats.running_inputs + stats.backlog
@@ -283,6 +303,8 @@ class ServingStatus:
     def _state(self, stats: ContainerStats | None, error: str | None) -> ServingState:
         if self._warmup == "warming":
             return "warming"
+        if self._stopping_now:
+            return "stopping"
         if self._settings.modal_app is None:
             return "ready" if self._warmup == "ready" else "unmonitored"
         if stats is None or error is not None:
