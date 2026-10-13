@@ -38,3 +38,19 @@ export function runName(job: AnalysisJob): string {
   const outcome = job.prediction ? job.prediction.label.replaceAll("_", " ") : job.state;
   return `${time} · ${outcome} · ${job.start_seconds.toFixed(1)}–${job.end_seconds.toFixed(1)} s`;
 }
+
+/**
+ * Split a chain-of-thought response into its reasoning and final answer line.
+ * Mirrors `final_answer` in `src/fall_detection/prediction.py`, which decides the label.
+ */
+export function splitReasoning(raw: string): { reasoning: string; answer: string } {
+  const close = raw.lastIndexOf("</think>");
+  const thought = close >= 0 ? raw.slice(0, close).replace("<think>", "") : "";
+  const lines = (close >= 0 ? raw.slice(close + "</think>".length) : raw).split("\n");
+  let last = lines.length - 1;
+  while (last >= 0 && !lines[last].trim()) last -= 1;
+  return {
+    reasoning: [thought, ...lines.slice(0, Math.max(last, 0))].join("\n").trim(),
+    answer: last >= 0 ? lines[last].trim() : "",
+  };
+}

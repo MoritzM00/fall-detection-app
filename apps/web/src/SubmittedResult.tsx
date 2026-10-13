@@ -3,7 +3,8 @@ import { getVideo, retryJob } from "./api";
 import type { AnalysisJob, VideoAsset } from "./api";
 import { formatTokenUsage } from "./tokens";
 import { samplingSummary } from "./SettingsDialog";
-import { runName } from "./runState";
+import { runName, splitReasoning } from "./runState";
+import { generationSummary } from "./ExperimentControls";
 
 type Props = {
   jobs: AnalysisJob[];
@@ -22,6 +23,16 @@ type Props = {
 
 function formatLabel(label: string): string {
   return label.replaceAll("_", " ");
+}
+
+/** A chain-of-thought answer: the model's reasoning, then the parsed final line. */
+export function Reasoning({ raw }: { raw: string }) {
+  const { reasoning, answer } = splitReasoning(raw);
+  return <div className="reasoning">
+    <h3>Reasoning</h3>
+    {reasoning ? <p className="reasoning-text">{reasoning}</p> : <p className="reasoning-text empty">No reasoning before the answer.</p>}
+    <p className="raw-response">Final line: “{answer}”</p>
+  </div>;
 }
 
 export function SubmittedResult({
@@ -55,15 +66,16 @@ export function SubmittedResult({
       {result.backend_kind === "mock" && <p className="simulation-note">Simulated label from the mock backend, not inferred from this clip.</p>}
       <details className="result-details">
         <summary>Run details</summary>
-        <p className="raw-response">“{result.raw_response}”</p>
+        {job.configuration?.chain_of_thought ? <Reasoning raw={result.raw_response} /> : <p className="raw-response">“{result.raw_response}”</p>}
         <dl>
           <div><dt>Request time</dt><dd>{result.request_duration_ms.toFixed(0)} ms</dd></div>
           <div><dt>Tokens</dt><dd>{formatTokenUsage(result)}</dd></div>
           <div><dt>Model</dt><dd>{result.model}</dd></div>
           {result.fixture_version && <div><dt>Fixture</dt><dd>{result.fixture_version}</dd></div>}
           <div><dt>Prompt preset</dt><dd>{job.configuration?.prompt_preset ?? "Unavailable"}</dd></div>
-          <div><dt>Generation</dt><dd>{job.configuration ? `Temperature ${job.configuration.generation.temperature}, max tokens ${job.configuration.generation.max_tokens}` : "Unavailable"}</dd></div>
-          {job.configuration && <div><dt>Sampling</dt><dd>{samplingSummary(job.configuration.preprocessing.frames, job.configuration.preprocessing.fps, job.configuration.preprocessing.resize)}</dd></div>}
+          <div><dt>Strategy</dt><dd>{job.configuration ? job.configuration.chain_of_thought ? "Chain of thought" : "Direct answer" : "Unavailable"}</dd></div>
+          <div><dt>LLM sampling</dt><dd>{job.configuration ? generationSummary(job.configuration.generation) : "Unavailable"}</dd></div>
+          {job.configuration && <div><dt>Preprocessing</dt><dd>{samplingSummary(job.configuration.preprocessing.frames, job.configuration.preprocessing.fps, job.configuration.preprocessing.resize)}</dd></div>}
           <div><dt>Sample times</dt><dd title={result.sampled_timestamps.join(", ")}>{result.sampled_timestamps.map((timestamp) => timestamp.toFixed(3)).join(", ")} s</dd></div>
           <div><dt>Configuration</dt><dd title={job.configuration_id}>{job.configuration_id}</dd></div>
           {job.prepared_input_id && <div><dt>Prepared input</dt><dd title={job.prepared_input_id}>{job.prepared_input_id}</dd></div>}

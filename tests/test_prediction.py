@@ -7,6 +7,7 @@ from fall_detection.prediction import (
     InferenceClient,
     InferenceServiceError,
     PredictionParseError,
+    build_inference_payload,
     parse_activity_label,
     require_encrypted_transport,
     sample_timestamps,
@@ -44,6 +45,50 @@ def test_custom_parser_rejects_ambiguous_or_unsupported_formats(response):
 def test_parser_rejects_invalid_output_instead_of_using_other(response: str) -> None:
     with pytest.raises(PredictionParseError):
         parse_activity_label(response)
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        "The person loses balance and drops quickly.\nThe best answer is: fall",
+        "<think>Sudden downward motion.</think>\n\nThe best answer is: fall\n",
+        # Qwen chat templates may open the think tag in the prompt itself.
+        "Sudden downward motion, no bracing.\n</think>\nThe best answer is: fall",
+        "The best answer is: fall",
+    ],
+)
+def test_chain_of_thought_parser_reads_the_final_answer_after_reasoning(response):
+    assert parse_activity_label(response, chain_of_thought=True) == "fall"
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        "The best answer is: fall\nOn reflection the person may be sitting.",
+        "<think>Sudden downward motion. The best answer is: fall",
+        "<think>Reasoning only.</think>",
+        "The person falls. The best answer is: fall",
+        "",
+    ],
+)
+def test_chain_of_thought_parser_fails_without_a_final_answer_line(response):
+    with pytest.raises(PredictionParseError):
+        parse_activity_label(response, chain_of_thought=True)
+
+
+def test_reasoning_is_rejected_unless_chain_of_thought_was_requested():
+    with pytest.raises(PredictionParseError):
+        parse_activity_label("Sudden downward motion.\nThe best answer is: fall")
+
+
+def test_payload_sends_only_the_sampling_values_that_were_set():
+    base = {"temperature": 0.5, "max_tokens": 64}
+    default = build_inference_payload("m", "data:", "p", generation=base)
+    assert not {"top_p", "top_k", "seed"} & default.keys()
+    explicit = build_inference_payload(
+        "m", "data:", "p", generation={**base, "top_p": 0.95, "top_k": 20, "seed": 0}
+    )
+    assert (explicit["top_p"], explicit["top_k"], explicit["seed"]) == (0.95, 20, 0)
 
 
 def test_sample_timestamps_preserve_window_edges() -> None:

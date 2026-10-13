@@ -19,10 +19,10 @@ from fall_detection.monitoring import (
     SessionCreate,
 )
 from fall_detection.prediction import (
-    THESIS_BASELINE_PROMPT,
     InferenceClient,
     InferenceServiceError,
 )
+from fall_detection.prompts import default_preset
 from fall_detection.repository import Repository
 from fall_detection.scheduling import SessionState, SourceKind, WindowState
 from fall_detection.storage import storage_lock
@@ -97,12 +97,13 @@ def monitoring_router(settings: Settings, repository: Repository) -> APIRouter:
     def monitoring_configuration(request: SessionConfiguration):
         if request.model is not None and request.model != settings.inference_model:
             raise ValueError("Choose a model advertised by capabilities")
+        preset = default_preset(request.chain_of_thought)
         try:
             check_context_window(
                 request.frame_count,
                 request.size,
-                request.prompt_text or THESIS_BASELINE_PROMPT,
-                request.generation.max_tokens if request.generation else 32,
+                request.prompt_text or preset.prompt,
+                (request.generation or preset.generation).max_tokens,
                 settings.max_model_len,
             )
         except ContextWindowError as exc:

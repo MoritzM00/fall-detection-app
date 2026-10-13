@@ -1,15 +1,15 @@
 import { MonitoringReplay } from "./MonitoringReplay";
 import { useEffect, useState } from "react";
 import { createJob, getCapabilities } from "./api";
-import { contextWindowError } from "./context";
+import { contextBudget, contextWindowError } from "./context";
 import { FramePreview } from "./FramePreview";
-import { ExperimentControls, baselineExperiment, experimentValid as isExperimentValid, isBaselineExperiment } from "./ExperimentControls";
+import { ExperimentSettingsGroup, SamplingSettingsGroup, baselineExperiment, experimentFromPreset, experimentValid as isExperimentValid, matchingPreset, presetFor } from "./ExperimentControls";
 import { RunComparison } from "./RunComparison";
 import { ServingBadge } from "./ServingBadge";
 import { privacyNotice } from "./privacy";
 import type { Capabilities, ExperimentSettings } from "./api";
-import { SamplingSettings, WindowControls } from "./SamplingControls";
-import { BASELINE_SAMPLING, SettingsDialog, SettingsSummary, isBaselineSampling, samplingSummary } from "./SettingsDialog";
+import { PreprocessingSettings, WindowControls } from "./SamplingControls";
+import { BASELINE_SAMPLING, SettingsDialog, SettingsSummary, isBaselineSampling, settingsSummary } from "./SettingsDialog";
 import { SourceSelection } from "./SourceSelection";
 import { SubmittedResult } from "./SubmittedResult";
 import { usePreparation } from "./usePreparation";
@@ -34,7 +34,8 @@ export default function App() {
   const rangeValid = sampling.isValid(source.duration);
   const experimentValid = experiment !== null && isExperimentValid(experiment, capabilities);
   const contextError = experiment && contextWindowError(capabilities, sampling.frameCount, sampling.size, experiment.prompt_text, experiment.generation.max_tokens);
-  const baseline = Boolean(capabilities && experiment && isBaselineExperiment(capabilities, experiment)) && isBaselineSampling(sampling.frameCount, sampling.fps, sampling.size);
+  const preset = capabilities && experiment ? matchingPreset(capabilities, experiment) : null;
+  const baseline = preset !== null && isBaselineSampling(sampling.frameCount, sampling.fps, sampling.size);
   const { visiblePrepared, preparing, preparationError, retryPreparation } = usePreparation(
     source.video, sampling.startSeconds, sampling.frameCount, sampling.fps,
     sampling.size, rangeValid,
@@ -76,7 +77,8 @@ export default function App() {
     sampling.setFrameCount(BASELINE_SAMPLING.frames);
     sampling.setFps(BASELINE_SAMPLING.fps);
     sampling.setSize(BASELINE_SAMPLING.size);
-    if (capabilities) setExperiment(baselineExperiment(capabilities));
+    // Keep the chosen strategy and model; restore that preset's prompt and sampling.
+    if (capabilities && experiment) setExperiment(experimentFromPreset(capabilities, presetFor(capabilities, experiment.chain_of_thought), experiment.model));
   }
 
   return <main className="shell">
@@ -144,9 +146,9 @@ export default function App() {
           <div><span>02</span><h2>Analysis</h2></div>
         </div>
         <SettingsSummary
-          baseline={baseline}
+          preset={preset && baseline ? preset.title : null}
           invalid={Boolean(experiment) && (!experimentValid || Boolean(contextError))}
-          detail={capabilities ? samplingSummary(sampling.frameCount, sampling.fps, sampling.size) : "Backend settings unavailable"}
+          detail={capabilities && experiment ? settingsSummary(sampling.frameCount, sampling.fps, sampling.size, experiment.chain_of_thought) : "Backend settings unavailable"}
           disabled={!capabilities || !experiment}
           onEdit={() => setSettingsOpen(true)}
         />
@@ -177,10 +179,10 @@ export default function App() {
     <RunComparison key={job?.id ?? "no-run"} jobs={jobs} selectedJob={job} />
 
     <SettingsDialog open={settingsOpen} title="Analysis settings" onClose={() => setSettingsOpen(false)} footer={<>
-      <button type="button" className="text-button" disabled={busy || baseline} onClick={resetSettings}>Reset to thesis baseline</button>
+      <button type="button" className="text-button" disabled={busy || baseline} onClick={resetSettings}>Reset to research defaults</button>
       <button type="button" className="button primary" onClick={() => setSettingsOpen(false)}>Done</button>
     </>}>
-      <SamplingSettings
+      <PreprocessingSettings
         frameCount={sampling.frameCount}
         fps={sampling.fps}
         size={sampling.size}
@@ -190,9 +192,12 @@ export default function App() {
         onFpsChange={sampling.setFps}
         onSizeChange={sampling.setSize}
       />
-      {capabilities && experiment && <ExperimentControls capabilities={capabilities} settings={experiment} busy={busy} onChange={setExperiment} />}
-      {experiment && !experimentValid && <p className="error-message" role="alert">Enter a nonblank prompt, temperature from 0 to 2, and an integer token limit from {capabilities?.generation_limits.min_max_tokens ?? 16} to {capabilities?.generation_limits.max_max_tokens ?? 4096}.</p>}
-      {experimentValid && contextError && <p className="error-message" role="alert">{contextError}</p>}
+      {capabilities && experiment && <>
+        <ExperimentSettingsGroup capabilities={capabilities} settings={experiment} busy={busy} onChange={setExperiment} />
+        <SamplingSettingsGroup capabilities={capabilities} settings={experiment} busy={busy} onChange={setExperiment}
+          budget={contextBudget(capabilities, sampling.frameCount, sampling.size, experiment.prompt_text, experiment.generation.max_tokens)} contextError={contextError} />
+      </>}
+      {experiment && !experimentValid && <p className="error-message" role="alert">Enter a nonblank prompt, temperature from 0 to 2, top-p above 0 and up to 1, top-k of −1 or 1–1000, a non-negative integer seed, and an integer token limit from {capabilities?.generation_limits.min_max_tokens ?? 16} to {capabilities?.generation_limits.max_max_tokens ?? 4096}.</p>}
     </SettingsDialog>
     </div>
     {mode === "monitoring" && <MonitoringReplay capabilities={capabilities} />}

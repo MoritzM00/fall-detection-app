@@ -34,8 +34,6 @@ from fall_detection.monitoring import (
 )
 from fall_detection.prediction import (
     ACTIVITY_LABELS,
-    PRESET_ID,
-    THESIS_BASELINE_PROMPT,
     InferenceClient,
     InferenceServiceError,
 )
@@ -46,6 +44,7 @@ from fall_detection.preparation import (
     preparation_path,
     prepare_video,
 )
+from fall_detection.prompts import PROMPT_PRESETS, default_preset
 from fall_detection.repository import Repository
 from fall_detection.serving_status import ServingStatus, ShutdownBlockedError, StatusSnapshot
 from fall_detection.storage import list_dataset_video_paths, resolve_dataset_video, storage_lock
@@ -122,8 +121,18 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
                 else None
             ),
             "inference_encrypted": httpx.URL(settings.inference_base_url).scheme == "https",
-            "prompt_preset": {"id": PRESET_ID, "prompt": THESIS_BASELINE_PROMPT},
-            "generation": {"temperature": 0, "max_tokens": 32},
+            # The first preset is the default for requests that omit prompt and sampling.
+            "prompt_presets": [
+                {
+                    "id": preset.id,
+                    "title": preset.title,
+                    "description": preset.description,
+                    "prompt": preset.prompt,
+                    "chain_of_thought": preset.chain_of_thought,
+                    "generation": preset.generation.model_dump(),
+                }
+                for preset in PROMPT_PRESETS
+            ],
             "generation_limits": {"min_max_tokens": 16, "max_max_tokens": 4096},
             "preprocessing": {"frame_count": 16, "size": 448, "crop": "center"},
             # Requests whose conservative token estimate exceeds this are rejected with 422.
@@ -248,12 +257,15 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
     @app.post("/analysis-jobs", response_model=AnalysisJob, status_code=status.HTTP_202_ACCEPTED)
     def create_analysis_job(request: AnalysisJobCreate) -> AnalysisJob:
         """Validate a selected range and persist a queued analysis job."""
+        preset = default_preset(request.chain_of_thought)
+        prompt_text = request.prompt_text if request.prompt_text is not None else preset.prompt
+        generation = request.generation or preset.generation
         try:
             check_context_window(
                 request.frame_count,
                 request.size,
-                request.prompt_text if request.prompt_text is not None else THESIS_BASELINE_PROMPT,
-                request.generation.max_tokens if request.generation else 32,
+                prompt_text,
+                generation.max_tokens,
                 settings.max_model_len,
             )
         except ContextWindowError as exc:
@@ -332,12 +344,9 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
                     request.start_seconds,
                     request.end_seconds,
                     model=settings.inference_model,
-                    prompt_text=(
-                        request.prompt_text
-                        if request.prompt_text is not None
-                        else THESIS_BASELINE_PROMPT
-                    ),
-                    generation=request.generation.model_dump() if request.generation else None,
+                    prompt_text=prompt_text,
+                    chain_of_thought=request.chain_of_thought,
+                    generation=generation.model_dump(),
                     backend_kind=settings.backend_kind,
                     fixture_version=fixture_version,
                     prepared_input_id=prepared.id if prepared else None,

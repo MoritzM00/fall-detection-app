@@ -2,17 +2,22 @@ import { useEffect, useState } from "react";
 import { createLiveSession, createSession } from "./api";
 import type { Capabilities, ExperimentSettings, MonitoringSession } from "./api";
 import { SourceSelection } from "./SourceSelection";
-import { ExperimentControls, baselineExperiment, experimentValid, isBaselineExperiment } from "./ExperimentControls";
-import { BASELINE_SAMPLING, SettingsDialog, SettingsSummary, isBaselineSampling, samplingSummary } from "./SettingsDialog";
+import { ExperimentSettingsGroup, SamplingSettingsGroup, baselineExperiment, experimentFromPreset, experimentValid, matchingPreset, presetFor, sameExperiment } from "./ExperimentControls";
+import { BASELINE_SAMPLING, SettingsDialog, SettingsGroup, SettingsSummary, isBaselineSampling, settingsSummary } from "./SettingsDialog";
 import { useSourceSelection } from "./useSourceSelection";
 import { useLiveCapture } from "./useLiveCapture";
-import { contextWindowError } from "./context";
+import { contextBudget, contextWindowError } from "./context";
 import { message, useMonitoringPoll } from "./useMonitoringPoll";
 import { useSessionCommands } from "./useSessionCommands";
 import { ActivityLabels, CoverageTimeline, History, ReplayControls, Result, seconds, sessionName, toneOf } from "./MonitoringViews";
 
 const LIVE_CAPTURE_FPS = 15;
 const LIVE_SPAN_SECONDS = 120;
+
+/** Editable experiment settings of a saved segment; older segments never reasoned. */
+function savedExperiment(configuration: MonitoringSession["configuration"]): ExperimentSettings {
+  return { model: configuration.model, prompt_text: configuration.prompt_text, chain_of_thought: configuration.chain_of_thought ?? false, generation: { ...configuration.generation } };
+}
 
 export function MonitoringReplay({ capabilities }: { capabilities: Capabilities | null }) {
   const source = useSourceSelection(() => {}, () => {});
@@ -24,7 +29,7 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
   const [settingsOpen, setSettingsOpen] = useState(false);
   function hydrate(next: MonitoringSession) {
     setFrames(next.configuration.preprocessing.frames); setFps(next.configuration.preprocessing.fps); setSize(next.configuration.preprocessing.resize);
-    setSettings({ model: next.configuration.model, prompt_text: next.configuration.prompt_text, generation: { ...next.configuration.generation } });
+    setSettings(savedExperiment(next.configuration));
   }
   // `commands` is assigned below, before any poll response can arrive.
   const poll = useMonitoringPoll({ hydrate, recover: next => commands.recover(next) });
@@ -73,12 +78,12 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
   // The summary describes the running segment when a session exists, else the pending form.
   const active = session?.configuration;
   const summarySampling = active ? [active.preprocessing.frames, active.preprocessing.fps, active.preprocessing.resize] as const : [frames, fps, size] as const;
-  const summarySettings = active ? { model: active.model, prompt_text: active.prompt_text, generation: active.generation } : settings;
-  const baseline = isBaselineSampling(...summarySampling) && Boolean(capabilities && summarySettings && isBaselineExperiment(capabilities, summarySettings));
+  const summarySettings = active ? savedExperiment(active) : settings;
+  const preset = capabilities && summarySettings ? matchingPreset(capabilities, summarySettings) : null;
+  const baseline = isBaselineSampling(...summarySampling) && preset !== null;
   // Applying identical settings would only split the session into a needless segment.
   const unchanged = active !== undefined && settings !== null && frames === active.preprocessing.frames && fps === active.preprocessing.fps && size === active.preprocessing.resize
-    && settings.model === active.model && settings.prompt_text === active.prompt_text
-    && settings.generation.temperature === active.generation.temperature && settings.generation.max_tokens === active.generation.max_tokens;
+    && sameExperiment(settings, savedExperiment(active));
   function closeSettings(discard: boolean) {
     setSettingsOpen(false);
     if (!discard) return;
@@ -89,7 +94,8 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
   }
   function resetSettings() {
     setFrames(BASELINE_SAMPLING.frames); setFps(BASELINE_SAMPLING.fps); setSize(BASELINE_SAMPLING.size);
-    if (capabilities) setSettings(baselineExperiment(capabilities));
+    // Keep the chosen strategy and model; restore that preset's prompt and sampling.
+    if (capabilities && settings) setSettings(experimentFromPreset(capabilities, presetFor(capabilities, settings.chain_of_thought), settings.model));
   }
 
   const duration = session?.duration ?? 0;
@@ -106,7 +112,7 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
   const older = () => void poll.older();
   const cameraPreview = capture.stream ? <video className="live-feed" ref={capture.attach} autoPlay muted playsInline /> : <div className="replay-placeholder"><span>Camera off</span><button className="button primary" disabled={busy} onClick={() => void capture.connect()}>Connect camera</button></div>;
   const cameraStatus = !capture.stream ? "off" : session?.state !== "running" ? "connected" : capture.stats.fps === null ? "starting" : `${capture.stats.fps.toFixed(1)} fps · upload lag ${capture.stats.lagSeconds?.toFixed(1) ?? "–"} s`;
-  const summary = <SettingsSummary baseline={baseline} invalid={!session && settings !== null && !configValid} detail={summarySettings ? samplingSummary(...summarySampling) : "Backend settings unavailable"} disabled={!settings} onEdit={() => setSettingsOpen(true)} />;
+  const summary = <SettingsSummary preset={preset && baseline ? preset.title : null} invalid={!session && settings !== null && !configValid} detail={summarySettings ? settingsSummary(...summarySampling, summarySettings.chain_of_thought) : "Backend settings unavailable"} disabled={!settings} onEdit={() => setSettingsOpen(true)} />;
   return <section className="monitoring" aria-label="Monitoring" data-generation={session?.generation}>
     <h1 className="sr-only">Monitoring</h1>
     <div className="session-bar">
@@ -163,23 +169,25 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
       </aside>
     </div>
     <SettingsDialog open={settingsOpen} title={session ? "Session settings" : "Monitoring settings"} onClose={() => closeSettings(true)} footer={<>
-      <button type="button" className="text-button" disabled={busy} onClick={resetSettings}>Reset to thesis baseline</button>
+      <button type="button" className="text-button" disabled={busy} onClick={resetSettings}>Reset to research defaults</button>
       {session
         ? <button type="button" className="button primary" disabled={busy || !connected || !configValid || unchanged} onClick={() => { closeSettings(false); void send({ action: "configure", configuration: configuration(session.video_id) }); }}>Apply new configuration segment</button>
         : <button type="button" className="button primary" onClick={() => closeSettings(false)}>Done</button>}
     </>}>
       {session && <p className="preview-note">Changes apply from now on as a new configuration segment. Earlier predictions keep the settings they were made with.</p>}
-      <section className="settings-section">
-        <h3>Sampling {!isBaselineSampling(frames, fps, size) && <small className="experimental">Experimental</small>}</h3>
+      <SettingsGroup index="01" title="Preprocessing" hint="Which frames each window sends, and how." edited={!isBaselineSampling(frames, fps, size)}>
         <label className="setting-row"><span>Frames</span><input aria-label="Monitoring frames" type="number" value={frames} min="2" max="32" onChange={event => setFrames(Number(event.target.value))} /></label>
         {(live || (!id && sourceMode === "camera")) && <div className="setting-row"><span>Capture FPS</span><strong>{captureFps}</strong></div>}
         <label className="setting-row"><span>Sampling FPS</span><input aria-label="Monitoring FPS" type="number" value={fps} min="0.1" max={maxFps} step="0.1" onChange={event => setFps(Number(event.target.value))} /></label>
         <label className="setting-row"><span>Crop size</span><select aria-label="Monitoring crop" value={size} onChange={event => setSize(Number(event.target.value))}><option value={224}>224 × 224</option><option value={448}>448 × 448</option><option value={672}>672 × 672</option></select></label>
         <div className="setting-row"><span>Window length</span><strong>{((frames - 1) / fps).toFixed(2)} s</strong></div>
-      </section>
-      {capabilities && settings && <ExperimentControls capabilities={capabilities} settings={settings} busy={busy} onChange={setSettings} />}
-      {settings && !settingsValid && <p className="error-message" role="alert">Use 2–32 frames, a sampling FPS above 0 and up to {maxFps}, a window of at most 30 s, a nonblank prompt, temperature from 0 to 2, and an integer token limit from {minTokens} to {maxTokens}.</p>}
-      {contextError && <p className="error-message" role="alert">{contextError}</p>}
+      </SettingsGroup>
+      {capabilities && settings && <>
+        <ExperimentSettingsGroup capabilities={capabilities} settings={settings} busy={busy} onChange={setSettings} />
+        <SamplingSettingsGroup capabilities={capabilities} settings={settings} busy={busy} onChange={setSettings}
+          budget={contextBudget(capabilities, frames, size, settings.prompt_text, settings.generation.max_tokens)} contextError={contextError} />
+      </>}
+      {settings && !settingsValid && <p className="error-message" role="alert">Use 2–32 frames, a sampling FPS above 0 and up to {maxFps}, a window of at most 30 s, a nonblank prompt, temperature from 0 to 2, top-p above 0 and up to 1, top-k of −1 or 1–1000, a non-negative integer seed, and an integer token limit from {minTokens} to {maxTokens}.</p>}
       {session && <section className="settings-section">
         <h3>Running segment</h3>
         <div className="setting-row"><span>Generation · segment</span><strong>{session.generation} · {session.segment_id.slice(0, 8)}</strong></div>

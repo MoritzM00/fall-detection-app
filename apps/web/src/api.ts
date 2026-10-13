@@ -42,7 +42,7 @@ export type AnalysisJob = {
   error: string | null;
   created_at: string;
   updated_at: string;
-  configuration: { model: string; prompt_preset: string; prompt_text: string; backend_kind: string; fixture_version: string | null; preprocessing: { frames: number; fps: number; resize: number; crop: string; bundle_sha256?: string | null }; generation: GenerationSettings } | null;
+  configuration: { model: string; prompt_preset: string; prompt_text: string; chain_of_thought?: boolean; backend_kind: string; fixture_version: string | null; preprocessing: { frames: number; fps: number; resize: number; crop: string; bundle_sha256?: string | null }; generation: GenerationSettings } | null;
   prediction: Prediction | null;
 };
 
@@ -58,9 +58,11 @@ export type PreparedInput = {
   frames: { index: number; requested_seconds: number; actual_seconds: number; sha256: string }[];
 };
 
-export type GenerationSettings = { temperature: number; max_tokens: number };
-export type ExperimentSettings = { model: string; prompt_text: string; generation: GenerationSettings };
-export type Capabilities = { labels: string[]; backend_kind: string; simulated: boolean; inference_host?: string | null; inference_encrypted?: boolean; models: string[]; prompt_preset: { id: string; prompt: string }; generation: GenerationSettings; generation_limits: { min_max_tokens: number; max_max_tokens: number }; serving_limits?: { max_model_len: number | null } };
+/** LLM sampling; a null or missing optional value was left to the server's default. */
+export type GenerationSettings = { temperature: number; max_tokens: number; top_p?: number | null; top_k?: number | null; seed?: number | null };
+export type ExperimentSettings = { model: string; prompt_text: string; chain_of_thought: boolean; generation: GenerationSettings };
+export type PromptPreset = { id: string; title: string; description: string; prompt: string; chain_of_thought: boolean; generation: GenerationSettings };
+export type Capabilities = { labels: string[]; backend_kind: string; simulated: boolean; inference_host?: string | null; inference_encrypted?: boolean; models: string[]; prompt_presets: PromptPreset[]; generation_limits: { min_max_tokens: number; max_max_tokens: number }; serving_limits?: { max_model_len: number | null } };
 
 export class ApiError extends Error {
   status: number;

@@ -24,7 +24,7 @@ These defaults may change based on implementation evidence.
 ## Open during implementation
 
 - Extended scripted mock scenarios and monitoring fixtures beyond fixed labels/delays and boundary tests.
-- Research reference clips and verification of prompt/preprocessing/inference parity. The local named prompt defaults to temperature 0 and max tokens 32; naming alone is not evidence of research equivalence.
+- Research reference clips and verification of prompt/preprocessing/inference parity. The prompt presets reproduce the research builder text and sampling values exactly, but message order and server-side sampling defaults still differ (see [research baseline](research-baseline.md)); matching text is not evidence of equivalent predictions.
 - Evidence for workloads beyond the generated-media preparation benchmark envelope. Current formats are MP4/MOV/WebM/MKV; uploads default to 512 MiB and selected windows to 30 seconds.
 
 The local process arrangement, repository home, API isolation, bounded preparation, retention command, leases/retries, browser coverage, and prompt/generation editing with saved-run comparison are implemented. PostgreSQL and status events remain proposed. Custom prompts retain all 16 output labels at the parser boundary; processing failures never become `other`.

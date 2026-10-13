@@ -1,7 +1,7 @@
 """One input and configuration to one validated activity prediction.
 
-Covers the label taxonomy, the thesis prompt, deterministic frame sampling, the
-vLLM-compatible HTTP transport, and answer parsing. This module must not depend on
+Covers the label taxonomy, deterministic frame sampling, the vLLM-compatible HTTP
+transport, and answer parsing. Prompt text lives in ``fall_detection.prompts``. This module must not depend on
 web routes, database models, or the frontend; persistence belongs to the application.
 """
 
@@ -55,17 +55,6 @@ ACTIVITY_LABELS: tuple[ActivityLabel, ...] = (
 )
 
 
-THESIS_BASELINE_PROMPT = """You are given a short video clip showing one primary human activity.
-Classify the action in the first part of the clip using exactly one label from:
-walk, fall, fallen, sit_down, sitting, lie_down, lying, stand_up, standing,
-other, kneel_down, kneeling, squat_down, squatting, crawl, jump.
-
-Account for the fact that adjacent clips may overlap. Respond only in this format:
-The best answer is: <class_label>"""
-
-PRESET_ID = "thesis-baseline-v1"
-
-
 _ANSWER_PATTERN = re.compile(r"^\s*The best answer is:\s*([a-z_]+)\s*$")
 
 
@@ -73,8 +62,34 @@ class PredictionParseError(ValueError):
     """Raised when generated text is not one unambiguous canonical label."""
 
 
-def parse_activity_label(raw_response: str, *, allow_bare_label: bool = False) -> ActivityLabel:
-    """Parse a fixed-format answer or an explicitly allowed single canonical label."""
+def final_answer(raw_response: str) -> str:
+    """Return the last nonblank line after any reasoning, which must hold the answer.
+
+    Proposed application behavior, stricter than the research CoT parser: reasoning is
+    either enclosed in think tags (the opening tag may come from the chat template) or
+    written as plain text before the answer, and only the final line is parsed. The
+    research parser instead searches the text for a label and falls back to ``other``.
+    """
+    text = raw_response
+    if "</think>" in text:
+        text = text.rpartition("</think>")[2]
+    elif "<think>" in text:
+        raise PredictionParseError("reasoning was not closed before the answer")
+    lines = [line for line in text.splitlines() if line.strip()]
+    if not lines:
+        raise PredictionParseError("response contains no final answer after its reasoning")
+    return lines[-1]
+
+
+def parse_activity_label(
+    raw_response: str, *, allow_bare_label: bool = False, chain_of_thought: bool = False
+) -> ActivityLabel:
+    """Parse a fixed-format answer or an explicitly allowed single canonical label.
+
+    With ``chain_of_thought`` only the final answer line after the reasoning is parsed.
+    """
+    if chain_of_thought:
+        raw_response = final_answer(raw_response)
     match = _ANSWER_PATTERN.fullmatch(raw_response)
     if match is None:
         candidate = raw_response.strip()
@@ -273,6 +288,7 @@ def build_inference_payload(
     generation: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the online video request shared by mock and vLLM serving."""
+    settings = generation or {}
     payload = {
         "model": model,
         "messages": [
@@ -284,10 +300,14 @@ def build_inference_payload(
                 ],
             }
         ],
-        "temperature": (generation or {}).get("temperature", 0),
-        "max_tokens": (generation or {}).get("max_tokens", 32),
+        "temperature": settings.get("temperature", 0),
+        "max_tokens": settings.get("max_tokens", 32),
         "stream": False,
     }
+    # An omitted sampling value leaves the server default in place, as in older runs.
+    payload.update(
+        {key: settings[key] for key in ("top_p", "top_k", "seed") if settings.get(key) is not None}
+    )
     if video_metadata is not None:
         payload["media_io_kwargs"] = {"video": video_metadata}
     return payload
@@ -300,12 +320,13 @@ def run_pipeline(
     video_data_url: str,
     start_seconds: float,
     end_seconds: float,
-    prompt: str = THESIS_BASELINE_PROMPT,
+    prompt: str,
     sampled_timestamps: list[float] | None = None,
     video_metadata: dict[str, Any] | None = None,
     generation: dict[str, Any] | None = None,
     frame_count: int = 16,
     allow_bare_label: bool = False,
+    chain_of_thought: bool = False,
 ) -> PipelineResult:
     """Execute one traceable prediction from selected input to validated label."""
     total_started = perf_counter()
@@ -318,7 +339,9 @@ def run_pipeline(
     request_started = perf_counter()
     response = client.complete(payload)
     request_duration_ms = (perf_counter() - request_started) * 1000
-    label = parse_activity_label(response.content, allow_bare_label=allow_bare_label)
+    label = parse_activity_label(
+        response.content, allow_bare_label=allow_bare_label, chain_of_thought=chain_of_thought
+    )
     total_duration_ms = (perf_counter() - total_started) * 1000
     return PipelineResult(
         label=label,

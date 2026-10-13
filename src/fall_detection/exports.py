@@ -89,12 +89,19 @@ def saved_configuration(value: dict) -> dict:
     """Keep saved inference fields and missing legacy fields without runtime defaults."""
     result = {
         name: value[name]
-        for name in ("model", "prompt_preset", "prompt_text", "backend_kind", "fixture_version")
+        for name in (
+            "model",
+            "prompt_preset",
+            "prompt_text",
+            "chain_of_thought",
+            "backend_kind",
+            "fixture_version",
+        )
         if name in value
     }
     for group, names in (
         ("preprocessing", "frames fps resize crop version bundle_sha256"),
-        ("generation", "temperature max_tokens"),
+        ("generation", "temperature max_tokens top_p top_k seed"),
     ):
         if group in value:
             result[group] = {
@@ -127,8 +134,10 @@ class ExperimentExports:
         ).fetchone()
         result["configuration"] = fields(
             config,
-            "id schema_version model prompt_preset prompt_text created_at backend_kind fixture_version",
+            "id schema_version model prompt_preset prompt_text chain_of_thought created_at backend_kind fixture_version",
         )
+        # SQLite stores the flag as 0/1; segment exports and the API give a boolean.
+        result["configuration"]["chain_of_thought"] = bool(config["chain_of_thought"])
         result["configuration"]["preprocessing"] = saved_configuration(
             {"preprocessing": json.loads(config["preprocessing_json"])}
         )["preprocessing"]

@@ -285,6 +285,10 @@ def test_concurrent_initialization_preserves_legacy_running_job(tmp_path: Path, 
     assert job.configuration.backend_kind == "unknown"
     assert job.configuration.model == "old-model"
     assert job.configuration.generation.max_tokens == 32
+    # Older runs neither reasoned nor recorded the sampling values left to the server.
+    assert job.configuration.chain_of_thought is False
+    assert job.configuration.generation.top_p is None
+    assert job.configuration.generation.seed is None
     with sqlite3.connect(database) as connection:
         columns = {row[1] for row in connection.execute("PRAGMA table_info(predictions)")}
     assert {"prompt_tokens", "completion_tokens"} <= columns

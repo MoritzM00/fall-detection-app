@@ -76,6 +76,9 @@ class ChatCompletionRequest(BaseModel):
     messages: list[dict[str, Any]] = Field(min_length=1)
     temperature: float = Field(default=0, ge=0, le=2, allow_inf_nan=False)
     max_tokens: int = Field(default=32, gt=0)
+    top_p: float | None = Field(default=None, gt=0, le=1, allow_inf_nan=False)
+    top_k: int | None = Field(default=None, ge=-1)
+    seed: int | None = None
     stream: bool = False
 
 

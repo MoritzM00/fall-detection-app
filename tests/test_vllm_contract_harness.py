@@ -5,11 +5,12 @@ import json
 import httpx
 import pytest
 
-from fall_detection.prediction import THESIS_BASELINE_PROMPT, InferenceServiceError
+from fall_detection.prediction import InferenceServiceError
+from fall_detection.prompts import ZERO_SHOT
 from scripts.validate_vllm_contract import _server_identity, validate
 
 
-@pytest.mark.parametrize("prompt", [THESIS_BASELINE_PROMPT, "Custom smoke-test prompt"])
+@pytest.mark.parametrize("prompt", [ZERO_SHOT.prompt, "Custom smoke-test prompt"])
 def test_validator_exercises_success_and_failure_without_gpu(route_inference, prompt) -> None:
     def handler(request):
         if request.url.path == "/version":
@@ -31,9 +32,7 @@ def test_validator_exercises_success_and_failure_without_gpu(route_inference, pr
     report = validate(
         "https://gpu.example/v1", "served-model", "fixture-processor", 1, prompt_text=prompt
     )
-    assert report["prompt_preset"] == (
-        "thesis-baseline-v1" if prompt == THESIS_BASELINE_PROMPT else "custom"
-    )
+    assert report["prompt_preset"] == (ZERO_SHOT.id if prompt == ZERO_SHOT.prompt else "custom")
     assert report["request_exact_jpegs_and_metadata"] is True
     assert report["timestamp_count"] == 16
     assert report["result_label"] == "walk"

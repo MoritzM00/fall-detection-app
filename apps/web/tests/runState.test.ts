@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { AnalysisJob } from "../src/api";
-import { activeJobs, fpsForEnd, mergeHistory, runName, submittedEnd, upsertJob } from "../src/runState.ts";
+import { activeJobs, fpsForEnd, mergeHistory, runName, splitReasoning, submittedEnd, upsertJob } from "../src/runState.ts";
 
 function job(id: string, state: AnalysisJob["state"]): AnalysisJob {
   return { id, state } as AnalysisJob;
@@ -41,4 +41,12 @@ test("run names show the outcome and window instead of raw identifiers", () => {
   assert.match(runName(done), / · sit down · 0\.0–2\.0 s$/);
   assert.doesNotMatch(runName(done), /run-id/);
   assert.equal(runName(failed), "not a date · failed · 0.0–2.0 s");
+});
+
+test("chain-of-thought responses split into reasoning and the final answer line", () => {
+  assert.deepEqual(splitReasoning("Drops fast.\nNo bracing.\n\nThe best answer is: fall\n"), { reasoning: "Drops fast.\nNo bracing.", answer: "The best answer is: fall" });
+  assert.deepEqual(splitReasoning("<think>Drops fast.</think>\nThe best answer is: fall"), { reasoning: "Drops fast.", answer: "The best answer is: fall" });
+  assert.deepEqual(splitReasoning("Drops fast.\n</think>\nThe best answer is: fall"), { reasoning: "Drops fast.", answer: "The best answer is: fall" });
+  assert.deepEqual(splitReasoning("The best answer is: walk"), { reasoning: "", answer: "The best answer is: walk" });
+  assert.deepEqual(splitReasoning("  \n"), { reasoning: "", answer: "" });
 });

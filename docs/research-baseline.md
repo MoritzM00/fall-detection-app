@@ -21,6 +21,26 @@ These remain external read-only references for this work. No research source or 
 
 The generic model YAML defaults to 2B; product configuration must explicitly select 8B. Configuration defaults are not proof of the exact settings used in any particular saved experiment or adapter.
 
+## Prompt presets
+
+Inspected on 2026-10-13. `src/fall_detection/prompts.py` copies the component text from `src/falldet/inference/prompts/components.py` and assembles it in the order of `PromptBuilder.build_prompt` (`builder.py`): role, task, optional clip-overlap note, bulleted labels in `label2idx` order, optional chain-of-thought instruction, text output format.
+
+| App preset | Research configuration | Verified |
+| --- | --- | --- |
+| `research-zeroshot-v1` | `config/prompt/default.yaml` with `config/sampling/qwen3_instruct.yaml` (temperature 0, top-p 0.8, top-k 20, max tokens 64, seed 0) | Prompt byte-identical to `PromptBuilder.build_prompt()` output; sampling values equal |
+| `research-zeroshot-cot-v1` | `config/prompt/cot.yaml` (overlap note off, CoT instruction on) with `config/sampling/qwen3_thinking.yaml` (temperature 0.5, top-p 0.95, top-k 20, max tokens 4096, seed 0), as selected by `config/experiment/zeroshot_cot.yaml` | Prompt byte-identical; sampling values equal |
+
+Both research sampling configs also set presence and frequency penalty 0 and repetition penalty 1.0. These are neutral values, so the app does not send them.
+
+Known differences that remain unverified:
+
+- **Message order.** The research zero-shot turn sends the video before the prompt text (`conversation.py`). The app sends the text first, then the video, as before. Changing the order would also change every custom run, so it is left for a deliberate, recorded change.
+- **Server defaults.** Research passes complete `SamplingParams` to offline vLLM. The app talks to the OpenAI-compatible server, which may fill unsent parameters, such as the repetition penalty, from the model's `generation_config.json`.
+- **CoT parsing.** Research `CoTOutputParser` searches the text after the reasoning for an answer phrase or any label and falls back to `other`. The app parses only the final line and fails the run otherwise (see [contracts](contracts.md#model-boundary)).
+- **Context window.** The CoT preset's 4,096 output tokens exceed the deployed `--max-model-len` of 5,120 at 16 × 448 (see [vLLM live validation](vllm-live-validation.md)).
+
+The previous app default, `thesis-baseline-v1`, was a paraphrase of these components rather than the builder output. Runs saved with it keep that preset ID and its prompt text.
+
 ## Taxonomy
 
 `walk`, `fall`, `fallen`, `sit_down`, `sitting`, `lie_down`, `lying`, `stand_up`, `standing`, `other`, `kneel_down`, `kneeling`, `squat_down`, `squatting`, `crawl`, `jump`.

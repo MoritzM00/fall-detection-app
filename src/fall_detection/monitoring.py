@@ -9,7 +9,7 @@ from uuid import uuid4
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from fall_detection.models import GenerationConfiguration, RunConfiguration, SamplingConfiguration
-from fall_detection.prediction import PRESET_ID, THESIS_BASELINE_PROMPT
+from fall_detection.prompts import default_preset, preset_id
 from fall_detection.repository import Repository
 from fall_detection.scheduling import LifecycleReason, ReplayScheduler
 
@@ -23,6 +23,7 @@ class SessionConfiguration(BaseModel):
     size: int = Field(default=448, ge=224, le=672)
     model: str | None = Field(default=None, min_length=1)
     prompt_text: str | None = Field(default=None, min_length=1, max_length=16000)
+    chain_of_thought: bool = False
     generation: GenerationConfiguration | None = None
 
     @field_validator("prompt_text")
@@ -142,17 +143,19 @@ class Monitoring(ReplayScheduler):
         if backend not in {"mock", "vllm"}:
             raise ValueError("Unsupported monitoring backend")
         serving_backend: Literal["mock", "vllm"] = "mock" if backend == "mock" else "vllm"
-        prompt = request.prompt_text or THESIS_BASELINE_PROMPT
+        preset = default_preset(request.chain_of_thought)
+        prompt = request.prompt_text or preset.prompt
         return RunConfiguration(
             model=model,
             backend_kind=serving_backend,
             fixture_version=fixture,
-            prompt_preset=PRESET_ID if prompt == THESIS_BASELINE_PROMPT else "custom",
+            prompt_preset=preset_id(prompt, request.chain_of_thought),
             prompt_text=prompt,
+            chain_of_thought=request.chain_of_thought,
             preprocessing=SamplingConfiguration(
                 frames=request.frame_count, fps=request.fps, resize=request.size
             ),
-            generation=request.generation or GenerationConfiguration(temperature=0, max_tokens=32),
+            generation=request.generation or preset.generation,
         )
 
     def create(

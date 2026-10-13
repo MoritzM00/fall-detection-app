@@ -15,10 +15,10 @@ from fall_detection.config import Settings
 from fall_detection.models import PreparationRequest
 from fall_detection.prediction import (
     ACTIVITY_LABELS,
-    THESIS_BASELINE_PROMPT,
     same_origin_client,
 )
 from fall_detection.preparation import prepare_video, to_vllm_jpeg_data_url
+from fall_detection.prompts import default_preset
 from fall_detection.repository import Repository
 
 
@@ -65,7 +65,7 @@ def validate(
     processor_version: str,
     timeout: float,
     *,
-    prompt_text: str = THESIS_BASELINE_PROMPT,
+    prompt_text: str = default_preset().prompt,
 ) -> dict:
     """Verify actual request bytes, accepted response, provenance, and failure state."""
     vllm_version, served_models = _server_identity(
@@ -222,7 +222,7 @@ def main() -> None:
                 prompt_text=(
                     args.prompt_file.read_text(encoding="utf-8")
                     if args.prompt_file
-                    else THESIS_BASELINE_PROMPT
+                    else default_preset().prompt
                 ),
             ),
             indent=2,

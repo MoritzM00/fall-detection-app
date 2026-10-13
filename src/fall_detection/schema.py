@@ -13,7 +13,7 @@ from fall_detection.models import (
     VideoAsset,
 )
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 def enable_wal(connection: sqlite3.Connection) -> None:
@@ -130,6 +130,11 @@ def migrate(connection: sqlite3.Connection, timestamp: str) -> None:
         )
     if "fixture_version" not in config_columns:
         connection.execute("ALTER TABLE configurations ADD COLUMN fixture_version TEXT")
+    # Earlier runs all expected the answer alone, without reasoning before it.
+    if "chain_of_thought" not in config_columns:
+        connection.execute(
+            "ALTER TABLE configurations ADD COLUMN chain_of_thought INTEGER NOT NULL DEFAULT 0"
+        )
     prediction_columns = {
         row["name"] for row in connection.execute("PRAGMA table_info(predictions)")
     }
@@ -207,7 +212,8 @@ def _migrate_monitoring(connection: sqlite3.Connection) -> None:
 # Row decoding lives beside the table layout: adding a column changes both together.
 # One read statement returns a job with its configuration snapshot and result.
 JOB_SELECT = """SELECT j.*, c.model AS c_model, c.prompt_preset AS c_prompt_preset,
-    c.prompt_text AS c_prompt_text, c.preprocessing_json AS c_preprocessing_json,
+    c.prompt_text AS c_prompt_text, c.chain_of_thought AS c_chain_of_thought,
+    c.preprocessing_json AS c_preprocessing_json,
     c.generation_json AS c_generation_json, c.backend_kind AS c_backend_kind,
     c.fixture_version AS c_fixture_version, p.id AS p_id, p.label AS p_label,
     p.raw_response AS p_raw_response, p.sampled_timestamps_json AS p_sampled_timestamps_json,
@@ -263,6 +269,7 @@ def configuration_from_row(row: sqlite3.Row, prefix: str = "") -> RunConfigurati
         model=row[f"{prefix}model"],
         prompt_preset=row[f"{prefix}prompt_preset"],
         prompt_text=row[f"{prefix}prompt_text"],
+        chain_of_thought=bool(row[f"{prefix}chain_of_thought"]),
         preprocessing=SamplingConfiguration.model_validate(preprocessing),
         generation=GenerationConfiguration.model_validate_json(row[f"{prefix}generation_json"]),
         backend_kind=row[f"{prefix}backend_kind"],
