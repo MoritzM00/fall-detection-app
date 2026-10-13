@@ -81,6 +81,7 @@ Open **<http://localhost:5173>**, pick the synthetic sample or a local video, an
 | `FALL_DETECTION_INFERENCE_BASE_URL` | Base URL of the vLLM server |
 | `FALL_DETECTION_INFERENCE_API_KEY` | Bearer token for a vLLM server started with `--api-key` |
 | `FALL_DETECTION_INFERENCE_PROXY_KEY` / `_SECRET` | Modal proxy auth token for the [Modal GPU endpoint](deploy/README.md#modal-gpu-endpoint) |
+| `FALL_DETECTION_ADDITIONAL_MODELS` | JSON naming models served next to the default one, each on its own endpoint: `{"<model>": {"base_url": "…", "modal_function": "…", "thinking": true}}`. vLLM backend only |
 | `FALL_DETECTION_MODAL_APP` | Modal app name; enables the [GPU status badge](deploy/README.md#gpu-status-in-the-web-ui) without waking the GPU |
 | `FALL_DETECTION_MAX_MODEL_LEN` | Served context window (vLLM `--max-model-len`); configurations whose conservative token estimate exceeds it are rejected with 422 at submission |
 

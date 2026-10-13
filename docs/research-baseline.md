@@ -30,6 +30,8 @@ Inspected on 2026-10-13. `src/fall_detection/prompts.py` copies the component te
 | `research-zeroshot-v2` | `config/prompt/default.yaml` with `config/sampling/qwen3_instruct.yaml` (temperature 0, top-p 0.8, top-k 20, max tokens 64, seed 0) | Prompt byte-identical to `PromptBuilder.build_prompt()` output; sampling values equal |
 | `research-zeroshot-cot-v2` | `config/prompt/cot.yaml` (overlap note off, CoT instruction on) with `config/sampling/qwen3_thinking.yaml` (temperature 0.5, top-p 0.95, top-k 20, max tokens 4096, seed 0), as selected by `config/experiment/zeroshot_cot.yaml` | Prompt byte-identical; sampling values equal |
 
+`config/experiment/zeroshot_cot.yaml` keeps the model YAML's `variant: Instruct`; the research code selects Qwen3-VL-Thinking only through an override (`model.variant=Thinking`). The app offers the Thinking model as a separate served model, and either preset can run on it.
+
 Both research sampling configs also set presence and frequency penalty 0 and repetition penalty 1.0. These are neutral values, so the app does not send them.
 
 The app sends the video before the prompt text, as the research zero-shot turn does (`conversation.py`). Configurations saved before this change, including the `-v1` preset IDs, record `video_first: false` and keep sending the text first.
@@ -37,7 +39,7 @@ The app sends the video before the prompt text, as the research zero-shot turn d
 Known differences that remain unverified:
 
 - **Server defaults.** Research passes complete `SamplingParams` to offline vLLM. The app talks to the OpenAI-compatible server, which may fill unsent parameters, such as the repetition penalty, from the model's `generation_config.json`.
-- **Parsing.** The app follows the research answer markers and label word forms, but fails where research would guess: no label (research: `other`) and two different labels (research: the longest). A scratch comparison against `parsers.py` on 6,750 generated responses found no other differences (see [contracts](contracts.md#model-boundary)).
+- **Parsing.** The app follows the research answer markers and label word forms, and sets think-tag reasoning aside with either strategy (research: only with CoT), but fails where research would guess: no label (research: `other`) and two different labels (research: the longest). A scratch comparison against `parsers.py` on 6,750 generated responses found no other differences (see [contracts](contracts.md#model-boundary)).
 
 The previous app default, `thesis-baseline-v1`, was a paraphrase of these components rather than the builder output. Runs saved with it keep that preset ID and its prompt text.
 
