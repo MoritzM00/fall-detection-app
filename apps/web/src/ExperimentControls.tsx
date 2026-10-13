@@ -19,7 +19,7 @@ export function ExperimentSettingsGroup({ capabilities, settings, busy, onChange
   const edited = settings.model !== capabilities.models[0] || !presetPrompt;
   return <SettingsGroup index="02" title="Experiment" hint="Model, prompt strategy and the exact prompt text." edited={edited}>
     <div className="setting-row"><label htmlFor={prefix + "-experiment-model"}>Served model</label><select id={prefix + "-experiment-model"} className="model-select" value={settings.model} disabled={busy} onChange={(event) => onChange(withModel(capabilities, settings, event.target.value))}>
-      {capabilities.models.map((model) => <option key={model} value={model}>{model}{isThinkingModel(capabilities, model) ? " (thinking)" : ""}</option>)}
+      {capabilities.models.map((model) => <option key={model}>{model}</option>)}
     </select></div>
     {thinking && <p className="preview-note thinking-note" role={settings.generation.max_tokens < THINKING_MIN_TOKENS ? "alert" : undefined}>
       This model reasons in a think block before every answer, whichever strategy you pick, so runs take longer and use more tokens.
