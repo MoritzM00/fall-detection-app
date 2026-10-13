@@ -61,8 +61,6 @@ Same L4 deployment and vLLM 0.30.0 with `--max-model-len 8192`; cold start to he
 
 Every response parsed. The chain-of-thought answers reasoned in numbered steps with no think tags and ended with `The best answer is: <label>`; the text before it was saved as the reasoning. One reasoning listed all 16 labels, so reading the label from the whole response, not the answer, would have been ambiguous. A chain-of-thought request at 16 × 672 was rejected with 422 before reaching the GPU (estimate 8,406 tokens). Two clips are not accuracy evidence: the fall the model read as a deliberate `lie_down` is the kind of case research parity work in #41 has to measure.
 
-
-
 ## Qwen3-VL-8B-Thinking run, 2026-10-13
 
 `Qwen/Qwen3-VL-8B-Thinking` served as `qwen3-vl-8b-thinking` from its own Modal function (`serve_thinking`) on a second L4, with the same vLLM settings and no reasoning parser. Its first start, including the weight download, took 464 s; after it scaled down, the next request waited 162 s for a cold start. The app routed runs with this model to its endpoint and runs with the default model to `serve`, and `make gpu-stop` stopped both. Same clips and frames as the chain-of-thought run above.
