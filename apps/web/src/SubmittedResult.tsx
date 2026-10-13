@@ -4,7 +4,7 @@ import type { AnalysisJob, Prediction, VideoAsset } from "./api";
 import { formatTokenUsage } from "./tokens";
 import { samplingSummary } from "./SettingsDialog";
 import { runName } from "./runState";
-import { generationSummary } from "./ExperimentControls";
+import { generationSummary } from "./experimentState";
 
 type Props = {
   jobs: AnalysisJob[];

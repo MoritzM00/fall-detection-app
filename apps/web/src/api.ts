@@ -65,7 +65,7 @@ export type PreparedInput = {
 export type GenerationSettings = { temperature: number; max_tokens: number; top_p?: number | null; top_k?: number | null; seed?: number | null };
 export type ExperimentSettings = { model: string; prompt_text: string; chain_of_thought: boolean; generation: GenerationSettings };
 export type PromptPreset = { id: string; title: string; description: string; prompt: string; chain_of_thought: boolean; generation: GenerationSettings };
-export type Capabilities = { labels: string[]; backend_kind: string; simulated: boolean; inference_host?: string | null; inference_encrypted?: boolean; models: string[]; prompt_presets: PromptPreset[]; generation_limits: { min_max_tokens: number; max_max_tokens: number }; serving_limits?: { max_model_len: number | null } };
+export type Capabilities = { labels: string[]; backend_kind: string; simulated: boolean; inference_host?: string | null; inference_encrypted?: boolean; models: string[]; thinking_models?: string[]; prompt_presets: PromptPreset[]; generation_limits: { min_max_tokens: number; max_max_tokens: number }; serving_limits?: { max_model_len: number | null } };
 
 export class ApiError extends Error {
   status: number;
@@ -110,16 +110,22 @@ export type ServingStatus = {
   warmup: { state: "idle" | "warming" | "ready" | "failed"; seconds: number | null; error: string | null };
 };
 
-export function getServingStatus(): Promise<ServingStatus> {
-  return request("/serving-status");
+/** Each served model has its own GPU endpoint; omitting the model means the default one. */
+function servingPath(path: string, model?: string): string {
+  return model ? `${path}?model=${encodeURIComponent(model)}` : path;
 }
 
-export function warmUpServing(): Promise<ServingStatus> {
-  return request("/serving-status/warmup", { method: "POST" });
+export function getServingStatus(model?: string): Promise<ServingStatus> {
+  return request(servingPath("/serving-status", model));
 }
 
-export function shutDownServing(): Promise<ServingStatus> {
-  return request("/serving-status/shutdown", { method: "POST" });
+export function warmUpServing(model?: string): Promise<ServingStatus> {
+  return request(servingPath("/serving-status/warmup", model), { method: "POST" });
+}
+
+/** Stops every model's GPU: they share one Modal app. */
+export function shutDownServing(model?: string): Promise<ServingStatus> {
+  return request(servingPath("/serving-status/shutdown", model), { method: "POST" });
 }
 
 export function listDatasetVideos(): Promise<DatasetVideoOption[]> {

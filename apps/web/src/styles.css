@@ -46,6 +46,7 @@ button:disabled { cursor: not-allowed; }
 .mode-tabs button:disabled { color: var(--faint); }
 .mode-tabs small { margin-left: 6px; padding: 1px 6px; border-radius: 99px; background: rgba(22, 32, 44, .07); font-size: 11px; font-weight: 500; }
 .system-state { justify-self: end; display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+.serving-badges { justify-self: end; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px 16px; min-width: 0; }
 .system-state i { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px rgba(46, 158, 106, .16); }
 .system-state.offline i, .system-state.serving-alert i { background: var(--alert); box-shadow: 0 0 0 3px rgba(214, 57, 43, .16); }
 .system-state.serving-busy i { background: var(--amber); box-shadow: 0 0 0 3px rgba(214, 140, 30, .18); animation: serving-pulse 1.4s ease-in-out infinite; }
@@ -150,6 +151,7 @@ button:disabled { cursor: not-allowed; }
 .mini-figure { position: absolute; width: 3px; height: 30%; left: 57%; top: 39%; border-radius: 4px; background: #e8edf2; transform-origin: 50% 80%; }
 .mini-figure::before { content: ""; position: absolute; width: 6px; height: 6px; border-radius: 50%; left: -1.5px; top: -7px; background: #e8edf2; }
 .preview-note { margin: 12px 0 0; color: var(--muted); font-size: 13px; }
+.thinking-note { margin: 8px 0 4px; padding: 8px 10px; border-radius: 8px; background: var(--amber-soft); color: var(--amber-ink); }
 
 /* Analysis settings */
 .setting-row { border-top: 1px solid var(--line); min-height: 52px; padding: 8px 0; display: flex; justify-content: space-between; align-items: center; gap: 20px; font-size: 14px; }
