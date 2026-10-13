@@ -38,7 +38,7 @@ test("run names show the outcome and window instead of raw identifiers", () => {
   const base = { id: "run-id", created_at: "2026-10-12T16:26:18Z", start_seconds: 0, end_seconds: 2 };
   const done = { ...base, state: "succeeded", prediction: { label: "sit_down" } } as AnalysisJob;
   const failed = { ...base, state: "failed", prediction: null, created_at: "not a date" } as AnalysisJob;
-  assert.match(runName(done), / · sit down · 0\.0–2\.0 s$/);
+  assert.match(runName(done), /, sit down, 0\.0–2\.0 s$/);
   assert.doesNotMatch(runName(done), /run-id/);
-  assert.equal(runName(failed), "not a date · failed · 0.0–2.0 s");
+  assert.equal(runName(failed), "not a date, failed, 0.0–2.0 s");
 });

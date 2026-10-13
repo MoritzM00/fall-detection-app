@@ -64,7 +64,7 @@ export function SubmittedResult({
     {activeJob && <p className="job-status" role="status">{activeJob.state === "queued" ? "A submitted clip is queued for analysis." : activeJob.configuration?.backend_kind === "mock" ? "Generating a simulated result…" : "Analyzing prepared frames…"}</p>}
 
     {!job && <div className="result-placeholder"><p>{currentVideo?.source === "synthetic" && !simulated ? "Choose a real video for online vLLM analysis." : currentVideo ? "Check the window and frames, then run the analysis." : "The result appears here after you run an analysis."}</p></div>}
-    {job && <p className="result-source">Submitted source: {jobVideo?.id === job.video_id ? jobVideo.filename : job.video_id} · {job.start_seconds.toFixed(3)}–{job.end_seconds.toFixed(3)} s</p>}
+    {job && <p className="result-source">Submitted source: {jobVideo?.id === job.video_id ? jobVideo.filename : job.video_id}, {job.start_seconds.toFixed(3)}–{job.end_seconds.toFixed(3)} s</p>}
 
     {job?.state === "failed" && <div className="result-card failure" role="alert"><span>Processing failed</span><p>{job.error}</p><button className="button secondary" onClick={() => retryJob(job.id).then(onRecord).catch((cause) => onError(cause instanceof Error ? cause.message : "Could not retry run"))} disabled={Boolean(activeJob)}>Retry run</button></div>}
 

@@ -50,14 +50,14 @@ test("uploaded frames and submitted result survive source and sampling changes",
   await expect(page.locator(".frame-strip figcaption").last()).toHaveText("1.750s");
 
   await page.locator(".analyze-button").click();
-  await expect(page.getByText(/Submitted source: clip.mp4 · 0.000–1.750 s/)).toBeVisible();
+  await expect(page.getByText(/Submitted source: clip.mp4, 0.000–1.750 s/)).toBeVisible();
   await page.getByRole("button", { name: "Change source" }).click();
   await page.getByRole("button", { name: "Use sample clip" }).click();
   await editSettings(page, () => page.getByLabel("Frames", { exact: true }).fill("4"));
-  await expect(page.getByText(/Submitted source: clip.mp4 · 0.000–1.750 s/)).toBeVisible();
+  await expect(page.getByText(/Submitted source: clip.mp4, 0.000–1.750 s/)).toBeVisible();
   await expect(page.locator(".result-card .result-label")).toHaveText("fall", { timeout: 20_000 });
   await page.reload();
-  await expect(page.getByText(/Submitted source: clip.mp4 · 0.000–1.750 s/)).toBeVisible();
+  await expect(page.getByText(/Submitted source: clip.mp4, 0.000–1.750 s/)).toBeVisible();
   await expect(page.locator(".result-card .result-label")).toHaveText("fall");
 });
 

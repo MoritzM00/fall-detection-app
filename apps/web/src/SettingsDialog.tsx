@@ -8,11 +8,11 @@ export function isBaselineSampling(frames: number, fps: number, size: number): b
 }
 
 export function samplingSummary(frames: number, fps: number, size: number): string {
-  return `${frames} frames · ${Number(fps.toFixed(2))} fps · ${size} px`;
+  return `${frames} frames, ${Number(fps.toFixed(2))} fps, ${size} px`;
 }
 
 export function settingsSummary(frames: number, fps: number, size: number, chainOfThought: boolean): string {
-  return `${samplingSummary(frames, fps, size)} · ${chainOfThought ? "chain of thought" : "zero-shot"}`;
+  return `${samplingSummary(frames, fps, size)}, ${chainOfThought ? "chain of thought" : "zero-shot"}`;
 }
 
 type SummaryProps = {

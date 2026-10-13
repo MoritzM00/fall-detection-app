@@ -19,7 +19,7 @@ export function toneOf(state: string, job?: AnalysisJob): Tone {
 
 export function sessionName(item: MonitoringSession) {
   const created = item.created_at ? new Date(item.created_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : item.id.slice(0, 8);
-  return `${created} · ${item.state} · ${item.id.slice(0, 8)}`;
+  return `${created} (${item.state}, ${item.id.slice(0, 8)})`;
 }
 
 type ControlsProps = {
@@ -48,14 +48,15 @@ export function History({ windows, jobs, session, more, onLoadOlder }: HistoryPr
       const job = window.job_id ? jobs[window.job_id] : undefined;
       const state = job?.state ?? window.state;
       const historical = window.generation !== session.generation || window.segment_id !== session.segment_id;
+      const notes = [window.reason, historical && "historical"].filter(Boolean);
       return <li key={window.id} className={historical ? "historical" : ""}><details>
         <summary>
           <i data-tone={toneOf(state, job)} aria-hidden="true" />
           <span className="history-range">{seconds(window.start_seconds)}–{seconds(window.end_seconds)}</span>
-          <span className="history-meta">{state}{window.reason ? ` ${window.reason}` : ""}{historical ? " · historical" : ""}</span>
+          <span className="history-meta">{state}{notes.length > 0 ? ` (${notes.join(", ")})` : ""}</span>
           {job?.prediction && <strong className={isAlert(job) ? "alert" : ""}>{job.prediction.label.replaceAll("_", " ")}</strong>}
         </summary>
-        <p className="preview-note">Generation {window.generation} · window #{window.sequence}{window.sequence_end !== window.sequence ? `–${window.sequence_end}` : ""} · segment {window.segment_id.slice(0, 8)} · {window.reason ?? "No coverage gap recorded"}</p>
+        <p className="preview-note">Generation {window.generation}, window #{window.sequence}{window.sequence_end !== window.sequence ? `–${window.sequence_end}` : ""}, segment {window.segment_id.slice(0, 8)}; {window.reason ?? "no coverage gap recorded"}</p>
         {job && <Result job={job} />}
       </details></li>;
     })}</ul>
@@ -95,7 +96,7 @@ export function Result({ job }: { job: AnalysisJob }) {
   const prediction = job.prediction;
   const completed = prediction ? new Date(prediction.completed_at) : null;
   return <div className="result-card">
-    <div className="result-overline"><span>{job.state === "succeeded" ? "Activity" : `System state: ${job.state}${job.error ? ` · ${job.error}` : ""}`}</span>{prediction?.backend_kind === "mock" && <span>Simulated</span>}</div>
+    <div className="result-overline"><span>{job.state === "succeeded" ? "Activity" : `System state: ${job.state}${job.error ? ` (${job.error})` : ""}`}</span>{prediction?.backend_kind === "mock" && <span>Simulated</span>}</div>
     {prediction && <>
       <strong className={`result-label ${isAlert(job) ? "alert" : ""}`}>{prediction.label.replaceAll("_", " ")}</strong>
       <p className="simulation-note">Describes the first part of the input window.</p>
@@ -108,12 +109,13 @@ export function Result({ job }: { job: AnalysisJob }) {
     </>}
     <details className="result-details"><summary>Details</summary>
       {prediction && <dl>
-        <div><dt>Request · pipeline</dt><dd>{prediction.request_duration_ms.toFixed(0)} ms · {prediction.total_duration_ms.toFixed(0)} ms</dd></div>
+        <div><dt>Request</dt><dd>{prediction.request_duration_ms.toFixed(0)} ms</dd></div>
+        <div><dt>Pipeline</dt><dd>{prediction.total_duration_ms.toFixed(0)} ms</dd></div>
         <div><dt>Tokens</dt><dd>{formatTokenUsage(prediction)}</dd></div>
       </dl>}
       {prediction && <p className="frame-times">Actual frame timestamps: {prediction.sampled_timestamps.map(seconds).join(", ")}</p>}
       {prediction?.backend_kind === "mock" && <p className="simulation-note">Simulated by fixture <span title={prediction.fixture_version ?? undefined}>{shortId(prediction.fixture_version)}</span>. Local timings include the mock's injected delay; they are not GPU throughput measurements.</p>}
-      <p className="raw-response">Job {job.id} · configuration {job.configuration_id} · prepared input {job.prepared_input_id ?? "synthetic"}</p><pre className="saved-prompt">{JSON.stringify(job.configuration, null, 2)}</pre>
+      <p className="raw-response">Job {job.id}, configuration {job.configuration_id}, prepared input {job.prepared_input_id ?? "synthetic"}</p><pre className="saved-prompt">{JSON.stringify(job.configuration, null, 2)}</pre>
     </details>
   </div>;
 }
@@ -148,9 +150,9 @@ export function LatestResult({ job, session, position, live, windows, jobs }: La
     <h2>Last analyzed</h2>
     {job?.prediction && freshness ? <div className="latest-result" data-outdated={freshness.outdated || undefined}>
       <p className="result-age" role="status">{captureStopped
-        ? `No current result · capture stopped; this input ended ${freshness.age.toFixed(1)} s before it`
+        ? `No current result: capture stopped, and this input ended ${freshness.age.toFixed(1)} s before it`
         : freshness.outdated
-        ? `No current result · this one ended ${age(freshness.age)}`
+        ? `No current result: this one ended ${age(freshness.age)}`
         : `Input ended ${age(freshness.age)}`}</p>
       <Result job={job} />
     </div> : <div className="result-placeholder"><p>No prediction yet.</p></div>}

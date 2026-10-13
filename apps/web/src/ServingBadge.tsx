@@ -11,7 +11,7 @@ export function ServingBadge({ model, labelled = false }: { model?: string; labe
   const view = error
     ? { text: "GPU status unavailable", tone: "alert" as const, title: error, canWarm: false, canStop: false }
     : describeServing(status);
-  const prefix = labelled && model ? `${modelLabel(model)} · ` : "";
+  const prefix = labelled && model ? `${modelLabel(model)}: ` : "";
   return <span className={`system-state serving-${view.tone}`} title={`${model ? `${model}: ` : ""}${view.title}`} aria-live="polite">
     <i /> {prefix}{view.text}
     {view.canWarm && <button type="button" className="warm-button" disabled={pending !== null} onClick={warmUp}>{pending === "warmup" ? "Warming…" : "Warm up"}</button>}

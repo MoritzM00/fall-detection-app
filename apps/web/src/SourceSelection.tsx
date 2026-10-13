@@ -51,11 +51,11 @@ export function SourceSelection({
           <label htmlFor="dataset-video">Prepared OmniFall video</label>
           <div>
             <select id="dataset-video" value={selectedDatasetPath} onChange={(event) => onDatasetPathChange(event.target.value)} disabled={busy || datasetVideos.length === 0}>
-              {datasetVideos.map((option) => <option value={option.path} key={option.path}>{option.collection} · {option.subject} · {option.filename}</option>)}
+              {datasetVideos.map((option) => <option value={option.path} key={option.path}>{option.collection} / {option.subject} / {option.filename}</option>)}
             </select>
             <button className="button primary" onClick={onOpenDataset} disabled={busy || !selectedDatasetPath}>Open clip</button>
           </div>
-          <small>{datasetVideos.length > 0 ? `${datasetVideos.length} local videos · folder names are dataset groupings, not predictions` : busy ? "Reading local catalog…" : "No videos available. Try a sample or upload a clip."}</small>
+          <small>{datasetVideos.length > 0 ? `${datasetVideos.length} local videos. Folder names are dataset groupings, not predictions.` : busy ? "Reading local catalog…" : "No videos available. Try a sample or upload a clip."}</small>
         </div>}
         <input ref={fileInput} type="file" accept="video/mp4,video/quicktime,video/webm,video/x-matroska" hidden onChange={(event) => {
           const file = event.currentTarget.files?.[0];
@@ -67,7 +67,7 @@ export function SourceSelection({
         <div className="window-light" />
         <div className="corridor-line left" /><div className="corridor-line right" />
         <div className="figure"><span className="head" /><span className="body" /><span className="leg one" /><span className="leg two" /></div>
-        <span className="scene-label">Synthetic corridor · 0:06</span>
+        <span className="scene-label">Synthetic corridor (0:06)</span>
       </div>}
       {video && video.source !== "synthetic" && previewUrl && <video
         src={previewUrl}
