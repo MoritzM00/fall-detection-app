@@ -94,6 +94,7 @@ def saved_configuration(value: dict) -> dict:
             "prompt_preset",
             "prompt_text",
             "chain_of_thought",
+            "video_first",
             "backend_kind",
             "fixture_version",
         )
@@ -134,10 +135,11 @@ class ExperimentExports:
         ).fetchone()
         result["configuration"] = fields(
             config,
-            "id schema_version model prompt_preset prompt_text chain_of_thought created_at backend_kind fixture_version",
+            "id schema_version model prompt_preset prompt_text chain_of_thought video_first created_at backend_kind fixture_version",
         )
-        # SQLite stores the flag as 0/1; segment exports and the API give a boolean.
-        result["configuration"]["chain_of_thought"] = bool(config["chain_of_thought"])
+        # SQLite stores the flags as 0/1; segment exports and the API give booleans.
+        for flag in ("chain_of_thought", "video_first"):
+            result["configuration"][flag] = bool(config[flag])
         result["configuration"]["preprocessing"] = saved_configuration(
             {"preprocessing": json.loads(config["preprocessing_json"])}
         )["preprocessing"]

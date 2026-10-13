@@ -82,9 +82,9 @@ export function ExperimentSettingsGroup({ capabilities, settings, busy, onChange
     <div className="prompt-label"><label htmlFor={prefix + "-prompt-text"}>Resolved prompt</label><span>{presetPrompt ? presetPrompt.id : `Custom · based on ${strategy.title.toLowerCase()}`}</span></div>
     <textarea id={prefix + "-prompt-text"} rows={10} maxLength={16000} spellCheck={false} value={settings.prompt_text} disabled={busy} onChange={(event) => onChange({ ...settings, prompt_text: event.target.value })} />
     <p className="preview-note">{settings.chain_of_thought
-      ? <>This exact text is sent with the frames. The model reasons first; its last line must read “The best answer is: &lt;class_label&gt;”, or the run fails.</>
-      : <>This exact text is sent with the frames. The answer must read “The best answer is: &lt;class_label&gt;”; custom prompts may also return a single label. Anything else fails the run.</>}
-      {" "}The 16 activity labels stay fixed.</p>
+      ? <>This exact text follows the frames. The model reasons first; the label is read from its answer after “The best answer is:” or “Final answer:”.</>
+      : <>This exact text follows the frames. The label is read after “The best answer is:”, or from the whole reply without it.</>}
+      {" "}An answer that names no label, or several, fails the run. The 16 activity labels stay fixed.</p>
   </SettingsGroup>;
 }
 

@@ -13,7 +13,7 @@ from fall_detection.models import (
     VideoAsset,
 )
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 
 def enable_wal(connection: sqlite3.Connection) -> None:
@@ -82,7 +82,9 @@ def migrate(connection: sqlite3.Connection, timestamp: str) -> None:
             total_duration_ms REAL NOT NULL,
             completed_at TEXT NOT NULL,
             prompt_tokens INTEGER,
-            completion_tokens INTEGER
+            completion_tokens INTEGER,
+            reasoning TEXT,
+            answer TEXT
         )""",
     ):
         connection.execute(statement)
@@ -135,12 +137,21 @@ def migrate(connection: sqlite3.Connection, timestamp: str) -> None:
         connection.execute(
             "ALTER TABLE configurations ADD COLUMN chain_of_thought INTEGER NOT NULL DEFAULT 0"
         )
+    # Earlier runs sent the prompt text before the video; retries keep that order.
+    if "video_first" not in config_columns:
+        connection.execute(
+            "ALTER TABLE configurations ADD COLUMN video_first INTEGER NOT NULL DEFAULT 0"
+        )
     prediction_columns = {
         row["name"] for row in connection.execute("PRAGMA table_info(predictions)")
     }
     for column in ("prompt_tokens", "completion_tokens"):
         if column not in prediction_columns:
             connection.execute(f"ALTER TABLE predictions ADD COLUMN {column} INTEGER")
+    # Older predictions keep only their raw response; the parsed parts were not saved.
+    for column in ("reasoning", "answer"):
+        if column not in prediction_columns:
+            connection.execute(f"ALTER TABLE predictions ADD COLUMN {column} TEXT")
     connection.execute(
         """UPDATE jobs SET state = 'failed', error =
         'Worker interrupted before claim ownership was recorded. Retry this run.',
@@ -213,6 +224,7 @@ def _migrate_monitoring(connection: sqlite3.Connection) -> None:
 # One read statement returns a job with its configuration snapshot and result.
 JOB_SELECT = """SELECT j.*, c.model AS c_model, c.prompt_preset AS c_prompt_preset,
     c.prompt_text AS c_prompt_text, c.chain_of_thought AS c_chain_of_thought,
+    c.video_first AS c_video_first,
     c.preprocessing_json AS c_preprocessing_json,
     c.generation_json AS c_generation_json, c.backend_kind AS c_backend_kind,
     c.fixture_version AS c_fixture_version, p.id AS p_id, p.label AS p_label,
@@ -220,7 +232,7 @@ JOB_SELECT = """SELECT j.*, c.model AS c_model, c.prompt_preset AS c_prompt_pres
     p.backend_kind AS p_backend_kind, p.model AS p_model, p.fixture_version AS p_fixture_version,
     p.request_duration_ms AS p_request_duration_ms, p.total_duration_ms AS p_total_duration_ms,
     p.completed_at AS p_completed_at, p.prompt_tokens AS p_prompt_tokens,
-    p.completion_tokens AS p_completion_tokens
+    p.completion_tokens AS p_completion_tokens, p.reasoning AS p_reasoning, p.answer AS p_answer
     FROM jobs j LEFT JOIN configurations c ON c.id = j.configuration_id
     LEFT JOIN predictions p ON p.job_id = j.id"""
 
@@ -270,6 +282,7 @@ def configuration_from_row(row: sqlite3.Row, prefix: str = "") -> RunConfigurati
         prompt_preset=row[f"{prefix}prompt_preset"],
         prompt_text=row[f"{prefix}prompt_text"],
         chain_of_thought=bool(row[f"{prefix}chain_of_thought"]),
+        video_first=bool(row[f"{prefix}video_first"]),
         preprocessing=SamplingConfiguration.model_validate(preprocessing),
         generation=GenerationConfiguration.model_validate_json(row[f"{prefix}generation_json"]),
         backend_kind=row[f"{prefix}backend_kind"],
@@ -292,4 +305,6 @@ def prediction_from_row(row: sqlite3.Row, prefix: str = "") -> PredictionResult:
         completed_at=row[f"{prefix}completed_at"],
         prompt_tokens=row[f"{prefix}prompt_tokens"],
         completion_tokens=row[f"{prefix}completion_tokens"],
+        reasoning=row[f"{prefix}reasoning"],
+        answer=row[f"{prefix}answer"],
     )

@@ -17,7 +17,7 @@ def test_validator_exercises_success_and_failure_without_gpu(route_inference, pr
             return httpx.Response(200, json={"version": "fixture-only"})
         if request.url.path == "/v1/models":
             return httpx.Response(200, json={"data": [{"id": "served-model"}]})
-        assert json.loads(request.content)["messages"][0]["content"][0]["text"] == prompt
+        assert json.loads(request.content)["messages"][0]["content"][1]["text"] == prompt
         if request.url.host == "127.0.0.1":
             raise httpx.ConnectError("fixture connection refused")
         return httpx.Response(

@@ -204,6 +204,8 @@ def test_chain_of_thought_sessions_snapshot_the_preset_and_reach_the_parser(repl
     assert worker.process_next_job(replay[0], replay[1])
     job = replay[1].get_job(replay[2].get(session["id"])["latest_job_id"])
     assert job.configuration.chain_of_thought is True
+    # Sessions created now send the video first; older segments keep their saved order.
+    assert job.configuration.video_first is True
     assert calls[0]["chain_of_thought"] is True
 
 
@@ -275,7 +277,7 @@ def test_migration_preserves_clip_snapshot_and_prediction(replay):
     repo.initialize()
     assert repo.get_job(clip.id) == before
     with repo._connect() as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 7
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 8
 
 
 def test_newest_sequence_remains_latest_after_out_of_order_completion(replay):

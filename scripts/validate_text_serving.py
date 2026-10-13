@@ -59,11 +59,11 @@ def validate(base_url: str, model: str, timeout: float = 120) -> dict[str, Any]:
         answers[label] = response.content
 
     bare = client.complete(payload("Reply with exactly this word and nothing else: walk"))
-    if parse_activity_label(bare.content, allow_bare_label=True) != "walk":
+    if parse_activity_label(bare.content) != "walk":
         raise RuntimeError(f"unexpected bare answer: {bare.content!r}")
     invalid = client.complete(payload("Reply with exactly this word and nothing else: banana"))
     try:
-        parse_activity_label(invalid.content, allow_bare_label=True)
+        parse_activity_label(invalid.content)
     except PredictionParseError:
         pass
     else:

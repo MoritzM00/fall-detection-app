@@ -323,3 +323,20 @@ def test_heartbeat_stops_when_claim_is_lost(queued_job):
     stop = _TickingStop({}, [1, 2, 3])
     worker.keep_claim_alive(repository, job.id, "not-the-owner", stop)
     assert next(stop.ticks, None) == 2
+
+
+def test_worker_keeps_the_saved_message_order(queued_job, monkeypatch):
+    settings, repository, job = queued_job
+    orders = []
+
+    def run(**kwargs):
+        orders.append(kwargs["video_first"])
+        return PipelineResult("fall", "The best answer is: fall", [0, 2], 1, 2)
+
+    monkeypatch.setattr(worker, "run_pipeline", run)
+    with sqlite3.connect(settings.database_path) as connection:
+        connection.execute(
+            "UPDATE configurations SET video_first=0 WHERE id=?", (job.configuration_id,)
+        )
+    assert worker.process_next_job(settings, repository)
+    assert orders == [False]

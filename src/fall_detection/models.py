@@ -195,6 +195,9 @@ class PredictionResult(BaseModel):
     # Server-reported usage; None when the backend did not report it.
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    # What the parser read the label from; None on predictions saved before it was kept.
+    reasoning: str | None = None
+    answer: str | None = None
 
 
 class SamplingConfiguration(BaseModel):
@@ -215,6 +218,9 @@ class RunConfiguration(BaseModel):
     prompt_preset: str
     prompt_text: str
     chain_of_thought: bool = False
+    # Request content order: the video before the prompt text, as in research. False for
+    # configurations saved before 2026-10-13, which sent the text first and still do.
+    video_first: bool = False
     preprocessing: SamplingConfiguration
     generation: GenerationConfiguration
     backend_kind: Literal["mock", "vllm", "unknown"]

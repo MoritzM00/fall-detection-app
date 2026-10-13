@@ -12,7 +12,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from time import perf_counter
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import httpx
 
@@ -55,52 +55,116 @@ ACTIVITY_LABELS: tuple[ActivityLabel, ...] = (
 )
 
 
-_ANSWER_PATTERN = re.compile(r"^\s*The best answer is:\s*([a-z_]+)\s*$")
-
-
 class PredictionParseError(ValueError):
-    """Raised when generated text is not one unambiguous canonical label."""
+    """Raised when generated text does not name exactly one canonical label."""
 
 
-def final_answer(raw_response: str) -> str:
-    """Return the last nonblank line after any reasoning, which must hold the answer.
+# Answer markers from the research CoT parser (falldet CoTOutputParser), in its priority
+# order. Without chain of thought the research keyword parser looks only for the first.
+_ANSWER_MARKERS = (
+    re.compile(r"the\s+best\s+answer\s+is\s*[:\-]?\s*", re.IGNORECASE),
+    re.compile(r"final\s+answer\s*[:\-]\s*", re.IGNORECASE),
+    re.compile(r"the\s+(?:final\s+)?answer\s+is\s*[:\-]?\s*", re.IGNORECASE),
+)
+# The answer runs to the first period or line break, as in the research keyword parser.
+_ANSWER_END = re.compile(r"\.|$", re.MULTILINE)
 
-    Proposed application behavior, stricter than the research CoT parser: reasoning is
-    either enclosed in think tags (the opening tag may come from the chat template) or
-    written as plain text before the answer, and only the final line is parsed. The
-    research parser instead searches the text for a label and falls back to ``other``.
+
+def _label_pattern(label: str) -> re.Pattern[str]:
+    """Match a label as the research keyword parser does, including its word forms.
+
+    ``sit_down`` also matches "sit-down" and "sits down", and every label its -ing and -s
+    forms ("walking", "standing up"). As in research the -ing form does not double a
+    consonant, so "sitting down" matches ``sitting``, not ``sit_down``.
     """
-    text = raw_response
-    if "</think>" in text:
-        text = text.rpartition("</think>")[2]
-    elif "<think>" in text:
-        raise PredictionParseError("reasoning was not closed before the answer")
-    lines = [line for line in text.splitlines() if line.strip()]
-    if not lines:
-        raise PredictionParseError("response contains no final answer after its reasoning")
-    return lines[-1]
+    parts = [re.escape(part) for part in label.split("_")]
+    forms = []
+    if len(parts) > 1:
+        rest = r"[\s_-]+".join(parts[1:])
+        forms += [
+            r"[\s_-]+".join(parts),
+            rf"{parts[0]}s[\s_-]+{rest}",
+            rf"{parts[0]}ing[\s_-]+{rest}",
+        ]
+    forms += [re.escape(label), rf"{re.escape(label)}ing", rf"{re.escape(label)}s"]
+    return re.compile("|".join(rf"\b{form}\b" for form in forms))
 
 
-def parse_activity_label(
-    raw_response: str, *, allow_bare_label: bool = False, chain_of_thought: bool = False
-) -> ActivityLabel:
-    """Parse a fixed-format answer or an explicitly allowed single canonical label.
+_LABEL_PATTERNS = {label: _label_pattern(label) for label in ACTIVITY_LABELS}
 
-    With ``chain_of_thought`` only the final answer line after the reasoning is parsed.
+
+def match_label(text: str) -> ActivityLabel:
+    """Return the one label named in ``text``, preferring the longer of overlapping matches.
+
+    Proposed application behavior: the research parser takes the longest label found and
+    falls back to ``other``; here no label, or two different ones, is a parse failure.
     """
+    lowered = text.lower()
+    matches = sorted(
+        (
+            (match.start(), match.end(), label)
+            for label, pattern in _LABEL_PATTERNS.items()
+            for match in pattern.finditer(lowered)
+        ),
+        key=lambda item: (item[0] - item[1], item[0]),
+    )
+    kept: list[tuple[int, int, ActivityLabel]] = []
+    for start, end, label in matches:
+        if all(end <= other_start or start >= other_end for other_start, other_end, _ in kept):
+            kept.append((start, end, label))
+    labels = sorted({label for _, _, label in kept}, key=ACTIVITY_LABELS.index)
+    if not labels:
+        raise PredictionParseError(f"answer names no activity label: {text.strip()[:80]!r}")
+    if len(labels) > 1:
+        raise PredictionParseError(f"answer names several activity labels: {', '.join(labels)}")
+    return labels[0]
+
+
+@dataclass(frozen=True, slots=True)
+class ParsedAnswer:
+    """The label and the parts of the response it was read from."""
+
+    label: ActivityLabel
+    # Text the model wrote before its answer; None when there was none.
+    reasoning: str | None
+    # The answer as written, from its marker to the end of the label span.
+    answer: str
+
+
+def parse_answer(raw_response: str, *, chain_of_thought: bool = False) -> ParsedAnswer:
+    """Find the answer like the research parsers do and read exactly one label from it.
+
+    With ``chain_of_thought``, reasoning in think tags is set aside first (the opening tag
+    may come from the chat template), and any of the research answer markers is accepted.
+    Without a marker the whole remaining response must name one label, so a bare label
+    also parses.
+    """
+    reasoning, content = "", raw_response
     if chain_of_thought:
-        raw_response = final_answer(raw_response)
-    match = _ANSWER_PATTERN.fullmatch(raw_response)
-    if match is None:
-        candidate = raw_response.strip()
-        if allow_bare_label and candidate in ACTIVITY_LABELS:
-            return candidate
-        raise PredictionParseError("response does not match the required answer format")
+        if "</think>" in raw_response:
+            thought, _, content = raw_response.partition("</think>")
+            reasoning = thought.partition("<think>")[2] if "<think>" in thought else thought
+        elif "<think>" in raw_response:
+            raise PredictionParseError("reasoning was not closed before the answer")
+    markers = _ANSWER_MARKERS if chain_of_thought else _ANSWER_MARKERS[:1]
+    marker = next((found for pattern in markers if (found := pattern.search(content))), None)
+    if marker is None:
+        answer, before = content.strip(), ""
+        span = answer
+    else:
+        end = _ANSWER_END.search(content, marker.end())
+        span_end = end.start() if end else len(content)
+        span = content[marker.end() : span_end]
+        answer, before = content[marker.start() : span_end].strip(), content[: marker.start()]
+    if not span.strip():
+        raise PredictionParseError("response contains no answer")
+    reasoning = "\n\n".join(part.strip() for part in (reasoning, before) if part.strip())
+    return ParsedAnswer(match_label(span), reasoning or None, answer)
 
-    candidate = match.group(1)
-    if candidate not in ACTIVITY_LABELS:
-        raise PredictionParseError(f"unknown activity label: {candidate}")
-    return cast("ActivityLabel", candidate)
+
+def parse_activity_label(raw_response: str, *, chain_of_thought: bool = False) -> ActivityLabel:
+    """Return only the label of :func:`parse_answer`."""
+    return parse_answer(raw_response, chain_of_thought=chain_of_thought).label
 
 
 def sample_timestamps(
@@ -278,6 +342,8 @@ class PipelineResult:
     total_duration_ms: float
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    reasoning: str | None = None
+    answer: str | None = None
 
 
 def build_inference_payload(
@@ -286,18 +352,22 @@ def build_inference_payload(
     prompt: str,
     video_metadata: dict[str, Any] | None = None,
     generation: dict[str, Any] | None = None,
+    video_first: bool = True,
 ) -> dict[str, Any]:
-    """Build the online video request shared by mock and vLLM serving."""
+    """Build the online video request shared by mock and vLLM serving.
+
+    The video precedes the prompt text, as in the research zero-shot conversation, unless a
+    configuration saved before that change asks for its original text-first order.
+    """
     settings = generation or {}
+    video = {"type": "video_url", "video_url": {"url": video_data_url}}
+    text = {"type": "text", "text": prompt}
     payload = {
         "model": model,
         "messages": [
             {
                 "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {"type": "video_url", "video_url": {"url": video_data_url}},
-                ],
+                "content": [video, text] if video_first else [text, video],
             }
         ],
         "temperature": settings.get("temperature", 0),
@@ -325,8 +395,8 @@ def run_pipeline(
     video_metadata: dict[str, Any] | None = None,
     generation: dict[str, Any] | None = None,
     frame_count: int = 16,
-    allow_bare_label: bool = False,
     chain_of_thought: bool = False,
+    video_first: bool = True,
 ) -> PipelineResult:
     """Execute one traceable prediction from selected input to validated label."""
     total_started = perf_counter()
@@ -335,20 +405,22 @@ def run_pipeline(
         if sampled_timestamps is not None
         else sample_timestamps(start_seconds, end_seconds, frame_count)
     )
-    payload = build_inference_payload(model, video_data_url, prompt, video_metadata, generation)
+    payload = build_inference_payload(
+        model, video_data_url, prompt, video_metadata, generation, video_first=video_first
+    )
     request_started = perf_counter()
     response = client.complete(payload)
     request_duration_ms = (perf_counter() - request_started) * 1000
-    label = parse_activity_label(
-        response.content, allow_bare_label=allow_bare_label, chain_of_thought=chain_of_thought
-    )
+    parsed = parse_answer(response.content, chain_of_thought=chain_of_thought)
     total_duration_ms = (perf_counter() - total_started) * 1000
     return PipelineResult(
-        label=label,
+        label=parsed.label,
         raw_response=response.content,
         sampled_timestamps=timestamps,
         request_duration_ms=round(request_duration_ms, 1),
         total_duration_ms=round(total_duration_ms, 1),
         prompt_tokens=response.prompt_tokens,
         completion_tokens=response.completion_tokens,
+        reasoning=parsed.reasoning,
+        answer=parsed.answer,
     )

@@ -86,7 +86,7 @@ def test_mock_rejects_video_without_url() -> None:
         "data:video/mp4;base64,ZmFsbC1kZXRlY3Rpb24tc3ludGhldGljLWNvcnJpZG9yLXYx",
         "prompt",
     )
-    payload["messages"][0]["content"][1]["video_url"] = {}
+    payload["messages"][0]["content"][0]["video_url"] = {}
 
     response = TestClient(mock_server.app).post("/v1/chat/completions", json=payload)
 

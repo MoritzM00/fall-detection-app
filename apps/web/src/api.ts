@@ -28,6 +28,9 @@ export type Prediction = {
   completed_at: string;
   prompt_tokens?: number | null;
   completion_tokens?: number | null;
+  /** What the parser read the label from; absent on predictions saved before it was kept. */
+  reasoning?: string | null;
+  answer?: string | null;
 };
 
 export type AnalysisJob = {
@@ -42,7 +45,7 @@ export type AnalysisJob = {
   error: string | null;
   created_at: string;
   updated_at: string;
-  configuration: { model: string; prompt_preset: string; prompt_text: string; chain_of_thought?: boolean; backend_kind: string; fixture_version: string | null; preprocessing: { frames: number; fps: number; resize: number; crop: string; bundle_sha256?: string | null }; generation: GenerationSettings } | null;
+  configuration: { model: string; prompt_preset: string; prompt_text: string; chain_of_thought?: boolean; video_first?: boolean; backend_kind: string; fixture_version: string | null; preprocessing: { frames: number; fps: number; resize: number; crop: string; bundle_sha256?: string | null }; generation: GenerationSettings } | null;
   prediction: Prediction | null;
 };
 

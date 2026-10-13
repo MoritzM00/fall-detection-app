@@ -17,7 +17,8 @@ MODEL_ID = "Qwen/Qwen3-VL-8B-Instruct"
 # Matches the worker default for FALL_DETECTION_INFERENCE_MODEL.
 SERVED_MODEL_NAME = "qwen3-vl-8b-instruct"
 # 24 GB fits bf16 weights plus a ~12k-token KV cache; 16 frames at the 672 px maximum
-# crop need about 3.5k visual tokens. Switch to "L40S" (48 GB) for longer contexts.
+# crop need about 3.5k visual tokens, and the chain-of-thought preset allows 4,096 output
+# tokens, hence an 8,192-token context. Switch to "L40S" (48 GB) for longer contexts.
 GPU = "L4"
 PORT = 8000
 MINUTES = 60
@@ -62,7 +63,7 @@ def serve() -> None:
             str(PORT),
             # Keep FALL_DETECTION_MAX_MODEL_LEN in deploy/modal.env equal to this value.
             "--max-model-len",
-            "5120",
+            "8192",
             "--max-num-seqs",
             "4",
             "--gpu-memory-utilization",

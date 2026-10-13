@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { getVideo, retryJob } from "./api";
-import type { AnalysisJob, VideoAsset } from "./api";
+import type { AnalysisJob, Prediction, VideoAsset } from "./api";
 import { formatTokenUsage } from "./tokens";
 import { samplingSummary } from "./SettingsDialog";
-import { runName, splitReasoning } from "./runState";
+import { runName } from "./runState";
 import { generationSummary } from "./ExperimentControls";
 
 type Props = {
@@ -25,13 +25,21 @@ function formatLabel(label: string): string {
   return label.replaceAll("_", " ");
 }
 
-/** A chain-of-thought answer: the model's reasoning, then the parsed final line. */
-export function Reasoning({ raw }: { raw: string }) {
-  const { reasoning, answer } = splitReasoning(raw);
-  return <div className="reasoning">
-    <h3>Reasoning</h3>
-    {reasoning ? <p className="reasoning-text">{reasoning}</p> : <p className="reasoning-text empty">No reasoning before the answer.</p>}
-    <p className="raw-response">Final line: “{answer}”</p>
+function wordCount(text: string): string {
+  const count = text.split(/\s+/).filter(Boolean).length;
+  return `${count.toLocaleString("en-US")} ${count === 1 ? "word" : "words"}`;
+}
+
+/** The model's reasoning, if any, and the answer the label was parsed from. */
+export function ModelAnswer({ prediction, open = true }: { prediction: Prediction; open?: boolean }) {
+  // Predictions saved before the parsed parts were kept show the whole response.
+  if (prediction.answer == null) return <p className="raw-response">“{prediction.raw_response}”</p>;
+  return <div className="model-answer">
+    {prediction.reasoning && <details className="reasoning" open={open}>
+      <summary><span>Model reasoning</span><small>{wordCount(prediction.reasoning)}</small></summary>
+      <div className="reasoning-text" tabIndex={0}>{prediction.reasoning}</div>
+    </details>}
+    <p className="answer-line"><span>Parsed from</span><q>{prediction.answer}</q></p>
   </div>;
 }
 
@@ -64,9 +72,9 @@ export function SubmittedResult({
       <div className="result-overline"><span>Activity</span>{result.backend_kind === "mock" && <span>Simulated</span>}</div>
       <div className={`result-label ${result.label === "fall" || result.label === "fallen" ? "alert" : ""}`}>{formatLabel(result.label)}</div>
       {result.backend_kind === "mock" && <p className="simulation-note">Simulated label from the mock backend, not inferred from this clip.</p>}
+      <ModelAnswer prediction={result} />
       <details className="result-details">
         <summary>Run details</summary>
-        {job.configuration?.chain_of_thought ? <Reasoning raw={result.raw_response} /> : <p className="raw-response">“{result.raw_response}”</p>}
         <dl>
           <div><dt>Request time</dt><dd>{result.request_duration_ms.toFixed(0)} ms</dd></div>
           <div><dt>Tokens</dt><dd>{formatTokenUsage(result)}</dd></div>

@@ -17,6 +17,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from apps.mock_inference.scenarios import fingerprint, load_manifest, next_attempt
+from fall_detection.prompts import COT_INSTRUCTION
 
 MAX_REQUEST_BYTES = 32 * 1024 * 1024
 MAX_FRAMES = 32
@@ -267,14 +268,15 @@ async def chat_completions(
             raise OSError("Scripted mock stream interruption")
 
         return StreamingResponse(interrupted(), media_type="application/json", headers=headers)
+    answer = f"The best answer is: {scenario.label}"
+    if COT_INSTRUCTION in normalized["prompt"]:
+        # Exercises the reasoning display; the mock never looks at the frames.
+        answer = f"Simulated reasoning from the mock backend, not from these frames.\n\n{answer}"
     output = {
         "invalid": "The best answer is: flying",
         "ambiguous": "The best answer is: fall or fallen",
         "truncated": "The best answer is:",
-    }.get(
-        scenario.fault,
-        scenario.output if scenario.output is not None else f"The best answer is: {scenario.label}",
-    )
+    }.get(scenario.fault, scenario.output if scenario.output is not None else answer)
     completion_id = f"mock-{uuid4()}"
     return JSONResponse(
         {

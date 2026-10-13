@@ -17,7 +17,7 @@ from fall_detection.prediction import InferenceClient
 from fall_detection.prompts import ZERO_SHOT
 from fall_detection.repository import Repository
 
-DEPLOYED_MAX_MODEL_LEN = 5120  # deploy/modal_vllm.py --max-model-len
+DEPLOYED_MAX_MODEL_LEN = 8192  # deploy/modal_vllm.py --max-model-len
 LOCAL_API = "http://127.0.0.1"
 
 
@@ -43,13 +43,12 @@ def test_estimate_counts_odd_frames_small_crops_prompt_bytes_and_answer_budget()
     [
         (16, 448, 32, True),  # thesis baseline
         (16, 672, 32, True),  # validated live on the L4 deployment
-        (32, 448, 32, True),
-        (32, 576, 32, False),
-        (32, 672, 32, False),
-        (16, 448, 2660, True),  # largest answer budget for the zero-shot preset (docs)
-        (16, 448, 2661, False),
-        (16, 448, 4096, False),
-        (2, 224, 4096, True),  # the static 4096 cap still fits the smallest window
+        (32, 672, 64, True),
+        (16, 448, 4096, True),  # the chain-of-thought answer budget at the default crop
+        (16, 672, 3772, True),  # largest answer budget at the maximum crop (docs)
+        (16, 672, 3773, False),
+        (32, 672, 4096, False),
+        (2, 224, 4096, True),
     ],
 )
 def test_deployed_context_window_accepts_known_fits_and_rejects_overflows(
@@ -61,7 +60,7 @@ def test_deployed_context_window_accepts_known_fits_and_rejects_overflows(
     if fits:
         check()
     else:
-        with pytest.raises(ContextWindowError, match="context window is 5120 tokens"):
+        with pytest.raises(ContextWindowError, match="context window is 8192 tokens"):
             check()
 
 
@@ -102,8 +101,9 @@ def served(tmp_path, monkeypatch):
 
 
 OVER_LIMIT = [
-    {"frame_count": 32, "size": 672},
-    {"generation": {"temperature": 0, "max_tokens": 4096}},
+    {"frame_count": 32, "size": 672, "generation": {"temperature": 0, "max_tokens": 128}},
+    # The chain-of-thought preset's 4,096-token answer budget fits only smaller crops.
+    {"size": 672, "chain_of_thought": True},
 ]
 
 
@@ -119,7 +119,7 @@ def test_clip_job_over_the_context_window_gets_422_before_queueing(served, overr
     video = client.post("/videos/sample").json()
     response = client.post("/analysis-jobs", json={"video_id": video["id"], **overrides})
     assert response.status_code == 422
-    assert "context window is 5120 tokens" in response.json()["detail"]
+    assert "context window is 8192 tokens" in response.json()["detail"]
     assert repository.list_jobs() == []
 
 
