@@ -36,6 +36,7 @@ export function comparisonRows(left: AnalysisJob, right: AnalysisJob) {
       ["Request time", result ? `${result.request_duration_ms.toFixed(0)} ms` : "No prediction"],
       ["Total processing time", result ? `${result.total_duration_ms.toFixed(0)} ms` : "No prediction"],
       ["Tokens", result ? formatTokenUsage(result) : "No prediction"],
+      ["Parsed answer", result ? result.answer ?? "Not saved" : "No prediction"],
       ["Raw response", result?.raw_response ?? "No prediction"],
       ["Configuration ID", job.configuration_id],
     ];

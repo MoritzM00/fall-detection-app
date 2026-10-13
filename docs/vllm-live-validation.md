@@ -31,7 +31,7 @@ The validator passed against the [Modal deployment](../deploy/README.md#modal-gp
 | vLLM | `0.30.0` (from `/version`) |
 | Model | `Qwen/Qwen3-VL-8B-Instruct`, served as `qwen3-vl-8b-instruct` (from `/v1/models`) |
 | Processor | `Qwen3VLProcessor; transformers 5.19.0`, taken from the image build log rather than queried on the running host |
-| Serving settings | `--max-model-len 5120`, `--max-num-seqs 4`, `--gpu-memory-utilization 0.92`, `--limit-mm-per-prompt '{"image": 0, "video": 1}'`, `VLLM_USE_FLASHINFER_SAMPLER=0` |
+| Serving settings | `--max-model-len 5120` (8192 since 2026-10-13, see below), `--max-num-seqs 4`, `--gpu-memory-utilization 0.92`, `--limit-mm-per-prompt '{"image": 0, "video": 1}'`, `VLLM_USE_FLASHINFER_SAMPLER=0` |
 | Request | 16 prepared JPEG frames; the exact saved JPEG bytes and the FPS, frame indices, frame count, duration and `do_sample_frames: false` were confirmed in the outgoing JSON |
 | Response | `The best answer is: other`, parsed to `other`; 16 sampled timestamps and the configuration were persisted |
 | Failure path | A job against an unavailable endpoint became an explicit `failed` job (`inference request failed: timed out`), with no prediction and no mock fallback |
@@ -40,10 +40,24 @@ The input was the generated moving-pattern clip, so the `other` label says nothi
 
 Compatibility findings from getting there:
 
-- **Context length.** With `--max-model-len 16384`, engine start failed on the L4: 2.25 GiB of KV cache needed, 1.75 GiB available after the 16.65 GiB of weights. 5,120 tokens covers 16 frames even at the 672 px maximum crop (about 3.5k visual tokens).
+- **Context length.** With `--max-model-len 16384`, engine start failed on the L4: 2.25 GiB of KV cache needed, 1.75 GiB available after the 16.65 GiB of weights. 5,120 tokens covers 16 frames even at the 672 px maximum crop (about 3.5k visual tokens). The context is now 8,192 tokens so the chain-of-thought preset's 4,096 output tokens fit; the engine started with it on the L4 (see the chain-of-thought run below).
 - **FlashInfer sampler.** vLLM's FlashInfer top-k/top-p sampler JIT-compiles CUDA kernels during warmup and failed with `Could not find nvcc` on a slim image without the CUDA toolkit. `VLLM_USE_FLASHINFER_SAMPLER=0` selects the PyTorch sampler instead.
 - **Modal redirects.** Modal answers requests running past about 150 s with `303 See Other`. The client and validators now follow redirects, so a request made during a cold start waits for the result instead of failing. The inference client, warm-up and validators follow only redirects to the same scheme, host and port as the configured endpoint; a redirect anywhere else fails explicitly and sends nothing to the new origin.
 
-- **Request limits (issue #77).** The app accepts up to 32 frames, 672 px and 4096 max tokens, which can exceed 5,120 tokens. `deploy/modal.env` now sets `FALL_DETECTION_MAX_MODEL_LEN=5120`, and the API rejects such configurations with 422 at submission using a conservative estimate (see [contracts](contracts.md)). At the time this was measured, with the earlier thesis prompt and 32 max tokens, 16 frames fit at every offered crop and 32 frames fit up to 512 px. With the current zero-shot preset (its longer prompt and 64 max tokens), 16 frames fit at every offered crop, 32 frames fit up to 480 px, and 16 × 448 leaves room for up to 2,660 max tokens. The chain-of-thought preset's 4,096 max tokens do not fit 5,120: at 16 × 448 the estimate is 6,446 tokens, so on this deployment either lower max tokens (up to 2,770 at 16 × 448) or raise `--max-model-len`. **Not yet checked live:** the largest configuration the server actually accepts and its rejection message for an oversized request still need to be recorded here from a run against the endpoint; this check is tracked in #41.
+- **Request limits (issue #77).** The app accepts up to 32 frames, 672 px and 4096 max tokens, which can exceed 5,120 tokens. `deploy/modal.env` now sets `FALL_DETECTION_MAX_MODEL_LEN=5120`, and the API rejects such configurations with 422 at submission using a conservative estimate (see [contracts](contracts.md)). At the time this was measured, with the earlier thesis prompt and 32 max tokens, 16 frames fit at every offered crop and 32 frames fit up to 512 px. With the current zero-shot preset (its longer prompt and 64 max tokens), 16 frames fit at every offered crop, 32 frames fit up to 480 px, and 16 × 448 leaves room for up to 2,660 max tokens. The chain-of-thought preset's 4,096 max tokens did not fit 5,120 (6,446 tokens estimated at 16 × 448), so the context was raised to 8,192. With 8,192, both presets fit 16 frames up to 640 px (16 × 672 leaves room for up to 3,772 max tokens), and the zero-shot preset fits 32 frames at every crop. **Not yet checked live:** the largest configuration the server actually accepts and its rejection message for an oversized request still need to be recorded here from a run against the endpoint; this check is tracked in #41.
 
 Cold start with weights already cached in the volume: weights loaded in 18 s, `torch.compile` took 74 s (its result is now cached in the vLLM volume) and engine initialization took 139 s in total, about 3.5 minutes from deploy to the server being ready. The warmed request took 1.2 s.
+
+## Chain-of-thought run, 2026-10-13
+
+Same L4 deployment and vLLM 0.30.0 with `--max-model-len 8192`; cold start to healthy took 236 s. An API and worker from branch `feat/cot-answer-parsing`, with an isolated data directory, sent GMDCSA24 clips (uploaded copies, 16 frames at 7.5 FPS, 448 px) with the video before the prompt text.
+
+| Clip and window | Annotation | Preset | Label | Tokens (prompt / completion) | Request |
+| --- | --- | --- | --- | --- | --- |
+| `Subject_1/Fall/01.mp4`, 3.4–5.4 s | falling 3.4–6 s | `research-zeroshot-v2` | `lie_down` | 1,820 / 8 | 2.7 s |
+| same | same | `research-zeroshot-cot-v2` | `lie_down` | 1,791 / 194 | 13.1 s |
+| `Subject_1/ADL/01.mp4`, 4.0–6.0 s | sleeping 2–8 s | `research-zeroshot-v2` | `lying` | 1,820 / 7 | 2.3 s |
+| same | same | `research-zeroshot-cot-v2` | `lying` | 1,791 / 234 | 15.5 s |
+
+Every response parsed. The chain-of-thought answers reasoned in numbered steps with no think tags and ended with `The best answer is: <label>`; the text before it was saved as the reasoning. One reasoning listed all 16 labels, so reading the label from the whole response, not the answer, would have been ambiguous. A chain-of-thought request at 16 × 672 was rejected with 422 before reaching the GPU (estimate 8,406 tokens). Two clips are not accuracy evidence: the fall the model read as a deliberate `lie_down` is the kind of case research parity work in #41 has to measure.
+

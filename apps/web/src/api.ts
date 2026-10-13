@@ -28,6 +28,9 @@ export type Prediction = {
   completed_at: string;
   prompt_tokens?: number | null;
   completion_tokens?: number | null;
+  /** What the parser read the label from; absent on predictions saved before it was kept. */
+  reasoning?: string | null;
+  answer?: string | null;
 };
 
 export type AnalysisJob = {

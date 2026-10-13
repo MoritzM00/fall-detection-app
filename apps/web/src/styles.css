@@ -433,12 +433,20 @@ button:disabled { cursor: not-allowed; }
 .context-budget[data-over="true"] .context-budget-bar i { background: var(--alert); }
 .context-budget[data-over="true"] strong, .context-budget[data-over="true"] small { color: #a3291d; }
 
-/* Chain-of-thought answers */
-.reasoning { margin-top: 12px; }
-.reasoning h3 { margin: 0 0 6px; color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; }
-.reasoning-text { max-height: 260px; overflow-y: auto; margin: 0 0 8px; padding: 10px 12px; border-left: 2px solid var(--amber); border-radius: 0 8px 8px 0; background: var(--surface); font-size: 13px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
-.reasoning-text.empty { color: var(--faint); }
-.result-details .reasoning .raw-response { margin-top: 0; }
+/* Model reasoning and the answer the label was parsed from */
+.model-answer { display: grid; gap: 10px; margin-top: 16px; }
+.reasoning { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.reasoning summary { display: flex; align-items: center; gap: 8px; padding: 9px 12px; cursor: pointer; font-size: 13px; font-weight: 600; list-style: none; }
+.reasoning summary::-webkit-details-marker { display: none; }
+.reasoning summary::before { content: ""; width: 6px; height: 6px; border-right: 1.5px solid var(--faint); border-bottom: 1.5px solid var(--faint); transform: rotate(-45deg); transition: transform .15s ease-out; }
+.reasoning[open] summary::before { transform: rotate(45deg); }
+.reasoning summary small { margin-left: auto; color: var(--faint); font-size: 12px; font-weight: 400; font-variant-numeric: tabular-nums; }
+.reasoning-text { max-height: 320px; overflow-y: auto; margin: 0 12px 12px; padding: 2px 0 2px 12px; border-left: 2px solid var(--amber); font-size: 13px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.reasoning-text:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+.answer-line { display: flex; align-items: baseline; gap: 10px; margin: 0; font-size: 12px; }
+.answer-line span { flex: none; color: var(--faint); }
+.answer-line q { min-width: 0; font: 400 12px/1.6 var(--mono); color: var(--muted); overflow-wrap: anywhere; }
+@media (prefers-reduced-motion: reduce) { .reasoning summary::before { transition: none; } }
 @keyframes sheet-in { from { transform: translateX(24px); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .settings-dialog[open] { animation: none; } }
 @media (max-width: 560px) {

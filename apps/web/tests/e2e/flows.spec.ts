@@ -219,6 +219,22 @@ test("retries a failed submitted job after its prepared input is restored", asyn
   await expect(page.locator(".result-card .result-label")).toHaveText("fall", { timeout: 20_000 });
 });
 
+test("chain-of-thought runs show the reasoning and the answer the label was parsed from", async ({ page, request }) => {
+  await waitForApi(request);
+  await page.goto("/");
+  await page.locator('input[type="file"]').setInputFiles(clip);
+  await editSettings(page, async () => {
+    await page.getByRole("radio", { name: /Chain of thought/ }).check();
+  });
+  await expect(page.locator(".settings-summary")).toContainText("Research chain of thought");
+  await page.locator(".analyze-button").click();
+  const card = page.locator(".result-card");
+  await expect(card.locator(".result-label")).toHaveText("fall", { timeout: 20_000 });
+  await expect(card.getByRole("group").filter({ hasText: "Model reasoning" })).toHaveAttribute("open", "");
+  await expect(card.locator(".reasoning-text")).toHaveText("Simulated reasoning from the mock backend, not from these frames.");
+  await expect(card.locator(".answer-line")).toContainText("The best answer is: fall");
+});
+
 test("edited prompt and generation survive submission and reload and compare saved runs", async ({ page, request }) => {
   await waitForApi(request);
   await page.goto("/");
