@@ -21,3 +21,18 @@ def route_inference(monkeypatch):
             monkeypatch.setattr(module, "same_origin_client", routed)
 
     return install
+
+
+@pytest.fixture(autouse=True)
+def no_real_modal_control_plane(monkeypatch):
+    """Fail any test that would reach the developer's real Modal app through its CLI login.
+
+    Tests that need these calls replace them; the function objects themselves stay
+    importable for tests of their own behavior.
+    """
+
+    def refuse(*_args, **_kwargs):
+        raise AssertionError("tests must not call the real Modal control plane")
+
+    monkeypatch.setattr(serving_status, "modal_stop_containers", refuse)
+    monkeypatch.setattr(serving_status, "modal_container_stats", refuse)

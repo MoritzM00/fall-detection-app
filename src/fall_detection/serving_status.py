@@ -133,21 +133,22 @@ class ServingStatus:
         settings: Settings,
         stats_reader: Callable[[str], ContainerStats] | None = None,
         warm: Callable[[Settings], float] | None = None,
-        stop: Callable[[str], int] = modal_stop_containers,
+        stop: Callable[[str], int] | None = None,
         cache_seconds: float = 5,
         endpoint: InferenceEndpoint | None = None,
     ) -> None:
         """Configure where status comes from; nothing is contacted until asked.
 
         ``endpoint`` defaults to the default model's. Readers and warm-ups that are not
-        given are bound to its Modal function and health route.
+        given are bound to its Modal function and health route. Defaults are looked up
+        when called, not here, so tests can replace the Modal calls module-wide.
         """
         self._settings = settings
         self.endpoint = endpoint or settings.endpoints[0]
         function = self.endpoint.modal_function
         self._stats_reader = stats_reader or (lambda app: modal_container_stats(app, function))
         self._warm = warm or (lambda current: wait_until_healthy(current, endpoint=self.endpoint))
-        self._stop = stop
+        self._stop = stop or (lambda app: modal_stop_containers(app))
         self._cache_seconds = cache_seconds
         self._lock = threading.Lock()
         self._stats: ContainerStats | None = None
