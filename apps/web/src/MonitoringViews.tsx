@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type { AnalysisJob, MonitoringSession, MonitoringWindow } from "./api";
-import { inPaintOrder } from "./coverage";
+import { inFlight, inPaintOrder, resultAge } from "./coverage";
 import type { Tone } from "./coverage";
 import { formatTokenUsage } from "./tokens";
 import { ModelAnswer } from "./SubmittedResult";
@@ -115,4 +115,30 @@ export function Result({ job }: { job: AnalysisJob }) {
       <p className="raw-response">Job {job.id} · configuration {job.configuration_id} · prepared input {job.prepared_input_id ?? "synthetic"}</p><pre className="saved-prompt">{JSON.stringify(job.configuration, null, 2)}</pre>
     </details>
   </div>;
+}
+
+type LatestProps = { job: AnalysisJob | null; session: MonitoringSession; position: number; live: boolean; windows: MonitoringWindow[]; jobs: Record<string, AnalysisJob> };
+/**
+ * The newest result, dated against the live edge or playback clock, plus the windows still
+ * being processed. Every result describes the past: the window has to fill before it is
+ * sent, and inference takes time on top of that.
+ */
+export function LatestResult({ job, session, position, live, windows, jobs }: LatestProps) {
+  const freshness = job?.prediction ? resultAge(job.end_seconds, position, { expirationSeconds: session.expiration, strideSeconds: session.stride, processingSeconds: job.prediction.total_duration_ms / 1000 }) : null;
+  const age = (value: number) => live ? `${value.toFixed(1)} s ago` : `${value.toFixed(1)} s behind playback`;
+  const windowSeconds = (session.configuration.preprocessing.frames - 1) / session.configuration.preprocessing.fps;
+  const pending = inFlight(windows, jobs, session);
+  return <section className="monitor-latest">
+    <h2>Last analyzed</h2>
+    {job?.prediction && freshness ? <div className="latest-result" data-outdated={freshness.outdated || undefined}>
+      <p className="result-age" role="status">{freshness.outdated
+        ? `No current result · this one ended ${age(freshness.age)}`
+        : `Input ended ${age(freshness.age)}`}</p>
+      <Result job={job} />
+    </div> : <div className="result-placeholder"><p>No prediction yet.</p></div>}
+    {(pending.length > 0 || session.state === "running") && <ul className="pipeline" aria-label="Windows in progress">
+      {pending.map(({ window, stage }) => <li key={window.id}><i data-tone="active" aria-hidden="true" /><span className="history-range">{window.start_seconds.toFixed(1)}–{window.end_seconds.toFixed(1)} s</span><span>{stage}</span></li>)}
+      {session.state === "running" && <li><i data-tone="idle" aria-hidden="true" /><span>Filling the next {windowSeconds.toFixed(1)} s window</span></li>}
+    </ul>}
+  </section>;
 }

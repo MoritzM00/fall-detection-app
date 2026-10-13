@@ -225,8 +225,8 @@ Camera frames are personal data of whoever is in view.
   states.
 - The viewer shows the local camera stream with a **Live** marker while running.
   The coverage timeline is a rolling two-minute span ending at the live edge, with
-  no scrubber; its legend counts only windows in that span. The header clock, playhead and result lag follow the server
-  watermark.
+  no scrubber; its legend counts only windows in that span. The header clock, playhead and the age of the last result
+  follow the server watermark.
 - Start, Resume and Restart connect the camera first if needed. Each running
   period is one capture run (`useLiveCapture`, queue in `captureUploader.ts`):
   frames are drawn to a canvas with the short edge at most 672 px, the largest

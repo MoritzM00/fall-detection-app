@@ -10,7 +10,7 @@ import { useLiveCapture } from "./useLiveCapture";
 import { contextBudget, contextWindowError } from "./context";
 import { message, useMonitoringPoll } from "./useMonitoringPoll";
 import { useSessionCommands } from "./useSessionCommands";
-import { ActivityLabels, CoverageTimeline, History, ReplayControls, Result, seconds, sessionName, toneOf } from "./MonitoringViews";
+import { ActivityLabels, CoverageTimeline, History, LatestResult, ReplayControls, seconds, sessionName, toneOf } from "./MonitoringViews";
 
 const LIVE_CAPTURE_FPS = 15;
 const LIVE_SPAN_SECONDS = 120;
@@ -146,10 +146,9 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
           {session && <CoverageTimeline windows={windows.filter(window => window.generation === session.generation)} jobs={jobs} from={span.from} to={span.to} position={shown} partial={partial} onLoadOlder={older} seek={live ? null : seek} />}
           <ReplayControls session={session} busy={busy} connected={connected} ended={ended} onBegin={action => void begin(action)} onPause={() => { media.current?.pause(); void send({ action: "pause" }); }} onStop={() => { media.current?.pause(); void send({ action: "stop" }); }} />
           <div className="replay-status">
-            <p role="status" data-tone={toneOf(systemState)}>System: {systemState}{busy ? " · updating" : ""}{session?.recovery_reason ? ` · ${session.recovery_reason}` : ""}</p>
+            <p role="status" data-tone={stale ? "failed" : toneOf(systemState)}>System: {systemState}{busy ? " · updating" : ""}{session?.recovery_reason ? ` · ${session.recovery_reason}` : ""}{stale && connected ? " · stale status" : ""}</p>
             <p role="status" data-tone={toneOf(inferenceState)}>Inference: {inferenceState}{newestWindow?.reason ? ` · ${newestWindow.reason}` : ""}</p>
             {live && <p data-tone={!capture.stream ? "failed" : session?.state === "running" ? "done" : "idle"}>Camera: {cameraStatus}{capture.stats.queued > captureFps ? ` · ${capture.stats.queued} frames queued` : ""}</p>}
-            <p data-tone={stale ? "failed" : "idle"}>Result lag: {latest ? seconds(Math.max(0, shown - latest.end_seconds)) : "no prediction yet"}{stale ? " · stale status" : ""}</p>
           </div>
           {session && <History windows={windows} jobs={jobs} session={session} more={partial} onLoadOlder={older} />}
         </>}
@@ -158,7 +157,7 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
         {id && capture.error && <p className="error-message" role="alert">{capture.error}</p>}
         {error && <p className="error-message" role="alert">{error} <button onClick={() => retry.current ? void send(retry.current.command, true) : poll.refresh()}>Retry connection / command</button></p>}
         {id ? <>
-          <section className="monitor-latest"><h2>Latest activity</h2>{latest?.prediction ? <Result job={latest} /> : <div className="result-placeholder"><p>No prediction yet.</p></div>}</section>
+          {session ? <LatestResult job={latest ?? null} session={session} position={shown} live={live} windows={windows} jobs={jobs} /> : <section className="monitor-latest"><h2>Last analyzed</h2><div className="result-placeholder"><p>No prediction yet.</p></div></section>}
           {summary}
         </> : <>
           {summary}

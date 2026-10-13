@@ -35,6 +35,10 @@ test("live camera frames produce predictions and pause or reload leaves an expli
   // The mock labels every window "fall"; it must come from captured frames, with their timestamps.
   await expect(panel.locator(".result-label").first()).toHaveText("fall", { timeout: 30_000 });
   await expect(panel.getByText(/Actual frame timestamps/).first()).toContainText(" s");
+  // The result is dated against the live edge, and the work still in flight is listed.
+  const latest = panel.locator(".monitor-latest");
+  await expect(latest.getByText(/^(Input ended|No current result · this one ended) \d+\.\d s ago$/)).toBeVisible();
+  await expect(latest.getByRole("list", { name: "Windows in progress" })).toContainText("Filling the next 1.5 s window");
 
   await panel.getByRole("button", { name: "Pause", exact: true }).click();
   await expect(panel.getByText(/System: paused/)).toBeVisible();
