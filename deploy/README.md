@@ -14,11 +14,11 @@ Later: process supervision, private networking or HTTPS, secrets injection, heal
 
 ## Modal GPU endpoint
 
-[`modal_vllm.py`](modal_vllm.py) serves `Qwen/Qwen3-VL-8B-Instruct` with vLLM on a rented Modal GPU. The application keeps running locally (`make dev`), and only the worker talks to the endpoint. The request contract was [validated live on an L4](../docs/vllm-live-validation.md#live-run-modal-l4-2026-10-12) on 2026-10-12; capacity and research parity have not been measured yet.
+[`modal_vllm.py`](modal_vllm.py) serves `Qwen/Qwen3-VL-8B-Instruct` (function `serve`, the default model) and `Qwen/Qwen3-VL-8B-Thinking` (function `serve_thinking`) with vLLM on rented Modal GPUs. Each model runs in its own function with its own URL and L4, since one vLLM process serves one model and an L4 holds one 8B model. The app lists both in the model picker and sends each run to its model's endpoint; `FALL_DETECTION_ADDITIONAL_MODELS` in `modal.env` names the Thinking endpoint. The application keeps running locally (`make dev`), and only the worker talks to the endpoint. The request contract was [validated live on an L4](../docs/vllm-live-validation.md#live-run-modal-l4-2026-10-12) on 2026-10-12; capacity and research parity have not been measured yet.
 
 Cost and access controls:
 
-- **Scale to zero.** The GPU container stops 10 minutes after the last request and is billed per second while it runs. `max_containers=1` means at most one GPU runs at a time. Set a workspace spending limit in the Modal dashboard as a hard cap.
+- **Scale to zero.** Each GPU container stops 10 minutes after the last request to its model and is billed per second while it runs. `max_containers=1` per function means at most one GPU per model, so two while both models are in use. Set a workspace spending limit in the Modal dashboard as a hard cap.
 - **Proxy auth.** Modal rejects requests without a valid proxy auth token at its edge, before any container starts, so a request without credentials never starts the GPU.
 - **Cold start.** The first request after idling waits for the container to start and the model to load: about 3.5 minutes in the first measured start, including a 74 s `torch.compile` that is now cached. The very first start also downloads about 17 GB of weights into a Modal volume. A later cold start from the web UI's **Warm up** button took 172 s. Warm up when you start a session (button or `make gpu-warm`) so the GPU is ready by the time you submit, and raise `FALL_DETECTION_REQUEST_TIMEOUT_SECONDS` so a window sent during a cold start does not time out.
 
@@ -43,6 +43,7 @@ The endpoint URL is public in this repository. That is harmless: without the tok
 cp .env.example .env    # then fill in the token
 make dev-gpu            # web UI, API and worker against the Modal GPU
 make gpu-warm           # optional: wake the GPU and print how long it took
+make gpu-warm MODEL=qwen3-vl-8b-thinking   # the same for the Thinking model
 make gpu-stop           # optional: stop the GPU now instead of after 10 idle minutes
 ```
 
@@ -61,9 +62,11 @@ In vLLM mode the web UI shows this as a notice naming the endpoint host. Only us
 
 With the vLLM backend, the top bar shows the GPU state instead of a static label: idle (scaled to zero), container up, warming up, ready, or unknown. The API reads it from Modal's control plane (`Function.get_current_stats`) using your local Modal CLI login, caches it for 5 seconds, and **never sends a request to vLLM**, so an open browser tab does not wake the GPU or keep it running. The UI polls every 15 seconds, and pauses while the tab is hidden. "Container up" means a container exists, but the API hasn't confirmed that vLLM is ready.
 
+With more than one model, the top bar shows one badge per model, and `?model=<name>` selects the model on every serving-status route (the default model when omitted).
+
 **Warm up** (`POST /serving-status/warmup`) is the only part that contacts vLLM: it polls `/health` until the server answers, exactly like `make gpu-warm`. Without `FALL_DETECTION_MODAL_APP`, the badge cannot see containers and only reflects warm-ups.
 
-**Shut down** (`POST /serving-status/shutdown`, or `make gpu-stop`) stops the app's GPU containers right away instead of waiting for the 10-minute idle scale-down. The app stays deployed, so the next request or warm-up cold-starts a new container. The Modal SDK has no public call for this, so the API runs `modal container list` and `modal container stop` with your local Modal login. Shutdown is refused (HTTP 409) while requests are running or queued: Modal reschedules a cancelled request on a new container, which would start the GPU again. It is also refused during a warm-up. A running monitoring session will wake the GPU again with its next window.
+**Shut down** (`POST /serving-status/shutdown`, or `make gpu-stop`) stops the app's GPU containers right away instead of waiting for the 10-minute idle scale-down. The app stays deployed, so the next request or warm-up cold-starts a new container. The Modal SDK has no public call for this, so the API runs `modal container list` and `modal container stop` with your local Modal login. Shutdown stops every model's containers, because they share the Modal app. It is refused (HTTP 409) while requests are running or queued for any model: Modal reschedules a cancelled request on a new container, which would start the GPU again. It is also refused during a warm-up. A running monitoring session will wake the GPU again with its next window.
 
 For a vLLM server started with `--api-key` (any host), set `FALL_DETECTION_INFERENCE_API_KEY` instead; the worker sends it as a bearer token.
 
