@@ -30,3 +30,11 @@ export function fpsForEnd(start: number, end: number, count: number): number | n
   const fps = (count - 1) / (end - start);
   return Number.isFinite(fps) && fps > 0 && fps <= 30 ? fps : null;
 }
+
+/** Readable run picker entry: creation time, outcome, and input window. */
+export function runName(job: AnalysisJob): string {
+  const created = new Date(job.created_at);
+  const time = Number.isNaN(created.getTime()) ? job.created_at.slice(0, 19) : created.toLocaleString([], { dateStyle: "medium", timeStyle: "medium" });
+  const outcome = job.prediction ? job.prediction.label.replaceAll("_", " ") : job.state;
+  return `${time} · ${outcome} · ${job.start_seconds.toFixed(1)}–${job.end_seconds.toFixed(1)} s`;
+}

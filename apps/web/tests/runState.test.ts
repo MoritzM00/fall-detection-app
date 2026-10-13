@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { AnalysisJob } from "../src/api";
-import { activeJobs, fpsForEnd, mergeHistory, submittedEnd, upsertJob } from "../src/runState.ts";
+import { activeJobs, fpsForEnd, mergeHistory, runName, submittedEnd, upsertJob } from "../src/runState.ts";
 
 function job(id: string, state: AnalysisJob["state"]): AnalysisJob {
   return { id, state } as AnalysisJob;
@@ -32,4 +32,13 @@ test("sampling derives end and rejects invalid windows", () => {
   assert.equal(fpsForEnd(0, 1, 6), 5);
   assert.equal(fpsForEnd(1, 0, 6), null);
   assert.equal(fpsForEnd(0, 0.1, 16), null);
+});
+
+test("run names show the outcome and window instead of raw identifiers", () => {
+  const base = { id: "run-id", created_at: "2026-10-12T16:26:18Z", start_seconds: 0, end_seconds: 2 };
+  const done = { ...base, state: "succeeded", prediction: { label: "sit_down" } } as AnalysisJob;
+  const failed = { ...base, state: "failed", prediction: null, created_at: "not a date" } as AnalysisJob;
+  assert.match(runName(done), / · sit down · 0\.0–2\.0 s$/);
+  assert.doesNotMatch(runName(done), /run-id/);
+  assert.equal(runName(failed), "not a date · failed · 0.0–2.0 s");
 });

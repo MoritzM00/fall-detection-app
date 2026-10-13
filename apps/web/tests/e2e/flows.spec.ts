@@ -1,10 +1,17 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
-import type { APIRequestContext } from "@playwright/test";
+import type { APIRequestContext, Locator, Page } from "@playwright/test";
 
 const clip = process.env.FALL_DETECTION_E2E_CLIP;
 if (!clip) throw new Error("Run browser tests through scripts/run_browser_tests.py");
+
+/** Sampling, model and prompt controls live in the settings dialog. */
+async function editSettings(scope: Page | Locator, edit: () => Promise<void>, close = "Done") {
+  await scope.getByRole("button", { name: "Settings", exact: true }).click();
+  await edit();
+  await scope.getByRole("button", { name: close, exact: true }).click();
+}
 
 async function waitForApi(request: APIRequestContext) {
   await expect.poll(async () => (await request.get(`http://127.0.0.1:${process.env.FALL_DETECTION_API_PORT ?? "8000"}/health`)).status()).toBe(200);
@@ -32,9 +39,12 @@ test("uploaded frames and submitted result survive source and sampling changes",
   await expect.poll(() => page.locator("video").evaluate((video: HTMLVideoElement) => video.duration)).toBeGreaterThan(2.5);
   await expect(page.locator(".source-caption")).toContainText("3.0 s clip");
 
-  await page.getByLabel("Frames", { exact: true }).fill("8");
-  await page.getByLabel("Sampling FPS").fill("4");
-  await page.getByLabel("Crop size").selectOption("224");
+  await editSettings(page, async () => {
+    await page.getByLabel("Frames", { exact: true }).fill("8");
+    await page.getByLabel("Sampling FPS").fill("4");
+    await page.getByLabel("Crop size").selectOption("224");
+  });
+  await expect(page.locator(".settings-summary")).toContainText("Custom settings");
   await expect(page.locator(".sample-frame img")).toHaveCount(8);
   await expect.poll(() => page.locator(".sample-frame img").first().evaluate((image: HTMLImageElement) => image.naturalWidth)).toBe(224);
   await expect(page.locator(".frame-strip figcaption").last()).toHaveText("1.750s");
@@ -43,7 +53,7 @@ test("uploaded frames and submitted result survive source and sampling changes",
   await expect(page.getByText(/Submitted source: clip.mp4 · 0.000–1.750 s/)).toBeVisible();
   await page.getByRole("button", { name: "Change source" }).click();
   await page.getByRole("button", { name: "Use sample clip" }).click();
-  await page.getByLabel("Frames", { exact: true }).fill("4");
+  await editSettings(page, () => page.getByLabel("Frames", { exact: true }).fill("4"));
   await expect(page.getByText(/Submitted source: clip.mp4 · 0.000–1.750 s/)).toBeVisible();
   await expect(page.locator(".result-card .result-label")).toHaveText("fall", { timeout: 20_000 });
   await page.reload();
@@ -58,21 +68,24 @@ test("sample, upload, and dataset sources reset editable sampling through one pa
   await page.goto("/");
   await page.locator('input[type="file"]').setInputFiles(clip);
   await expect(page.locator(".source-caption")).toContainText("clip.mp4");
-  await page.getByLabel("Frames", { exact: true }).fill("8");
-  await page.getByLabel("Sampling FPS").fill("4");
-  await page.getByLabel("Crop size").selectOption("224");
+  await editSettings(page, async () => {
+    await page.getByLabel("Frames", { exact: true }).fill("8");
+    await page.getByLabel("Sampling FPS").fill("4");
+    await page.getByLabel("Crop size").selectOption("224");
+  });
   await page.getByRole("button", { name: "Change source" }).click();
   await page.getByRole("button", { name: "Use sample clip" }).click();
   await expect(page.getByLabel("Frames", { exact: true })).toHaveValue("16");
   await expect(page.getByLabel("Sampling FPS")).toHaveValue("7.5");
   await expect(page.getByLabel("Crop size")).toHaveValue("448");
+  await expect(page.locator(".settings-summary")).toContainText("Thesis baseline");
   await page.getByRole("button", { name: "Change source" }).click();
   await page.getByRole("button", { name: "Browse dataset" }).click();
   await expect(page.locator("#dataset-video option")).toHaveCount(1);
   await page.getByRole("button", { name: "Open clip" }).click();
   await expect(page.locator(".asset-pill")).toHaveText("OmniFall");
   await expect(page.getByLabel("Frames", { exact: true })).toHaveValue("16");
-  await page.getByLabel("Frames", { exact: true }).fill("8");
+  await editSettings(page, () => page.getByLabel("Frames", { exact: true }).fill("8"));
   await page.getByRole("button", { name: "Change source" }).click();
   await page.locator('input[type="file"]').setInputFiles(clip);
   await expect(page.locator(".asset-pill")).toHaveText("Uploaded");
@@ -103,6 +116,27 @@ test("recovers history and protects an active run after reload", async ({ page, 
   await page.unroute(`**/api/analysis-jobs/${secondJob.id}`);
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(page.getByText(/Run status unavailable/)).toHaveCount(0);
+});
+
+test("settings that exceed the served context window block the run until reset", async ({ page, request }) => {
+  await waitForApi(request);
+  await page.route("**/api/capabilities", async (route) => {
+    const response = await route.fetch();
+    await route.fulfill({ response, json: { ...(await response.json()), serving_limits: { max_model_len: 4000 } } });
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Use sample clip" }).click();
+  await expect(page.locator(".analyze-button")).toBeEnabled();
+  await editSettings(page, async () => {
+    await page.getByLabel("Frames", { exact: true }).fill("32");
+    await page.getByLabel("Crop size").selectOption("672");
+    await expect(page.getByRole("alert")).toContainText("context window is 4,000");
+  });
+  await expect(page.locator(".settings-summary")).toContainText("Invalid");
+  await expect(page.locator(".analyze-button")).toBeDisabled();
+  await editSettings(page, () => page.getByRole("button", { name: "Reset to thesis baseline" }).click());
+  await expect(page.locator(".settings-summary")).toContainText("Thesis baseline");
+  await expect(page.locator(".analyze-button")).toBeEnabled();
 });
 
 test("shows history errors and recovers before allowing submission", async ({ page, request }) => {
@@ -195,7 +229,7 @@ test("edited prompt and generation survive submission and reload and compare sav
   await page.locator(".analyze-button").click();
   const baseline = await (await firstResponse).json();
   await expect(page.locator(".result-card .result-label")).toHaveText("fall", { timeout: 20_000 });
-  await page.getByText("Prompt & generation", { exact: true }).click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByLabel("Resolved prompt").fill(" ");
   await expect(page.locator(".analyze-button")).toBeDisabled();
   const prompt = "Classify the primary activity using the 16 supported labels. Respond only: The best answer is: <class_label>";
@@ -205,6 +239,8 @@ test("edited prompt and generation survive submission and reload and compare sav
   await expect(page.locator(".analyze-button")).toBeDisabled();
   await expect(page.getByRole("alert")).toContainText("token limit from 16 to 4096");
   await page.getByLabel("Max tokens", { exact: true }).fill("80");
+  await page.getByRole("button", { name: "Done", exact: true }).click();
+  await expect(page.locator(".settings-summary")).toContainText("Experimental");
   const secondResponse = submit();
   await page.locator(".analyze-button").click();
   const edited = await (await secondResponse).json();
@@ -212,8 +248,11 @@ test("edited prompt and generation survive submission and reload and compare sav
   expect(edited.configuration.prompt_preset).toBe("custom");
   expect(edited.configuration.prompt_text).toBe(prompt);
   expect(edited.configuration.generation).toEqual({ temperature: 0.6, max_tokens: 80 });
-  await page.getByRole("button", { name: "Reset prompt & generation" }).click();
-  await expect(page.getByLabel("Temperature", { exact: true })).toHaveValue("0");
+  await editSettings(page, async () => {
+    await page.getByRole("button", { name: "Reset to thesis baseline" }).click();
+    await expect(page.getByLabel("Temperature", { exact: true })).toHaveValue("0");
+  });
+  await expect(page.locator(".settings-summary")).toContainText("Thesis baseline");
   await expect(page.locator(".result-card .result-label")).toHaveText("fall", { timeout: 20_000 });
   await page.reload();
   await expect(page.locator("#recent-run")).toHaveValue(edited.id);
@@ -245,8 +284,10 @@ for (const kind of ["OFFSET"] as const) {
     await page.goto("/");
     await page.locator('input[type="file"]').setInputFiles(path);
     await expect(page.locator(".source-caption")).toContainText("1.2 s clip");
-    await page.getByLabel("Frames", { exact: true }).fill("6");
-    await page.getByLabel("Sampling FPS").fill("5");
+    await editSettings(page, async () => {
+      await page.getByLabel("Frames", { exact: true }).fill("6");
+      await page.getByLabel("Sampling FPS").fill("5");
+    });
     await expect(page.locator(".sample-frame img")).toHaveCount(6);
     await expect(page.locator(".frame-strip figcaption").first()).toHaveText("0.000s");
     await expect(page.locator(".frame-strip figcaption").last()).toHaveText("1.000s");

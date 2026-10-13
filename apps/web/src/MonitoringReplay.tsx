@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { createLiveSession, createSession } from "./api";
 import type { Capabilities, ExperimentSettings, MonitoringSession } from "./api";
 import { SourceSelection } from "./SourceSelection";
-import { ExperimentControls } from "./ExperimentControls";
+import { ExperimentControls, baselineExperiment, experimentValid, isBaselineExperiment } from "./ExperimentControls";
+import { BASELINE_SAMPLING, SettingsDialog, SettingsSummary, isBaselineSampling, samplingSummary } from "./SettingsDialog";
 import { useSourceSelection } from "./useSourceSelection";
 import { useLiveCapture } from "./useLiveCapture";
 import { contextWindowError } from "./context";
@@ -20,6 +21,7 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
   const [fps, setFps] = useState(7.5);
   const [size, setSize] = useState(448);
   const [sourceMode, setSourceMode] = useState<"recording" | "camera">("recording");
+  const [settingsOpen, setSettingsOpen] = useState(false);
   function hydrate(next: MonitoringSession) {
     setFrames(next.configuration.preprocessing.frames); setFps(next.configuration.preprocessing.fps); setSize(next.configuration.preprocessing.resize);
     setSettings({ model: next.configuration.model, prompt_text: next.configuration.prompt_text, generation: { ...next.configuration.generation } });
@@ -30,7 +32,7 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
   const { id, select, session, video, windows, jobs, error, connected, media, current, retry } = poll;
   const { busy, setBusy, position, send } = commands;
 
-  useEffect(() => { if (capabilities && !current.current) setSettings({ model: capabilities.models[0], prompt_text: capabilities.prompt_preset.prompt, generation: { ...capabilities.generation } }); }, [capabilities]);
+  useEffect(() => { if (capabilities && !current.current) setSettings(baselineExperiment(capabilities)); }, [capabilities]);
 
   const live = video?.source === "live" || session?.source_kind === "live";
   const captureFps = session?.capture_fps ?? LIVE_CAPTURE_FPS;
@@ -49,9 +51,7 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
   const minTokens = capabilities?.generation_limits.min_max_tokens ?? 16;
   const maxTokens = capabilities?.generation_limits.max_max_tokens ?? 4096;
   const maxFps = live || (!id && sourceMode === "camera") ? captureFps : 30;
-  const settingsValid = settings && settings.prompt_text.trim() && Number.isInteger(settings.generation.max_tokens) && settings.prompt_text.length <= 16000
-    && settings.generation.max_tokens >= minTokens && settings.generation.max_tokens <= maxTokens && settings.generation.temperature >= 0 && settings.generation.temperature <= 2
-    && frames >= 2 && frames <= 32 && Number.isInteger(frames) && fps > 0 && fps <= maxFps && (frames - 1) / fps <= 30;
+  const settingsValid = settings !== null && experimentValid(settings, capabilities) && frames >= 2 && frames <= 32 && Number.isInteger(frames) && fps > 0 && fps <= maxFps && (frames - 1) / fps <= 30;
   const contextError = settingsValid ? contextWindowError(capabilities, frames, size, settings.prompt_text, settings.generation.max_tokens) : null;
   const configValid = settingsValid && !contextError;
   function configuration(videoId: string) { return { ...settings!, video_id: videoId, frame_count: frames, fps, size }; }
@@ -70,13 +70,34 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
     finally { setBusy(false); }
   }
 
+  // The summary describes the running segment when a session exists, else the pending form.
+  const active = session?.configuration;
+  const summarySampling = active ? [active.preprocessing.frames, active.preprocessing.fps, active.preprocessing.resize] as const : [frames, fps, size] as const;
+  const summarySettings = active ? { model: active.model, prompt_text: active.prompt_text, generation: active.generation } : settings;
+  const baseline = isBaselineSampling(...summarySampling) && Boolean(capabilities && summarySettings && isBaselineExperiment(capabilities, summarySettings));
+  // Applying identical settings would only split the session into a needless segment.
+  const unchanged = active !== undefined && settings !== null && frames === active.preprocessing.frames && fps === active.preprocessing.fps && size === active.preprocessing.resize
+    && settings.model === active.model && settings.prompt_text === active.prompt_text
+    && settings.generation.temperature === active.generation.temperature && settings.generation.max_tokens === active.generation.max_tokens;
+  function closeSettings(discard: boolean) {
+    setSettingsOpen(false);
+    if (!discard) return;
+    // Unapplied edits would otherwise linger and misdescribe the running segment.
+    if (current.current) hydrate(current.current);
+    // A failed apply waiting for retry would otherwise reapply the settings just discarded.
+    if (retry.current?.command.action === "configure") { retry.current = null; poll.setError(null); }
+  }
+  function resetSettings() {
+    setFrames(BASELINE_SAMPLING.frames); setFps(BASELINE_SAMPLING.fps); setSize(BASELINE_SAMPLING.size);
+    if (capabilities) setSettings(baselineExperiment(capabilities));
+  }
+
   const duration = session?.duration ?? 0;
   // Resuming a finished recording would restart the media element at 0 while the session stays at its end.
   const ended = Boolean(session && !live && session.position >= session.duration);
   const windowSeconds = session ? (session.configuration.preprocessing.frames - 1) / session.configuration.preprocessing.fps : (frames - 1) / fps;
   const stale = !connected || (poll.updated > 0 && poll.now - poll.updated > 3000);
   const systemState = connected ? session?.state ?? "recovering" : "disconnected";
-  const backend = session?.configuration.backend_kind === "mock" || (!session && capabilities?.simulated) ? "Simulated predictions" : session || capabilities ? "Online vLLM" : "Backend unavailable";
   const seek = <input aria-label="Seek recording" type="range" min="0" max={duration} step="0.1" value={position} disabled={busy || !session || !connected} onChange={event => commands.seek(Number(event.target.value))} />;
   // Recordings show the media clock; a live session's position is the server watermark.
   const shown = live ? session?.position ?? 0 : position;
@@ -85,26 +106,26 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
   const older = () => void poll.older();
   const cameraPreview = capture.stream ? <video className="live-feed" ref={capture.attach} autoPlay muted playsInline /> : <div className="replay-placeholder"><span>Camera off</span><button className="button primary" disabled={busy} onClick={() => void capture.connect()}>Connect camera</button></div>;
   const cameraStatus = !capture.stream ? "off" : session?.state !== "running" ? "connected" : capture.stats.fps === null ? "starting" : `${capture.stats.fps.toFixed(1)} fps · upload lag ${capture.stats.lagSeconds?.toFixed(1) ?? "–"} s`;
-  return <section className="monitoring" aria-label="Monitoring">
-    <div className="intro"><div><h1>Monitoring</h1><p>Replay a recording as if it were live, or monitor a camera. Each prediction describes the first part of its input window; completion time is processing metadata.</p></div></div>
+  const summary = <SettingsSummary baseline={baseline} invalid={!session && settings !== null && !configValid} detail={summarySettings ? samplingSummary(...summarySampling) : "Backend settings unavailable"} disabled={!settings} onEdit={() => setSettingsOpen(true)} />;
+  return <section className="monitoring" aria-label="Monitoring" data-generation={session?.generation}>
+    <h1 className="sr-only">Monitoring</h1>
     <div className="session-bar">
       <label className="session-picker"><span>Session</span><select aria-label="Saved monitoring session" value={id} onChange={event => select(event.target.value)}><option value="">New session</option>{poll.sessions.map(item => <option key={item.id} value={item.id}>{sessionName(item)}</option>)}</select></label>
-      <span className="mock-badge">{backend}</span>
+      {/* The top bar already says "Local simulation" unless an old mock session is opened against a real backend. */}
+      {session?.configuration.backend_kind === "mock" && capabilities?.simulated !== true && <span className="mock-badge">Simulated predictions</span>}
       {live && <span className="mock-badge live-badge">Live camera</span>}
-      {session && <p className="download-links"><span>Export session</span><a aria-label="Download complete session JSON" href={`/api/monitoring-sessions/${session.id}/export?format=json`} download>JSON</a><a aria-label="Download complete session CSV" href={`/api/monitoring-sessions/${session.id}/export?format=csv`} download>CSV</a></p>}
+      {session && <p className="download-links"><span>Export</span><a aria-label="Download complete session JSON" href={`/api/monitoring-sessions/${session.id}/export?format=json`} download>JSON</a><a aria-label="Download complete session CSV" href={`/api/monitoring-sessions/${session.id}/export?format=csv`} download>CSV</a></p>}
     </div>
     <div className="workspace">
       <div className="viewer-panel">
         {!id ? <>
           <div className="source-mode" aria-label="Session source"><button aria-pressed={sourceMode === "recording"} onClick={() => setSourceMode("recording")}>Recording</button><button aria-pressed={sourceMode === "camera"} onClick={() => setSourceMode("camera")}>Camera</button></div>
           {sourceMode === "recording" ? <>
-            <SourceSelection {...source} onSample={() => void source.useSample()} onBrowseDataset={() => void source.browseDataset()} onDatasetPathChange={source.setSelectedDatasetPath} onOpenDataset={() => void source.useDatasetVideo()} onUpload={file => void source.upload(file)} onDurationLoaded={source.onDurationLoaded} />
+            <SourceSelection {...source} onSample={() => void source.useSample()} onBrowseDataset={() => void source.browseDataset()} onDatasetPathChange={source.setSelectedDatasetPath} onOpenDataset={() => void source.useDatasetVideo()} onUpload={file => void source.upload(file)} onDurationLoaded={source.onDurationLoaded} onChangeSource={source.clear} />
             {source.error && <p className="error-message" role="alert">{source.error}</p>}
-            <button className="analyze-button" disabled={busy || !source.video || !source.duration || !configValid} onClick={() => void create()}>Create monitoring session</button>
           </> : <>
             <div className="replay-screen">{cameraPreview}</div>
             {capture.error && <p className="error-message" role="alert">{capture.error}</p>}
-            <button className="analyze-button" disabled={busy || !capture.stream || !configValid} onClick={() => void createLive()}>Create live session</button>
             <p className="preview-note">Frames are captured at {LIVE_CAPTURE_FPS} fps and kept in the local data directory until you delete them. Use test footage of yourself; do not record other people without their consent.</p>
           </>}
         </> : <>
@@ -123,30 +144,49 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
             {live && <p data-tone={!capture.stream ? "failed" : session?.state === "running" ? "done" : "idle"}>Camera: {cameraStatus}{capture.stats.queued > captureFps ? ` · ${capture.stats.queued} frames queued` : ""}</p>}
             <p data-tone={stale ? "failed" : "idle"}>Result lag: {latest ? seconds(Math.max(0, shown - latest.end_seconds)) : "no prediction yet"}{stale ? " · stale status" : ""}</p>
           </div>
-          <p className="preview-note">Window {windowSeconds.toFixed(2)} s · stride {session?.stride} s · expiration {session?.expiration} s · polled every second. Coverage gaps and system failures are never reported as activities.</p>
           {session && <History windows={windows} jobs={jobs} session={session} more={partial} onLoadOlder={older} />}
         </>}
       </div>
       <aside className="analysis-panel">
         {id && capture.error && <p className="error-message" role="alert">{capture.error}</p>}
         {error && <p className="error-message" role="alert">{error} <button onClick={() => retry.current ? void send(retry.current.command, true) : poll.refresh()}>Retry connection / command</button></p>}
-        {id && <section className="monitor-latest"><h2>Latest activity</h2>{latest?.prediction ? <Result job={latest} /> : <div className="result-placeholder"><p>No completed prediction in the current generation and segment.</p></div>}</section>}
-        <section className="monitor-config"><h2>Configuration</h2>
-          <label className="setting-row"><span>Frames</span><input aria-label="Monitoring frames" type="number" value={frames} min="2" max="32" onChange={event => setFrames(Number(event.target.value))} /></label>
-          {(live || (!id && sourceMode === "camera")) && <div className="setting-row"><span>Capture FPS</span><strong>{captureFps}</strong></div>}
-          <label className="setting-row"><span>Sampling FPS</span><input aria-label="Monitoring FPS" type="number" value={fps} min="0.1" max={maxFps} step="0.1" onChange={event => setFps(Number(event.target.value))} /></label>
-          <label className="setting-row"><span>Crop size</span><select aria-label="Monitoring crop" value={size} onChange={event => setSize(Number(event.target.value))}><option value={224}>224 × 224</option><option value={448}>448 × 448</option><option value={672}>672 × 672</option></select></label>
-          {capabilities && settings && <ExperimentControls capabilities={capabilities} settings={settings} busy={busy} onChange={setSettings} />}
-          {settings && !settingsValid && <p className="error-message" role="alert">Use 2–32 frames, a sampling FPS above 0 and up to {maxFps}, a window of at most 30 s, a nonblank prompt, temperature from 0 to 2, and an integer token limit from {minTokens} to {maxTokens}.</p>}
-          {contextError && <p className="error-message" role="alert">{contextError}</p>}
-          {session && <>
-            <button className="button secondary wide" disabled={busy || !connected || !configValid} onClick={() => void send({ action: "configure", configuration: configuration(session.video_id) })}>Apply new configuration segment</button>
-            <p className="preview-note">Current generation {session.generation} · segment {session.segment_id.slice(0, 8)}</p>
-            <details className="plain-details"><summary>Saved segment settings</summary><pre className="saved-prompt">{JSON.stringify(session.configuration, null, 2)}</pre></details>
-          </>}
-        </section>
-        {capabilities && <ActivityLabels labels={capabilities.labels} />}
+        {id ? <>
+          <section className="monitor-latest"><h2>Latest activity</h2>{latest?.prediction ? <Result job={latest} /> : <div className="result-placeholder"><p>No prediction yet.</p></div>}</section>
+          {summary}
+        </> : <>
+          {summary}
+          {sourceMode === "recording"
+            ? <button className="analyze-button" disabled={busy || !source.video || !source.duration || !configValid} onClick={() => void create()}>Create monitoring session</button>
+            : <button className="analyze-button" disabled={busy || !capture.stream || !configValid} onClick={() => void createLive()}>Create live session</button>}
+          <p className="preview-note">Each prediction describes the first part of its input window. Coverage gaps and failures are shown separately and never reported as an activity.</p>
+        </>}
       </aside>
     </div>
+    <SettingsDialog open={settingsOpen} title={session ? "Session settings" : "Monitoring settings"} onClose={() => closeSettings(true)} footer={<>
+      <button type="button" className="text-button" disabled={busy} onClick={resetSettings}>Reset to thesis baseline</button>
+      {session
+        ? <button type="button" className="button primary" disabled={busy || !connected || !configValid || unchanged} onClick={() => { closeSettings(false); void send({ action: "configure", configuration: configuration(session.video_id) }); }}>Apply new configuration segment</button>
+        : <button type="button" className="button primary" onClick={() => closeSettings(false)}>Done</button>}
+    </>}>
+      {session && <p className="preview-note">Changes apply from now on as a new configuration segment. Earlier predictions keep the settings they were made with.</p>}
+      <section className="settings-section">
+        <h3>Sampling {!isBaselineSampling(frames, fps, size) && <small className="experimental">Experimental</small>}</h3>
+        <label className="setting-row"><span>Frames</span><input aria-label="Monitoring frames" type="number" value={frames} min="2" max="32" onChange={event => setFrames(Number(event.target.value))} /></label>
+        {(live || (!id && sourceMode === "camera")) && <div className="setting-row"><span>Capture FPS</span><strong>{captureFps}</strong></div>}
+        <label className="setting-row"><span>Sampling FPS</span><input aria-label="Monitoring FPS" type="number" value={fps} min="0.1" max={maxFps} step="0.1" onChange={event => setFps(Number(event.target.value))} /></label>
+        <label className="setting-row"><span>Crop size</span><select aria-label="Monitoring crop" value={size} onChange={event => setSize(Number(event.target.value))}><option value={224}>224 × 224</option><option value={448}>448 × 448</option><option value={672}>672 × 672</option></select></label>
+        <div className="setting-row"><span>Window length</span><strong>{((frames - 1) / fps).toFixed(2)} s</strong></div>
+      </section>
+      {capabilities && settings && <ExperimentControls capabilities={capabilities} settings={settings} busy={busy} onChange={setSettings} />}
+      {settings && !settingsValid && <p className="error-message" role="alert">Use 2–32 frames, a sampling FPS above 0 and up to {maxFps}, a window of at most 30 s, a nonblank prompt, temperature from 0 to 2, and an integer token limit from {minTokens} to {maxTokens}.</p>}
+      {contextError && <p className="error-message" role="alert">{contextError}</p>}
+      {session && <section className="settings-section">
+        <h3>Running segment</h3>
+        <div className="setting-row"><span>Generation · segment</span><strong>{session.generation} · {session.segment_id.slice(0, 8)}</strong></div>
+        <div className="setting-row"><span>Window · stride · expiration</span><strong>{windowSeconds.toFixed(2)} s · {session.stride} s · {session.expiration} s</strong></div>
+        <details className="plain-details"><summary>Saved segment settings</summary><pre className="saved-prompt">{JSON.stringify(session.configuration, null, 2)}</pre></details>
+      </section>}
+      {capabilities && <ActivityLabels labels={capabilities.labels} />}
+    </SettingsDialog>
   </section>;
 }

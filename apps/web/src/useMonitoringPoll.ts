@@ -51,6 +51,12 @@ export function useMonitoringPoll(events: PollEvents) {
     setSession(next);
     if (next.state !== "running") media.current?.pause();
   }
+  /** Mirror a segment's saved settings once, whether a poll or a command response reveals it first. */
+  function hydrateSegment(next: MonitoringSession) {
+    if (hydrated.current === next.segment_id) return;
+    hydrated.current = next.segment_id;
+    handlers.current.hydrate(next);
+  }
   function select(next: string) {
     const leaving = current.current;
     if (leaving?.state === "running") void commandSession(leaving.id, pauseCommand()).catch(() => {});
@@ -96,10 +102,7 @@ export function useMonitoringPoll(events: PollEvents) {
       setWindows(old => [...history, ...old.filter(w => w.cursor < (history.at(-1)?.cursor ?? 0) && !history.some(item => item.id === w.id))]);
       setJobs(old => ({ ...old, ...Object.fromEntries(loaded.map(job => [job.id, job])) }));
       setConnected(true); setUpdated(Date.now()); if (!retry.current) setError(null);
-      if (hydrated.current !== next.segment_id) {
-        hydrated.current = next.segment_id;
-        handlers.current.hydrate(next);
-      }
+      hydrateSegment(next);
       if (initialPosition.current) {
         // Reload cannot restore browser playback. Explicitly pause persisted admission.
         initialPosition.current = false;
@@ -152,7 +155,7 @@ export function useMonitoringPoll(events: PollEvents) {
 
   return {
     id, select, sessions, session, video, windows, jobs, error, setError, connected, setConnected,
-    updated, now, historyComplete, older, adopt, refresh: () => void poll(fence.current),
+    updated, now, historyComplete, older, adopt, hydrateSegment, refresh: () => void poll(fence.current),
     media, fence, current, pending, positionPending, retry, initialPosition,
   };
 }

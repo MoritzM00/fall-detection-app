@@ -1,4 +1,12 @@
 import { expect, test } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
+
+/** Sampling, model and prompt controls live in the settings dialog. */
+async function editSettings(scope: Page | Locator, edit: () => Promise<void>, close = "Done") {
+  await scope.getByRole("button", { name: "Settings", exact: true }).click();
+  await edit();
+  await scope.getByRole("button", { name: close, exact: true }).click();
+}
 
 test("live camera frames produce predictions and pause or reload leaves an explicit gap", async ({ page }) => {
   await page.goto("/");
@@ -9,8 +17,10 @@ test("live camera frames produce predictions and pause or reload leaves an expli
   await panel.getByRole("button", { name: "Connect camera" }).click();
   const feed = panel.locator("video.live-feed");
   await expect.poll(() => feed.evaluate((video: HTMLVideoElement) => video.videoWidth)).toBeGreaterThan(0);
-  await panel.getByLabel("Monitoring frames").fill("4");
-  await panel.getByLabel("Monitoring FPS").fill("2");
+  await editSettings(panel, async () => {
+    await panel.getByLabel("Monitoring frames").fill("4");
+    await panel.getByLabel("Monitoring FPS").fill("2");
+  });
   await panel.getByRole("button", { name: "Create live session" }).click();
   await expect(panel.getByRole("heading", { name: "Live camera", exact: true })).toBeVisible();
   await expect(panel.getByLabel("Seek recording")).toHaveCount(0);

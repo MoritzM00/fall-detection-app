@@ -1,20 +1,26 @@
 import { useState } from "react";
 import type { AnalysisJob } from "./api";
 import { comparisonRows, samePreparedFrames, sameWindow } from "./comparisonState";
+import { runName } from "./runState";
 
 export function RunComparison({ jobs, selectedJob }: { jobs: AnalysisJob[]; selectedJob: AnalysisJob | null }) {
   const [comparisonId, setComparisonId] = useState("");
   if (!selectedJob) return null;
   const candidates = jobs.filter((item) => item.id !== selectedJob.id && sameWindow(item, selectedJob));
+  // Only runs of the same source and window are comparable; hide the section until one exists.
+  if (!candidates.length) return null;
   const other = candidates.find((item) => item.id === comparisonId);
   return <section className="run-comparison" aria-label="Run comparison">
-    <h2>Compare runs</h2>
-    <p className="preview-note">Compare the selected saved run with another run of the same source and time window. Differences are highlighted. Recent history includes up to 50 finished runs.</p>
-    <label htmlFor="compare-run">Compare with</label>
-    <select id="compare-run" value={other?.id ?? ""} disabled={!candidates.length} onChange={(event) => setComparisonId(event.target.value)}>
-      <option value="">{candidates.length ? "Choose a saved run" : "No other run for this source and window"}</option>
-      {candidates.map((item) => <option key={item.id} value={item.id}>{item.created_at.slice(0, 19)} · {item.state} · {item.id}</option>)}
-    </select>
+    <div className="comparison-heading">
+      <div><h2>Compare runs</h2><p className="preview-note">Other runs of this source and window. Differences are highlighted.</p></div>
+      <div className="comparison-picker">
+        <label htmlFor="compare-run">Compare with</label>
+        <select id="compare-run" value={other?.id ?? ""} onChange={(event) => setComparisonId(event.target.value)}>
+          <option value="">Choose a saved run</option>
+          {candidates.map((item) => <option key={item.id} value={item.id}>{runName(item)}</option>)}
+        </select>
+      </div>
+    </div>
     {other && <>
       <p className="preview-note">{samePreparedFrames(selectedJob, other) ? "Both runs use the same immutable prepared frames." : "Input frames differ or cannot be verified as identical. Compare sampling and input identity as well as model settings."}</p>
       {(selectedJob.configuration?.backend_kind === "mock" || other.configuration?.backend_kind === "mock") && <p className="simulation-note">Mock results and timings are simulated; this comparison does not measure model quality or GPU performance.</p>}

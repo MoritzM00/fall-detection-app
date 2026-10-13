@@ -36,7 +36,7 @@ export function ReplayControls({ session, busy, connected, ended, onBegin, onPau
 }
 
 export function ActivityLabels({ labels }: { labels: string[] }) {
-  return <details className="plain-details"><summary>All {labels.length} activity labels</summary><p>{labels.join(", ")}</p></details>;
+  return <section className="settings-section"><h3>Activity labels</h3><p className="preview-note">The model chooses one of {labels.length} labels: {labels.map(label => label.replaceAll("_", " ")).join(", ")}.</p></section>;
 }
 
 type HistoryProps = { windows: MonitoringWindow[]; jobs: Record<string, AnalysisJob>; session: MonitoringSession; more: boolean; onLoadOlder: () => void };
@@ -51,10 +51,10 @@ export function History({ windows, jobs, session, more, onLoadOlder }: HistoryPr
         <summary>
           <i data-tone={toneOf(state, job)} aria-hidden="true" />
           <span className="history-range">{seconds(window.start_seconds)}–{seconds(window.end_seconds)}</span>
-          <span className="history-meta">Generation {window.generation} · #{window.sequence}{window.sequence_end !== window.sequence ? `–${window.sequence_end}` : ""} · {state}{window.reason ? ` ${window.reason}` : ""}{historical ? " · historical" : ""}</span>
+          <span className="history-meta">{state}{window.reason ? ` ${window.reason}` : ""}{historical ? " · historical" : ""}</span>
           {job?.prediction && <strong className={isAlert(job) ? "alert" : ""}>{job.prediction.label.replaceAll("_", " ")}</strong>}
         </summary>
-        <p className="preview-note">Segment {window.segment_id.slice(0, 8)} · {window.reason ?? "No coverage gap recorded"}</p>
+        <p className="preview-note">Generation {window.generation} · window #{window.sequence}{window.sequence_end !== window.sequence ? `–${window.sequence_end}` : ""} · segment {window.segment_id.slice(0, 8)} · {window.reason ?? "No coverage gap recorded"}</p>
         {job && <Result job={job} />}
       </details></li>;
     })}</ul>
@@ -94,18 +94,20 @@ export function Result({ job }: { job: AnalysisJob }) {
   const prediction = job.prediction;
   const completed = prediction ? new Date(prediction.completed_at) : null;
   return <div className="result-card">
-    <div className="result-overline"><span>System state: {job.state}{job.error ? ` · ${job.error}` : ""}</span>{prediction?.backend_kind === "mock" && <span>Simulated</span>}</div>
+    <div className="result-overline"><span>{job.state === "succeeded" ? "Activity" : `System state: ${job.state}${job.error ? ` · ${job.error}` : ""}`}</span>{prediction?.backend_kind === "mock" && <span>Simulated</span>}</div>
     {prediction && <>
       <strong className={`result-label ${isAlert(job) ? "alert" : ""}`}>{prediction.label.replaceAll("_", " ")}</strong>
       <p className="simulation-note">Describes the first part of the input window.</p>
       <dl>
         <div><dt>Input interval</dt><dd>{seconds(job.start_seconds)}–{seconds(job.end_seconds)}</dd></div>
-        <div><dt>Request · pipeline</dt><dd>{prediction.request_duration_ms.toFixed(0)} ms · {prediction.total_duration_ms.toFixed(0)} ms</dd></div>
-        <div><dt>Tokens</dt><dd>{formatTokenUsage(prediction)}</dd></div>
         <div><dt>Completed</dt><dd title={prediction.completed_at}>{completed && !Number.isNaN(completed.getTime()) ? completed.toLocaleTimeString() : prediction.completed_at}</dd></div>
       </dl>
     </>}
-    <details className="result-details"><summary>Frames, input and configuration</summary>
+    <details className="result-details"><summary>Details</summary>
+      {prediction && <dl>
+        <div><dt>Request · pipeline</dt><dd>{prediction.request_duration_ms.toFixed(0)} ms · {prediction.total_duration_ms.toFixed(0)} ms</dd></div>
+        <div><dt>Tokens</dt><dd>{formatTokenUsage(prediction)}</dd></div>
+      </dl>}
       {prediction && <p className="frame-times">Actual frame timestamps: {prediction.sampled_timestamps.map(seconds).join(", ")}</p>}
       {prediction?.backend_kind === "mock" && <p className="simulation-note">Simulated by fixture <span title={prediction.fixture_version ?? undefined}>{shortId(prediction.fixture_version)}</span>. Local timings include the mock's injected delay; they are not GPU throughput measurements.</p>}
       <p className="raw-response">Job {job.id} · configuration {job.configuration_id} · prepared input {job.prepared_input_id ?? "synthetic"}</p><pre className="saved-prompt">{JSON.stringify(job.configuration, null, 2)}</pre>

@@ -15,7 +15,7 @@ const starts = (action: MonitoringCommand["action"]) => ["start", "resume", "res
  * command advances it. A failed command is kept for an explicit retry.
  */
 export function useSessionCommands(poll: MonitoringPoll) {
-  const { media, fence, current, pending, positionPending, retry, initialPosition, adopt, setError, setConnected } = poll;
+  const { media, fence, current, pending, positionPending, retry, initialPosition, adopt, hydrateSegment, setError, setConnected } = poll;
   const [busy, setBusy] = useState(false);
   const [position, setPosition] = useState(0);
   const syntheticPosition = useRef(0);
@@ -40,6 +40,8 @@ export function useSessionCommands(poll: MonitoringPoll) {
       }
       if (payload.action === "position" && (current.current?.generation !== next.generation || current.current.segment_id !== next.segment_id)) return;
       if (!preserveRetry) retry.current = null; current.current = next; adopt(next); setConnected(true);
+      // Hydrate a segment created by this command now; a later poll would overwrite edits made in between.
+      hydrateSegment(next);
       if (payload.action !== "position") {
         syntheticPosition.current = next.position; setPosition(next.position);
         if (media.current && Math.abs(media.current.currentTime - next.position) > 0.1) media.current.currentTime = next.position;

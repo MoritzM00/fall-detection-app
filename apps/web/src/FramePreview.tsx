@@ -15,13 +15,13 @@ export function FramePreview({ video, frameCount, timestamps, prepared, preparin
   const displayed = prepared ? prepared.frames.map((frame) => frame.actual_seconds) : timestamps;
   return <section className="frame-preview" aria-labelledby="frame-preview-title">
     <div className="frame-preview-heading">
-      <div><span className="control-label">Frames for analysis</span><strong id="frame-preview-title">{frameCount} timestamped frames</strong></div>
-      <span className="preview-disclaimer">{video.source === "synthetic" ? "Synthetic preview" : prepared ? "Frames sent to the model" : error ? "Preparation failed" : "Preparing frames…"}</span>
+      <strong id="frame-preview-title">{video.source === "synthetic" ? "Sampled frames" : "Frames sent to the model"} <span>{frameCount}</span></strong>
+      {(video.source === "synthetic" || !prepared) && <span className="preview-disclaimer">{video.source === "synthetic" ? "Synthetic preview" : error ? "Preparation failed" : "Preparing frames…"}</span>}
     </div>
     {preparing && <p className="preview-note" role="status">Decoding the selected video window…</p>}
     {error && <div>
       <p className="range-error" role="alert">{error}</p>
-      <button type="button" disabled={preparing || !valid} onClick={onRetry}>Retry preparation</button>
+      <button type="button" className="text-button" disabled={preparing || !valid} onClick={onRetry}>Retry preparation</button>
     </div>}
     {valid && (video.source === "synthetic" || prepared) && <div className="frame-strip">
       {displayed.map((timestamp, index) => <figure className="sample-frame" key={`${timestamp}-${index}`}>
@@ -33,6 +33,5 @@ export function FramePreview({ video, frameCount, timestamps, prepared, preparin
         <figcaption>{timestamp.toFixed(3)}s</figcaption>
       </figure>)}
     </div>}
-    <p className="preview-note">{prepared ? "These JPEG previews are the encoded frames in the online video request. The activity label is simulated when using the mock backend." : "Change the window or settings to prepare a new frame bundle."}</p>
   </section>;
 }

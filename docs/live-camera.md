@@ -258,8 +258,8 @@ Camera frames are personal data of whoever is in view.
   cannot succeed on resend: capture stops and the reason is shown as a camera
   error until the next Start or Resume.
 - Status adds a **Camera** pill: off, connected, or achieved capture rate and upload
-  lag. A **Live camera** badge sits next to the backend badge; mock provenance stays
-  visible.
+  lag. A **Live camera** badge sits next to the session picker; mock provenance stays
+  visible on every prediction.
 - Reload behaves like recordings: the running session is paused and the camera is
   off until **Resume**, which begins a new run behind an `ingest_gap`.
 

@@ -15,12 +15,13 @@ type Props = {
   onOpenDataset: () => void;
   onUpload: (file: File) => void;
   onDurationLoaded: (duration: number) => void;
+  onChangeSource: () => void;
 };
 
 export function SourceSelection({
   video, previewUrl, duration, busy, datasetVideos, selectedDatasetPath,
   showDatasetBrowser, onSample, onBrowseDataset, onDatasetPathChange,
-  onOpenDataset, onUpload, onDurationLoaded,
+  onOpenDataset, onUpload, onDurationLoaded, onChangeSource,
 }: Props) {
   const fileInput = useRef<HTMLInputElement>(null);
 
@@ -30,7 +31,11 @@ export function SourceSelection({
       {video && <span className="asset-pill">{video.source === "synthetic" ? "Synthetic" : video.source === "dataset" ? "OmniFall" : "Uploaded"}</span>}
     </div>
 
-    {video && <div className="source-caption"><strong>{video.filename}</strong><span>{duration !== null ? `${duration.toFixed(1)} s clip` : "Loading duration…"}</span></div>}
+    {video && <div className="source-caption">
+      <strong>{video.filename}</strong>
+      <span>{duration !== null ? `${duration.toFixed(1)} s clip` : "Loading duration…"}</span>
+      <button className="text-button" disabled={busy} onClick={onChangeSource}>Change source</button>
+    </div>}
 
     <div className={`viewer ${video ? "loaded" : ""}`}>
       {!video && <div className="empty-state">
