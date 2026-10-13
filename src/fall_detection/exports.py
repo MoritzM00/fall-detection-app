@@ -136,6 +136,8 @@ class ExperimentExports:
             config,
             "id schema_version model prompt_preset prompt_text chain_of_thought created_at backend_kind fixture_version",
         )
+        # SQLite stores the flag as 0/1; segment exports and the API give a boolean.
+        result["configuration"]["chain_of_thought"] = bool(config["chain_of_thought"])
         result["configuration"]["preprocessing"] = saved_configuration(
             {"preprocessing": json.loads(config["preprocessing_json"])}
         )["preprocessing"]

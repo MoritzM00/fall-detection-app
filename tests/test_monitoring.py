@@ -12,6 +12,7 @@ from apps.api.request_guards import CLIENT_HEADERS
 from fall_detection.config import Settings
 from fall_detection.monitoring import Monitoring, SessionCommand, SessionCreate
 from fall_detection.prediction import PipelineResult
+from fall_detection.prompts import ZERO_SHOT_COT
 from fall_detection.repository import Repository
 
 LOCAL_API = "http://127.0.0.1"
@@ -182,6 +183,28 @@ def test_runtime_and_clip_fairness(replay, monkeypatch):
     assert result["latest_job_id"] == history(replay)[0]["job_id"]
     assert replay[1].get_job(result["latest_job_id"]).prediction.label == "fall"
     assert replay[1].get_job(result["latest_job_id"]).configuration.fixture_version == "sample-v1"
+
+
+def test_chain_of_thought_sessions_snapshot_the_preset_and_reach_the_parser(replay, monkeypatch):
+    calls = []
+
+    def pipeline(**kw):
+        calls.append(kw)
+        return PipelineResult("fall", "fall", [kw["start_seconds"], kw["end_seconds"]], 1, 2)
+
+    monkeypatch.setattr(worker.InferenceClient, "discover_mock_identity", lambda self: "sample-v1")
+    monkeypatch.setattr(worker, "run_pipeline", pipeline)
+    request = replay[4].model_copy(update={"chain_of_thought": True})
+    config = replay[2].configuration(request, "model", "mock", "sample-v1")
+    assert config.prompt_preset == ZERO_SHOT_COT.id
+    assert config.prompt_text == ZERO_SHOT_COT.prompt
+    assert config.generation == ZERO_SHOT_COT.generation
+    session = replay[2].create(request, config)
+    replay[2].command(session["id"], SessionCommand(action="start", position_seconds=1))
+    assert worker.process_next_job(replay[0], replay[1])
+    job = replay[1].get_job(replay[2].get(session["id"])["latest_job_id"])
+    assert job.configuration.chain_of_thought is True
+    assert calls[0]["chain_of_thought"] is True
 
 
 def test_late_old_generation_result_kept_but_not_latest(replay):

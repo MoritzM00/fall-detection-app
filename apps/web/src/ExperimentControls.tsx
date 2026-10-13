@@ -125,7 +125,7 @@ export function SamplingSettingsGroup({ capabilities, settings, busy, onChange, 
   return <SettingsGroup index="03" title="LLM sampling" hint={`Research defaults for ${preset.title.toLowerCase()} come from its sampling config.`} edited={!sameGeneration(generation, preset.generation)}>
     <div className="sampling-grid">
       <NumberField id={prefix + "-temperature"} label="Temperature" hint="0 is greedy" value={generation.temperature} min={0} max={2} step={0.1} disabled={busy} onChange={set("temperature")} />
-      <NumberField id={prefix + "-top-p"} label="Top-p" hint="Nucleus mass" value={generation.top_p} min={0.01} max={1} step={0.05} optional disabled={busy} onChange={set("top_p")} />
+      <NumberField id={prefix + "-top-p"} label="Top-p" hint="Nucleus mass" value={generation.top_p} min={0} max={1} step={0.05} optional disabled={busy} onChange={set("top_p")} />
       <NumberField id={prefix + "-top-k"} label="Top-k" hint="−1 turns it off" value={generation.top_k} min={-1} max={1000} step={1} optional disabled={busy} onChange={set("top_k")} />
       <NumberField id={prefix + "-seed"} label="Seed" hint="Fixes sampling noise" value={generation.seed} min={0} max={MAX_SEED} step={1} optional disabled={busy} onChange={set("seed")} />
       <NumberField id={prefix + "-max-tokens"} label="Max tokens" hint={`${capabilities.generation_limits.min_max_tokens}–${capabilities.generation_limits.max_max_tokens.toLocaleString("en-US")} output tokens`} value={generation.max_tokens}

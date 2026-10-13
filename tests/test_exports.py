@@ -63,6 +63,7 @@ def test_run_export_preserves_every_label_and_temporal_identity(store, label):
     snapshot = exports.snapshot("run", job.id)
     run = snapshot["runs"][0]
     assert run["configuration"]["prompt_text"] == "  Exact prompt\n"
+    assert run["configuration"]["chain_of_thought"] is False
     assert run["configuration_id"] == job.configuration_id
     assert run["prediction"]["label"] == label
     assert run["prediction"]["sampled_timestamps"] == [0.03, 0.19]
@@ -308,6 +309,7 @@ def test_skip_configuration_and_diagnostic_redaction(store):
     assert "private" not in csv_export(snapshot)
     assert all(row["label"] == "" for row in rows)
     assert all(json.loads(row["configuration"]) == config.model_dump() for row in rows)
+    assert all(json.loads(row["configuration"])["chain_of_thought"] is False for row in rows)
 
 
 def test_online_provenance_and_csv_formula_safety(store):
