@@ -7,6 +7,7 @@ export function useServingStatus(enabled: boolean, model?: string) {
   const [status, setStatus] = useState<ServingStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [pending, setPending] = useState<"warmup" | "shutdown" | null>(null);
   const warming = status?.state === "warming";
 
   useEffect(() => {
@@ -24,13 +25,16 @@ export function useServingStatus(enabled: boolean, model?: string) {
     return () => { cancelled = true; window.clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
   }, [enabled, warming, model]);
 
-  const act = useCallback((action: () => Promise<ServingStatus>, fallback: string) => {
+  // Shutdown blocks until Modal has stopped the containers; no second action meanwhile.
+  const act = useCallback((kind: "warmup" | "shutdown", action: () => Promise<ServingStatus>, fallback: string) => {
     setActionError(null);
+    setPending(kind);
     action().then((next) => { setStatus(next); setError(null); })
-      .catch((cause) => setActionError(cause instanceof Error ? cause.message : fallback));
+      .catch((cause) => setActionError(cause instanceof Error ? cause.message : fallback))
+      .finally(() => setPending(null));
   }, []);
-  const warmUp = useCallback(() => act(() => warmUpServing(model), "Warm-up failed"), [act, model]);
-  const shutDown = useCallback(() => act(() => shutDownServing(model), "Shutdown failed"), [act, model]);
+  const warmUp = useCallback(() => act("warmup", () => warmUpServing(model), "Warm-up failed"), [act, model]);
+  const shutDown = useCallback(() => act("shutdown", () => shutDownServing(model), "Shutdown failed"), [act, model]);
 
-  return { status, error, actionError, warmUp, shutDown };
+  return { status, error, actionError, pending, warmUp, shutDown };
 }
