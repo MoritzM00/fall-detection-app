@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from apps.api.main import create_app
 from apps.api.request_guards import CLIENT_HEADERS
 from fall_detection import serving_status
-from fall_detection.config import Settings
+from fall_detection.config import InferenceEndpoint, Settings
 from fall_detection.prediction import InferenceServiceError
 from fall_detection.serving_status import (
     ContainerStats,
@@ -248,7 +248,7 @@ def test_modal_stop_uses_the_cli_for_this_app_only(monkeypatch):
 
 
 def test_api_maps_blocked_shutdown_to_conflict(settings, monkeypatch):
-    def blocked(_self):
+    def blocked(_self, _others=()):
         raise ShutdownBlockedError("1 request(s) in flight")
 
     monkeypatch.setattr(ServingStatus, "shutdown", blocked)
@@ -270,3 +270,75 @@ def test_capabilities_name_the_inference_host_without_credentials(settings):
         headers=CLIENT_HEADERS,
     ) as client:
         assert client.get("/capabilities").json()["inference_host"] is None
+
+
+THINKING = InferenceEndpoint(
+    "qwen3-vl-8b-thinking", "https://thinking.test/v1", "serve_thinking", thinking=True
+)
+
+
+def test_each_model_reads_its_own_function_and_warms_its_own_endpoint(
+    settings, monkeypatch, route_inference
+):
+    reads = []
+    monkeypatch.setattr(
+        serving_status,
+        "modal_container_stats",
+        lambda app, function: reads.append((app, function)) or ContainerStats(0, 0),
+    )
+    requested = []
+    route_inference(lambda request: requested.append(str(request.url)) or httpx.Response(200))
+    status = ServingStatus(replace(settings, additional_endpoints=(THINKING,)), endpoint=THINKING)
+    assert status.snapshot()["state"] == "idle"
+    assert reads == [("fall-detection-vllm", "serve_thinking")]
+    assert requested == []
+    status._run_warmup()
+    assert status.snapshot()["warmup"]["error"] is None
+    assert requested == ["https://thinking.test/health"]
+
+
+def test_api_reports_status_per_model_and_shutdown_waits_for_every_model(settings, monkeypatch):
+    in_flight = {"serve": 0, "serve_thinking": 1}
+    monkeypatch.setattr(
+        serving_status,
+        "modal_container_stats",
+        lambda _app, function: ContainerStats(1, 0, running_inputs=in_flight[function]),
+    )
+    monkeypatch.setattr(serving_status, "modal_stop_containers", lambda _app: 0)
+    app = create_app(replace(settings, additional_endpoints=(THINKING,)))
+    with TestClient(app, base_url=LOCAL_API, headers=CLIENT_HEADERS) as client:
+        assert client.get("/serving-status", params={"model": THINKING.model}).status_code == 200
+        assert client.get("/serving-status", params={"model": "other"}).status_code == 404
+        capabilities = client.get("/capabilities").json()
+        assert capabilities["models"] == [settings.inference_model, THINKING.model]
+        assert capabilities["thinking_models"] == [THINKING.model]
+        assert capabilities["inference_host"] == "gpu.test, thinking.test"
+        # Stopping the app would also cancel the thinking model's request.
+        blocked = client.post("/serving-status/shutdown")
+        assert blocked.status_code == 409 and "in flight" in blocked.json()["detail"]
+        in_flight["serve_thinking"] = 0
+        assert client.post("/serving-status/shutdown").status_code == 200
+
+
+def test_additional_models_are_read_from_json_for_real_serving_only(settings, monkeypatch):
+    monkeypatch.setenv(
+        "FALL_DETECTION_ADDITIONAL_MODELS",
+        '{"qwen3-vl-8b-thinking": {"base_url": "https://thinking.test/v1/", '
+        '"modal_function": "serve_thinking", "thinking": true}}',
+    )
+    assert Settings.from_env().additional_endpoints == (THINKING,)
+    assert Settings.from_env().endpoint(THINKING.model) == THINKING
+    with pytest.raises(ValueError, match="not served"):
+        Settings.from_env().endpoint("missing")
+    monkeypatch.setenv("FALL_DETECTION_BACKEND_KIND", "mock")
+    assert Settings.from_env().models == (Settings.from_env().inference_model,)
+    monkeypatch.setenv("FALL_DETECTION_BACKEND_KIND", "vllm")
+    monkeypatch.setenv("FALL_DETECTION_ADDITIONAL_MODELS", '{"x": {"modal_function": "f"}}')
+    with pytest.raises(ValueError, match="base_url"):
+        Settings.from_env()
+    monkeypatch.setenv(
+        "FALL_DETECTION_ADDITIONAL_MODELS",
+        '{"qwen3-vl-8b-instruct": {"base_url": "https://other.test/v1"}}',
+    )
+    with pytest.raises(ValueError, match="unique"):
+        Settings.from_env()

@@ -95,7 +95,7 @@ def monitoring_router(settings: Settings, repository: Repository) -> APIRouter:
     router = APIRouter()
 
     def monitoring_configuration(request: SessionConfiguration):
-        if request.model is not None and request.model != settings.inference_model:
+        if request.model is not None and request.model not in settings.models:
             raise ValueError("Choose a model advertised by capabilities")
         preset = default_preset(request.chain_of_thought)
         try:
@@ -115,7 +115,7 @@ def monitoring_router(settings: Settings, repository: Repository) -> APIRouter:
                 settings.inference_base_url, timeout_seconds=settings.request_timeout_seconds
             ).discover_mock_identity()
         return Monitoring.configuration(
-            request, settings.inference_model, settings.backend_kind, fixture
+            request, request.model or settings.inference_model, settings.backend_kind, fixture
         )
 
     @router.post("/monitoring-sessions", status_code=201, response_model=MonitoringSessionView)

@@ -10,8 +10,11 @@ def main() -> None:
     """Print how long the endpoint took to become ready."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--deadline", type=float, default=900, help="seconds to wait")
+    parser.add_argument("--model", help="served model to wake (default: the default model)")
     args = parser.parse_args()
-    elapsed = wait_until_healthy(Settings.from_env(), deadline_seconds=args.deadline)
+    settings = Settings.from_env()
+    endpoint = settings.endpoint(args.model) if args.model else None
+    elapsed = wait_until_healthy(settings, deadline_seconds=args.deadline, endpoint=endpoint)
     print(f"Inference endpoint ready after {elapsed:.0f} s")
 
 

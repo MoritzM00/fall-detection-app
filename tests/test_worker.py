@@ -340,3 +340,24 @@ def test_worker_keeps_the_saved_message_order(queued_job, monkeypatch):
         )
     assert worker.process_next_job(settings, repository)
     assert orders == [False]
+
+
+def test_worker_sends_an_additional_model_to_its_own_endpoint(queued_job, monkeypatch):
+    from fall_detection.config import InferenceEndpoint
+    from fall_detection.prediction import InferenceClient
+
+    settings, repository, job = queued_job
+    urls = []
+
+    def complete(client, _payload):
+        urls.append(client._base_url)
+        return InferenceResponse("The best answer is: fall", "completion")
+
+    monkeypatch.setattr(InferenceClient, "complete", complete)
+    routed = replace(
+        settings,
+        additional_endpoints=(InferenceEndpoint("queued-model", "http://127.0.0.1:9/v1"),),
+    )
+    assert worker.process_next_job(routed, repository)
+    assert repository.get_job(job.id).state == "succeeded"
+    assert urls == ["http://127.0.0.1:9/v1"]

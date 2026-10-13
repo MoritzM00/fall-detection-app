@@ -11,7 +11,7 @@ from typing import Literal, TypedDict
 
 import httpx
 
-from fall_detection.config import Settings
+from fall_detection.config import InferenceEndpoint, Settings
 from fall_detection.prediction import same_origin_client
 
 # Control-plane counts can lag a fresh container; trust a warm-up this long before them.
@@ -95,14 +95,17 @@ def wait_until_healthy(
     poll_seconds: float = 5,
     sleep: Callable[[float], None] = time.sleep,
     transport: httpx.BaseTransport | None = None,
+    endpoint: InferenceEndpoint | None = None,
 ) -> float:
     """Poll the vLLM health route until it answers 200; return the elapsed seconds.
 
     Each poll is a real request, so this wakes a scale-to-zero endpoint on purpose.
+    ``endpoint`` defaults to the default model's.
     """
     if settings.backend_kind != "vllm":
         raise ValueError("Set FALL_DETECTION_BACKEND_KIND=vllm to warm a GPU endpoint")
-    health_url = f"{settings.inference_base_url.removesuffix('/v1')}/health"
+    base_url = (endpoint or settings.endpoints[0]).base_url
+    health_url = f"{base_url.removesuffix('/v1')}/health"
     headers = settings.inference_auth_headers()
     started = time.monotonic()
     while True:
@@ -123,20 +126,27 @@ def wait_until_healthy(
 
 
 class ServingStatus:
-    """Combine cached container counts with the state of an explicit warm-up."""
+    """Combine cached container counts with the state of an explicit warm-up of one model."""
 
     def __init__(
         self,
         settings: Settings,
-        stats_reader: Callable[[str], ContainerStats] = modal_container_stats,
-        warm: Callable[[Settings], float] = wait_until_healthy,
+        stats_reader: Callable[[str], ContainerStats] | None = None,
+        warm: Callable[[Settings], float] | None = None,
         stop: Callable[[str], int] = modal_stop_containers,
         cache_seconds: float = 5,
+        endpoint: InferenceEndpoint | None = None,
     ) -> None:
-        """Configure where status comes from; nothing is contacted until asked."""
+        """Configure where status comes from; nothing is contacted until asked.
+
+        ``endpoint`` defaults to the default model's. Readers and warm-ups that are not
+        given are bound to its Modal function and health route.
+        """
         self._settings = settings
-        self._stats_reader = stats_reader
-        self._warm = warm
+        self.endpoint = endpoint or settings.endpoints[0]
+        function = self.endpoint.modal_function
+        self._stats_reader = stats_reader or (lambda app: modal_container_stats(app, function))
+        self._warm = warm or (lambda current: wait_until_healthy(current, endpoint=self.endpoint))
         self._stop = stop
         self._cache_seconds = cache_seconds
         self._lock = threading.Lock()
@@ -190,14 +200,27 @@ class ServingStatus:
                 threading.Thread(target=self._run_warmup, daemon=True).start()
         return self.snapshot()
 
-    def shutdown(self) -> StatusSnapshot:
-        """Stop the GPU containers now instead of waiting for the idle scale-down."""
+    def shutdown(self, others: "tuple[ServingStatus, ...]" = ()) -> StatusSnapshot:
+        """Stop the GPU containers now instead of waiting for the idle scale-down.
+
+        Stopping covers the whole Modal app, so the statuses of the other served models
+        in ``others`` must also be idle, and are reset with this one.
+        """
         app_name = self._settings.modal_app
         if self._settings.backend_kind != "vllm" or app_name is None:
             raise ValueError("Shutdown needs the vllm backend and FALL_DETECTION_MODAL_APP")
+        group = (self, *others)
+        for status in group:
+            status._ensure_stoppable(app_name)
+        self._stop(app_name)
+        for status in group:
+            status._reset()
+        return self.snapshot()
+
+    def _ensure_stoppable(self, app_name: str) -> None:
         with self._lock:
             if self._warmup == "warming":
-                raise ShutdownBlockedError("A warm-up is in progress")
+                raise ShutdownBlockedError(f"A warm-up of {self.endpoint.model} is in progress")
         # Read fresh counts: Modal reschedules cancelled requests on a new container.
         stats = self._stats_reader(app_name)
         in_flight = stats.running_inputs + stats.backlog
@@ -205,12 +228,12 @@ class ServingStatus:
             raise ShutdownBlockedError(
                 f"{in_flight} request(s) in flight; stopping now would restart them on a new GPU"
             )
-        self._stop(app_name)
+
+    def _reset(self) -> None:
         with self._lock:
             self._warmup, self._warmup_seconds, self._warmup_error = "idle", None, None
             self._ready_at = float("-inf")
             self._stats_read_at = float("-inf")
-        return self.snapshot()
 
     def _run_warmup(self) -> None:
         try:

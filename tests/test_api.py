@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 import apps.api.main as api
 from apps.api.request_guards import CLIENT_HEADERS
 from apps.api.upload_limit import MULTIPART_OVERHEAD_BYTES
-from fall_detection.config import Settings
+from fall_detection.config import InferenceEndpoint, Settings
 from fall_detection.prediction import InferenceResponse
 from fall_detection.prompts import ZERO_SHOT, ZERO_SHOT_COT
 from fall_detection.repository import Repository
@@ -106,12 +106,15 @@ def test_api_experiments_preserve_old_runs_and_drive_worker_payload(
         )
 
     monkeypatch.setattr(InferenceClient, "complete", complete)
+    # The saved model is still served, now next to a different default model.
+    runtime = Settings.from_env()
     settings = replace(
-        Settings.from_env(),
+        runtime,
         data_dir=data_dir,
         database_path=data_dir / "app.sqlite3",
         inference_model="changed-runtime-model",
         backend_kind="mock",
+        additional_endpoints=(InferenceEndpoint("custom-model", runtime.inference_base_url),),
     )
     assert process_next_job(settings, repository)
     assert process_next_job(settings, repository)

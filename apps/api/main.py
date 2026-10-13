@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import subprocess
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
@@ -14,6 +13,7 @@ from fastapi.responses import FileResponse, Response
 
 from apps.api.monitoring import monitoring_router
 from apps.api.request_guards import install_request_guards
+from apps.api.serving import serving_router
 from apps.api.upload_limit import UploadBodyLimitMiddleware
 from fall_detection import live
 from fall_detection.config import Settings
@@ -46,7 +46,6 @@ from fall_detection.preparation import (
 )
 from fall_detection.prompts import PROMPT_PRESETS, default_preset
 from fall_detection.repository import Repository
-from fall_detection.serving_status import ServingStatus, ShutdownBlockedError, StatusSnapshot
 from fall_detection.storage import list_dataset_video_paths, resolve_dataset_video, storage_lock
 
 logger = logging.getLogger(__name__)
@@ -74,7 +73,6 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
     preparation_coordinator = PreparationCoordinator(
         settings.preparation_slots, settings.preparation_wait_seconds
     )
-    serving_status = ServingStatus(settings)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -111,16 +109,22 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
         """Expose only settings supported by the current deployment."""
         return {
             "labels": ACTIVITY_LABELS,
-            "models": [settings.inference_model],
+            "models": list(settings.models),
+            # Models that reason before every answer and so need a large token budget.
+            "thinking_models": [
+                endpoint.model for endpoint in settings.endpoints if endpoint.thinking
+            ],
             "backend_kind": settings.backend_kind,
             "simulated": settings.backend_kind == "mock",
             # Where frames are sent, for the privacy notice; never includes credentials.
             "inference_host": (
-                httpx.URL(settings.inference_base_url).host
+                ", ".join(dict.fromkeys(httpx.URL(e.base_url).host for e in settings.endpoints))
                 if settings.backend_kind == "vllm"
                 else None
             ),
-            "inference_encrypted": httpx.URL(settings.inference_base_url).scheme == "https",
+            "inference_encrypted": all(
+                httpx.URL(endpoint.base_url).scheme == "https" for endpoint in settings.endpoints
+            ),
             # The first preset is the default for requests that omit prompt and sampling.
             "prompt_presets": [
                 {
@@ -138,29 +142,6 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
             # Requests whose conservative token estimate exceeds this are rejected with 422.
             "serving_limits": {"max_model_len": settings.max_model_len},
         }
-
-    @app.get("/serving-status")
-    def get_serving_status() -> StatusSnapshot:
-        """Report GPU container state from the control plane without waking the GPU."""
-        return serving_status.snapshot()
-
-    @app.post("/serving-status/warmup", status_code=status.HTTP_202_ACCEPTED)
-    def warm_up_serving() -> StatusSnapshot:
-        """Wake the GPU endpoint in the background so a session starts warm."""
-        try:
-            return serving_status.start_warmup()
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-    @app.post("/serving-status/shutdown")
-    def shut_down_serving() -> StatusSnapshot:
-        """Stop the GPU containers now; the next request starts a new one."""
-        try:
-            return serving_status.shutdown()
-        except (ValueError, ShutdownBlockedError) as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        except (OSError, subprocess.SubprocessError) as exc:
-            raise HTTPException(status_code=502, detail=f"Modal CLI failed: {exc}") from exc
 
     @app.post("/videos/sample", response_model=VideoAsset)
     def create_sample_video() -> VideoAsset:
@@ -279,7 +260,7 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
                 raise HTTPException(
                     status_code=422, detail="MVP selections are limited to 30 seconds"
                 )
-            if request.model is not None and request.model != settings.inference_model:
+            if request.model is not None and request.model not in settings.models:
                 raise HTTPException(
                     status_code=422, detail="Choose a model advertised by capabilities"
                 )
@@ -343,7 +324,7 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
                     request.video_id,
                     request.start_seconds,
                     request.end_seconds,
-                    model=settings.inference_model,
+                    model=request.model or settings.inference_model,
                     prompt_text=prompt_text,
                     chain_of_thought=request.chain_of_thought,
                     generation=generation.model_dump(),
@@ -478,6 +459,7 @@ def create_app(settings: Settings | None = None, repository: Repository | None =
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     app.include_router(monitoring_router(settings, repository))
+    app.include_router(serving_router(settings))
 
     return app
 
