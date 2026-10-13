@@ -151,7 +151,8 @@ identity. Polling never promotes a historical result into the current generation
 or segment.
 
 **Last analyzed** shows the input interval, actual frame timestamps, immutable
-configuration and prepared-input identities. Every result describes the past,
+configuration and prepared-input identities, with a few of the prepared JPEGs the
+model received (hidden if the input was pruned). Every result describes the past,
 so the panel dates it: how long ago its window ended relative to the live edge, or
 how far it lies behind playback. When that age exceeds expiration plus stride plus
 the result's own pipeline time (the oldest a result can be while the pipeline keeps

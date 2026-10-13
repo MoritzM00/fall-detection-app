@@ -340,6 +340,10 @@ button:disabled { cursor: not-allowed; }
 .latest-result[data-outdated] .result-age { color: var(--amber-ink); font-weight: 550; }
 /* An outdated non-fall label must not read as a current all-clear; a fall stays prominent however old. */
 .latest-result[data-outdated] .result-card:not(:has(.result-label.alert)) { opacity: .5; }
+.model-frames { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin: 12px 0 0; }
+.model-frames figure { margin: 0; min-width: 0; }
+.model-frames img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 6px; background: var(--line); }
+.model-frames figcaption { padding-top: 3px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .pipeline { margin: 10px 0 0; padding: 0; list-style: none; font-size: 13px; color: var(--muted); }
 .pipeline li { display: flex; align-items: center; gap: 8px; padding: 5px 2px; }
 .pipeline li + li { border-top: 1px solid var(--line); }

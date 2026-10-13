@@ -99,6 +99,7 @@ export function Result({ job }: { job: AnalysisJob }) {
     {prediction && <>
       <strong className={`result-label ${isAlert(job) ? "alert" : ""}`}>{prediction.label.replaceAll("_", " ")}</strong>
       <p className="simulation-note">Describes the first part of the input window.</p>
+      <ModelFrames job={job} />
       <dl>
         <div><dt>Input interval</dt><dd>{seconds(job.start_seconds)}–{seconds(job.end_seconds)}</dd></div>
         <div><dt>Completed</dt><dd title={prediction.completed_at}>{completed && !Number.isNaN(completed.getTime()) ? completed.toLocaleTimeString() : prediction.completed_at}</dd></div>
@@ -115,6 +116,19 @@ export function Result({ job }: { job: AnalysisJob }) {
       <p className="raw-response">Job {job.id} · configuration {job.configuration_id} · prepared input {job.prepared_input_id ?? "synthetic"}</p><pre className="saved-prompt">{JSON.stringify(job.configuration, null, 2)}</pre>
     </details>
   </div>;
+}
+
+/** A few of the exact JPEGs sent to the model, so the label is read against what it saw rather than the live view. */
+function ModelFrames({ job }: { job: AnalysisJob }) {
+  const times = job.prediction?.sampled_timestamps ?? [];
+  if (!job.prepared_input_id || times.length === 0) return null;
+  const shown = Math.min(4, times.length);
+  const picks = [...new Set(Array.from({ length: shown }, (_, i) => shown === 1 ? 0 : Math.round(i * (times.length - 1) / (shown - 1))))];
+  return <div className="model-frames" role="group" aria-label="Frames the model saw">{picks.map(index => <figure key={index}>
+    {/* A pruned input has no frames left; hide it rather than show a broken image. */}
+    <img src={`/api/prepared-inputs/${job.prepared_input_id}/frames/${index}`} alt={`Model input at ${seconds(times[index])}`} loading="lazy" onError={event => { event.currentTarget.parentElement!.hidden = true; }} />
+    <figcaption>{times[index].toFixed(1)} s</figcaption>
+  </figure>)}</div>;
 }
 
 type LatestProps = { job: AnalysisJob | null; session: MonitoringSession; position: number; live: boolean; windows: MonitoringWindow[]; jobs: Record<string, AnalysisJob> };
