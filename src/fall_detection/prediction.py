@@ -134,18 +134,18 @@ class ParsedAnswer:
 def parse_answer(raw_response: str, *, chain_of_thought: bool = False) -> ParsedAnswer:
     """Find the answer like the research parsers do and read exactly one label from it.
 
-    With ``chain_of_thought``, reasoning in think tags is set aside first (the opening tag
-    may come from the chat template), and any of the research answer markers is accepted.
-    Without a marker the whole remaining response must name one label, so a bare label
-    also parses.
+    Reasoning in think tags is set aside first (the opening tag may come from the chat
+    template). Research does this only with chain of thought; here it always applies, as
+    thinking models reason before every answer whatever the prompt asks. With
+    ``chain_of_thought`` any of the research answer markers is accepted. Without a marker
+    the whole remaining response must name one label, so a bare label also parses.
     """
     reasoning, content = "", raw_response
-    if chain_of_thought:
-        if "</think>" in raw_response:
-            thought, _, content = raw_response.partition("</think>")
-            reasoning = thought.partition("<think>")[2] if "<think>" in thought else thought
-        elif "<think>" in raw_response:
-            raise PredictionParseError("reasoning was not closed before the answer")
+    if "</think>" in raw_response:
+        thought, _, content = raw_response.partition("</think>")
+        reasoning = thought.partition("<think>")[2] if "<think>" in thought else thought
+    elif "<think>" in raw_response:
+        raise PredictionParseError("reasoning was not closed before the answer")
     markers = _ANSWER_MARKERS if chain_of_thought else _ANSWER_MARKERS[:1]
     marker = next((found for pattern in markers if (found := pattern.search(content))), None)
     if marker is None:
