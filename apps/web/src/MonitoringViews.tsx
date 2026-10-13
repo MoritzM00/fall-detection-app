@@ -48,11 +48,12 @@ export function History({ windows, jobs, session, more, onLoadOlder }: HistoryPr
       const job = window.job_id ? jobs[window.job_id] : undefined;
       const state = job?.state ?? window.state;
       const historical = window.generation !== session.generation || window.segment_id !== session.segment_id;
+      const notes = [window.reason, historical && "historical"].filter(Boolean);
       return <li key={window.id} className={historical ? "historical" : ""}><details>
         <summary>
           <i data-tone={toneOf(state, job)} aria-hidden="true" />
           <span className="history-range">{seconds(window.start_seconds)}–{seconds(window.end_seconds)}</span>
-          <span className="history-meta">{state}{window.reason ? ` ${window.reason}` : ""}{historical ? " (historical)" : ""}</span>
+          <span className="history-meta">{state}{notes.length > 0 ? ` (${notes.join(", ")})` : ""}</span>
           {job?.prediction && <strong className={isAlert(job) ? "alert" : ""}>{job.prediction.label.replaceAll("_", " ")}</strong>}
         </summary>
         <p className="preview-note">Generation {window.generation}, window #{window.sequence}{window.sequence_end !== window.sequence ? `–${window.sequence_end}` : ""}, segment {window.segment_id.slice(0, 8)}; {window.reason ?? "no coverage gap recorded"}</p>
