@@ -211,6 +211,28 @@ def test_shutdown_stops_containers_and_clears_readiness(settings):
     assert snapshot["warmup"]["state"] == "idle"
 
 
+def test_shutdown_reports_stopping_until_the_containers_are_gone(settings, monkeypatch):
+    stats = [ContainerStats(containers=1, backlog=0)]
+    status = ServingStatus(
+        settings, stats_reader=lambda _app: stats[0], stop=lambda _app: 1, cache_seconds=0
+    )
+    assert status.shutdown()["state"] == "stopping"
+    stats[0] = ContainerStats(containers=0, backlog=0)
+    assert status.snapshot()["state"] == "idle"
+    stats[0] = ContainerStats(containers=1, backlog=0)
+    assert status.snapshot()["state"] == "running"
+
+    status.shutdown()
+    stats[0] = ContainerStats(containers=1, backlog=1)
+    assert status.snapshot()["state"] == "running"
+
+    stats[0] = ContainerStats(containers=1, backlog=0)
+    status.shutdown()
+    later = time.monotonic() + serving_status.STOPPING_GRACE_SECONDS + 1
+    monkeypatch.setattr(serving_status.time, "monotonic", lambda: later)
+    assert status.snapshot()["state"] == "running"
+
+
 @pytest.mark.parametrize(("running", "backlog"), [(1, 0), (0, 2)])
 def test_shutdown_refuses_while_requests_are_in_flight(settings, running, backlog):
     stopped = []

@@ -101,7 +101,7 @@ export function getCapabilities(): Promise<Capabilities> {
   return request("/capabilities");
 }
 
-export type ServingState = "simulated" | "unmonitored" | "unknown" | "idle" | "running" | "warming" | "ready";
+export type ServingState = "simulated" | "unmonitored" | "unknown" | "idle" | "running" | "warming" | "ready" | "stopping";
 export type ServingStatus = {
   state: ServingState;
   containers: number | null;

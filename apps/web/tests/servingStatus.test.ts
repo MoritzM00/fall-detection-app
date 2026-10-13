@@ -9,12 +9,12 @@ const status = (overrides: Partial<ServingStatus>): ServingStatus => ({
 
 test("serving view offers warm-up when not known ready and shutdown when a container is up", () => {
   assert.deepEqual(
-    ["simulated", "warming", "ready", "running", "idle", "unmonitored", "unknown"].map((state) => describeServing(status({ state: state as ServingStatus["state"] })).canWarm),
-    [false, false, false, true, true, true, true],
+    ["simulated", "warming", "ready", "running", "idle", "unmonitored", "unknown", "stopping"].map((state) => describeServing(status({ state: state as ServingStatus["state"] })).canWarm),
+    [false, false, false, true, true, true, true, false],
   );
   assert.deepEqual(
-    ["simulated", "warming", "ready", "running", "idle", "unmonitored", "unknown"].map((state) => describeServing(status({ state: state as ServingStatus["state"] })).canStop),
-    [false, false, true, true, false, false, false],
+    ["simulated", "warming", "ready", "running", "idle", "unmonitored", "unknown", "stopping"].map((state) => describeServing(status({ state: state as ServingStatus["state"] })).canStop),
+    [false, false, true, true, false, false, false, false],
   );
   assert.equal(describeServing(null).text, "GPU status loading");
 });

@@ -16,9 +16,13 @@ from fall_detection.prediction import same_origin_client
 
 # Control-plane counts can lag a fresh container; trust a warm-up this long before them.
 READY_GRACE_SECONDS = 60
+# Stopped containers can linger in the counts; report them as stopping for at most this long.
+STOPPING_GRACE_SECONDS = 120
 
 WarmupState = Literal["idle", "warming", "ready", "failed"]
-ServingState = Literal["simulated", "unmonitored", "unknown", "idle", "running", "warming", "ready"]
+ServingState = Literal[
+    "simulated", "unmonitored", "unknown", "idle", "running", "warming", "ready", "stopping"
+]
 
 
 class WarmupView(TypedDict):
@@ -159,6 +163,7 @@ class ServingStatus:
         self._warmup_seconds: float | None = None
         self._warmup_error: str | None = None
         self._ready_at = float("-inf")
+        self._stopped_at: float | None = None
 
     def snapshot(self) -> StatusSnapshot:
         """Report serving state; reads container counts at most once per cache period."""
@@ -180,6 +185,14 @@ class ServingStatus:
             ):
                 # The container scaled down since the warm-up, so its readiness is stale.
                 self._warmup = "idle"
+            if self._stopped_at is not None and (
+                stats is None
+                or stats.containers == 0
+                or stats.running_inputs + stats.backlog > 0
+                or time.monotonic() - self._stopped_at > STOPPING_GRACE_SECONDS
+            ):
+                # Gone, or new work started a fresh container that is not stopping.
+                self._stopped_at = None
             return StatusSnapshot(
                 state=self._state(stats, error),
                 containers=stats.containers if stats else None,
@@ -198,6 +211,7 @@ class ServingStatus:
                 self._warmup_started = time.monotonic()
                 self._warmup_seconds = None
                 self._warmup_error = None
+                self._stopped_at = None
                 threading.Thread(target=self._run_warmup, daemon=True).start()
         return self.snapshot()
 
@@ -235,6 +249,7 @@ class ServingStatus:
             self._warmup, self._warmup_seconds, self._warmup_error = "idle", None, None
             self._ready_at = float("-inf")
             self._stats_read_at = float("-inf")
+            self._stopped_at = time.monotonic()
 
     def _run_warmup(self) -> None:
         try:
@@ -274,6 +289,8 @@ class ServingStatus:
             return "unknown"
         if self._warmup == "ready":
             return "ready"
+        if self._stopped_at is not None:
+            return "stopping"
         return "idle" if stats.containers == 0 else "running"
 
     def _warmup_view(self) -> WarmupView:

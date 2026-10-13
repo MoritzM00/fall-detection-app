@@ -8,7 +8,7 @@ export function useServingStatus(enabled: boolean, model?: string) {
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [pending, setPending] = useState<"warmup" | "shutdown" | null>(null);
-  const warming = status?.state === "warming";
+  const changing = status?.state === "warming" || status?.state === "stopping";
 
   useEffect(() => {
     if (!enabled) return;
@@ -20,10 +20,10 @@ export function useServingStatus(enabled: boolean, model?: string) {
         .catch((cause) => { if (!cancelled) setError(cause instanceof Error ? cause.message : "Status unavailable"); });
     };
     refresh();
-    const timer = window.setInterval(refresh, warming ? 3_000 : 15_000);
+    const timer = window.setInterval(refresh, changing ? 3_000 : 15_000);
     document.addEventListener("visibilitychange", refresh);
     return () => { cancelled = true; window.clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
-  }, [enabled, warming, model]);
+  }, [enabled, changing, model]);
 
   // Shutdown blocks until Modal has stopped the containers; no second action meanwhile.
   const act = useCallback((kind: "warmup" | "shutdown", action: () => Promise<ServingStatus>, fallback: string) => {
