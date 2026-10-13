@@ -123,10 +123,16 @@ def process_next_job(settings: Settings, repository: Repository) -> bool:
             video_data_url = to_video_data_url(video, settings.data_dir)
         else:
             raise ValueError("Real videos require a prepared frame bundle")
-        if config.backend_kind == "vllm":
-            require_encrypted_transport(settings.inference_base_url)
-        client = InferenceClient(
+        # Additional models go to their own endpoint. Any other saved model goes to the
+        # default endpoint, as before, and that server decides whether it still serves it.
+        base_url = next(
+            (item.base_url for item in settings.endpoints if item.model == model),
             settings.inference_base_url,
+        )
+        if config.backend_kind == "vllm":
+            require_encrypted_transport(base_url)
+        client = InferenceClient(
+            base_url,
             timeout_seconds=settings.request_timeout_seconds,
             mock_fixture_identity=config.fixture_version if config.backend_kind == "mock" else None,
             auth_headers=settings.inference_auth_headers(),

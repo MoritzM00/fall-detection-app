@@ -3,7 +3,8 @@ import { useEffect, useState } from "react";
 import { createJob, getCapabilities } from "./api";
 import { contextBudget, contextWindowError } from "./context";
 import { FramePreview } from "./FramePreview";
-import { ExperimentSettingsGroup, SamplingSettingsGroup, baselineExperiment, experimentFromPreset, experimentValid as isExperimentValid, matchingPreset, presetFor } from "./ExperimentControls";
+import { ExperimentSettingsGroup, SamplingSettingsGroup } from "./ExperimentControls";
+import { baselineExperiment, experimentFromPreset, experimentValid as isExperimentValid, matchingPreset, presetFor, presetTitle } from "./experimentState";
 import { RunComparison } from "./RunComparison";
 import { ServingBadge } from "./ServingBadge";
 import { privacyNotice } from "./privacy";
@@ -92,7 +93,7 @@ export default function App() {
         <button className={mode === "monitoring" ? "active" : ""} aria-pressed={mode === "monitoring"} onClick={() => selectMode("monitoring")}>Monitoring</button>
       </div>
       {capabilities && !simulated
-        ? <ServingBadge />
+        ? <span className="serving-badges">{capabilities.models.map((model) => <ServingBadge key={model} model={model} labelled={capabilities.models.length > 1} />)}</span>
         : <span className={`system-state ${capabilities ? "" : "offline"}`} title={capabilities ? "Results come from a mock backend, not a model." : capabilityError ?? undefined}><i /> {capabilities ? "Local simulation" : "Backend unavailable"}</span>}
     </header>
     {privacyNotice(capabilities) && <p className="privacy-notice" role="note">{privacyNotice(capabilities)}</p>}
@@ -146,7 +147,7 @@ export default function App() {
           <div><span>02</span><h2>Analysis</h2></div>
         </div>
         <SettingsSummary
-          preset={preset && baseline ? preset.title : null}
+          preset={preset && baseline && capabilities && experiment ? presetTitle(capabilities, preset, experiment.model) : null}
           invalid={Boolean(experiment) && (!experimentValid || Boolean(contextError))}
           detail={capabilities && experiment ? settingsSummary(sampling.frameCount, sampling.fps, sampling.size, experiment.chain_of_thought) : "Backend settings unavailable"}
           disabled={!capabilities || !experiment}

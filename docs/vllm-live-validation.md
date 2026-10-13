@@ -60,3 +60,18 @@ Same L4 deployment and vLLM 0.30.0 with `--max-model-len 8192`; cold start to he
 | same | same | `research-zeroshot-cot-v2` | `lying` | 1,791 / 234 | 15.5 s |
 
 Every response parsed. The chain-of-thought answers reasoned in numbered steps with no think tags and ended with `The best answer is: <label>`; the text before it was saved as the reasoning. One reasoning listed all 16 labels, so reading the label from the whole response, not the answer, would have been ambiguous. A chain-of-thought request at 16 × 672 was rejected with 422 before reaching the GPU (estimate 8,406 tokens). Two clips are not accuracy evidence: the fall the model read as a deliberate `lie_down` is the kind of case research parity work in #41 has to measure.
+
+## Qwen3-VL-8B-Thinking run, 2026-10-13
+
+`Qwen/Qwen3-VL-8B-Thinking` served as `qwen3-vl-8b-thinking` from its own Modal function (`serve_thinking`) on a second L4, with the same vLLM settings and no reasoning parser. Its first start, including the weight download, took 464 s; after it scaled down, the next request waited 162 s for a cold start. The app routed runs with this model to its endpoint and runs with the default model to `serve`, and `make gpu-stop` stopped both. Same clips and frames as the chain-of-thought run above.
+
+| Clip and window | Settings | Label | Completion tokens | Request |
+| --- | --- | --- | --- | --- |
+| `Subject_1/Fall/01.mp4`, 3.4–5.4 s | `research-zeroshot-cot-v2` | `fall` | 197 | 162.0 s (cold start) |
+| same | `research-zeroshot-v2` (64 max tokens) | failed: answer truncated | — | — |
+| same | zero-shot prompt, CoT sampling (4,096 max tokens) | `fall` | 164 | 11.2 s |
+| `Subject_1/ADL/01.mp4`, 4.0–6.0 s | `research-zeroshot-cot-v2` | `lying` | 144 | 11.0 s |
+| same | `research-zeroshot-v2` (64 max tokens) | failed: answer truncated | — | — |
+| same | zero-shot prompt, CoT sampling (4,096 max tokens) | `lying` | 124 | 8.8 s |
+
+Every completed response had the form `<reasoning>\n</think>\n\nThe best answer is: <label>`: the chat template opens the think block, so only the closing tag appears, and the parser set the reasoning aside with either strategy. With the zero-shot preset's 64 max tokens, the model was cut off mid-reasoning and the run failed explicitly, which is why the UI switches a Thinking selection to chain of thought and warns below 1,024 max tokens. On the fall window the Thinking model answered `fall` where the Instruct model answered `lie_down`. Two clips are not accuracy evidence.

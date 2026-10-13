@@ -102,6 +102,17 @@ def test_parsed_answer_separates_reasoning_from_the_answer():
     assert parse_answer(" walk\n") == ParsedAnswer("walk", None, "walk")
 
 
+def test_think_tags_are_set_aside_with_either_strategy():
+    # Thinking models reason before every answer, even when the prompt does not ask.
+    response = "Standing, then sitting? No: the person drops.\n</think>\n\nThe best answer is: fall"
+    for chain_of_thought in (False, True):
+        parsed = parse_answer(response, chain_of_thought=chain_of_thought)
+        assert parsed.label == "fall"
+        assert parsed.reasoning == "Standing, then sitting? No: the person drops."
+    with pytest.raises(PredictionParseError, match="not closed"):
+        parse_activity_label("<think>Standing, then")
+
+
 def test_only_the_best_answer_marker_counts_without_chain_of_thought():
     # Research applies the other markers only to chain-of-thought content.
     with pytest.raises(PredictionParseError):

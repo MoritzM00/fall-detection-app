@@ -6,7 +6,10 @@ from fall_detection.serving_status import ServingStatus
 
 def main() -> None:
     """Shut down and print the resulting container count."""
-    snapshot = ServingStatus(Settings.from_env()).shutdown()
+    settings = Settings.from_env()
+    # Shutdown stops the whole Modal app, so every model's requests must be finished.
+    first, *others = (ServingStatus(settings, endpoint=item) for item in settings.endpoints)
+    snapshot = first.shutdown(tuple(others))
     print(f"GPU shut down; Modal reports {snapshot['containers']} container(s) (may lag briefly)")
 
 

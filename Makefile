@@ -31,7 +31,7 @@ demo:
 	.venv/bin/python -m scripts.demo
 
 gpu-warm:
-	$(GPU_ENV) UV_CACHE_DIR=.uv-cache uv run python scripts/warm_gpu.py
+	$(GPU_ENV) UV_CACHE_DIR=.uv-cache uv run python scripts/warm_gpu.py $(if $(MODEL),--model $(MODEL))
 
 gpu-stop:
 	$(GPU_ENV) UV_CACHE_DIR=.uv-cache uv run python scripts/stop_gpu.py

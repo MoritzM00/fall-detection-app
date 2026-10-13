@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { createLiveSession, createSession } from "./api";
 import type { Capabilities, ExperimentSettings, MonitoringSession } from "./api";
 import { SourceSelection } from "./SourceSelection";
-import { ExperimentSettingsGroup, SamplingSettingsGroup, baselineExperiment, experimentFromPreset, experimentValid, matchingPreset, presetFor, sameExperiment } from "./ExperimentControls";
+import { ExperimentSettingsGroup, SamplingSettingsGroup } from "./ExperimentControls";
+import { baselineExperiment, experimentFromPreset, experimentValid, matchingPreset, presetFor, presetTitle, sameExperiment } from "./experimentState";
 import { BASELINE_SAMPLING, SettingsDialog, SettingsGroup, SettingsSummary, isBaselineSampling, settingsSummary } from "./SettingsDialog";
 import { useSourceSelection } from "./useSourceSelection";
 import { useLiveCapture } from "./useLiveCapture";
@@ -112,7 +113,7 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
   const older = () => void poll.older();
   const cameraPreview = capture.stream ? <video className="live-feed" ref={capture.attach} autoPlay muted playsInline /> : <div className="replay-placeholder"><span>Camera off</span><button className="button primary" disabled={busy} onClick={() => void capture.connect()}>Connect camera</button></div>;
   const cameraStatus = !capture.stream ? "off" : session?.state !== "running" ? "connected" : capture.stats.fps === null ? "starting" : `${capture.stats.fps.toFixed(1)} fps · upload lag ${capture.stats.lagSeconds?.toFixed(1) ?? "–"} s`;
-  const summary = <SettingsSummary preset={preset && baseline ? preset.title : null} invalid={!session && settings !== null && !configValid} detail={summarySettings ? settingsSummary(...summarySampling, summarySettings.chain_of_thought) : "Backend settings unavailable"} disabled={!settings} onEdit={() => setSettingsOpen(true)} />;
+  const summary = <SettingsSummary preset={preset && baseline && capabilities && summarySettings ? presetTitle(capabilities, preset, summarySettings.model) : null} invalid={!session && settings !== null && !configValid} detail={summarySettings ? settingsSummary(...summarySampling, summarySettings.chain_of_thought) : "Backend settings unavailable"} disabled={!settings} onEdit={() => setSettingsOpen(true)} />;
   return <section className="monitoring" aria-label="Monitoring" data-generation={session?.generation}>
     <h1 className="sr-only">Monitoring</h1>
     <div className="session-bar">
