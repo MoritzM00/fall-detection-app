@@ -60,4 +60,3 @@ Same L4 deployment and vLLM 0.30.0 with `--max-model-len 8192`; cold start to he
 | same | same | `research-zeroshot-cot-v2` | `lying` | 1,791 / 234 | 15.5 s |
 
 Every response parsed. The chain-of-thought answers reasoned in numbered steps with no think tags and ended with `The best answer is: <label>`; the text before it was saved as the reasoning. One reasoning listed all 16 labels, so reading the label from the whole response, not the answer, would have been ambiguous. A chain-of-thought request at 16 × 672 was rejected with 422 before reaching the GPU (estimate 8,406 tokens). Two clips are not accuracy evidence: the fall the model read as a deliberate `lie_down` is the kind of case research parity work in #41 has to measure.
-
