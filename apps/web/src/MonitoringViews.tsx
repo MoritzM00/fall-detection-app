@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type { AnalysisJob, MonitoringSession, MonitoringWindow } from "./api";
-import { inPaintOrder } from "./coverage";
+import { inFlight, inPaintOrder, resultAge } from "./coverage";
 import type { Tone } from "./coverage";
 import { formatTokenUsage } from "./tokens";
 import { ModelAnswer } from "./SubmittedResult";
@@ -99,6 +99,7 @@ export function Result({ job }: { job: AnalysisJob }) {
     {prediction && <>
       <strong className={`result-label ${isAlert(job) ? "alert" : ""}`}>{prediction.label.replaceAll("_", " ")}</strong>
       <p className="simulation-note">Describes the first part of the input window.</p>
+      <ModelFrames job={job} />
       <dl>
         <div><dt>Input interval</dt><dd>{seconds(job.start_seconds)}–{seconds(job.end_seconds)}</dd></div>
         <div><dt>Completed</dt><dd title={prediction.completed_at}>{completed && !Number.isNaN(completed.getTime()) ? completed.toLocaleTimeString() : prediction.completed_at}</dd></div>
@@ -115,4 +116,47 @@ export function Result({ job }: { job: AnalysisJob }) {
       <p className="raw-response">Job {job.id} · configuration {job.configuration_id} · prepared input {job.prepared_input_id ?? "synthetic"}</p><pre className="saved-prompt">{JSON.stringify(job.configuration, null, 2)}</pre>
     </details>
   </div>;
+}
+
+/** A few of the exact JPEGs sent to the model, so the label is read against what it saw rather than the live view. */
+function ModelFrames({ job }: { job: AnalysisJob }) {
+  const times = job.prediction?.sampled_timestamps ?? [];
+  if (!job.prepared_input_id || times.length === 0) return null;
+  const shown = Math.min(4, times.length);
+  const picks = [...new Set(Array.from({ length: shown }, (_, i) => shown === 1 ? 0 : Math.round(i * (times.length - 1) / (shown - 1))))];
+  return <div className="model-frames" role="group" aria-label="Frames the model saw">{picks.map(index => <figure key={index}>
+    {/* A pruned input has no frames left; hide it rather than show a broken image. */}
+    <img src={`/api/prepared-inputs/${job.prepared_input_id}/frames/${index}`} alt={`Model input at ${seconds(times[index])}`} loading="lazy" onError={event => { event.currentTarget.parentElement!.hidden = true; }} />
+    <figcaption>{times[index].toFixed(1)} s</figcaption>
+  </figure>)}</div>;
+}
+
+type LatestProps = { job: AnalysisJob | null; session: MonitoringSession; position: number; live: boolean; windows: MonitoringWindow[]; jobs: Record<string, AnalysisJob> };
+/**
+ * The newest result, dated against the live edge or playback clock, plus the windows still
+ * being processed. Every result describes the past: the window has to fill before it is
+ * sent, and inference takes time on top of that.
+ */
+export function LatestResult({ job, session, position, live, windows, jobs }: LatestProps) {
+  // A paused or ended live session's watermark no longer tracks the present.
+  const captureStopped = live && session.state !== "running";
+  const freshness = job?.prediction ? resultAge(job.end_seconds, position, { expirationSeconds: session.expiration, strideSeconds: session.stride, processingSeconds: job.prediction.total_duration_ms / 1000 }, captureStopped) : null;
+  const age = (value: number) => live ? `${value.toFixed(1)} s ago` : `${value.toFixed(1)} s behind playback`;
+  const windowSeconds = (session.configuration.preprocessing.frames - 1) / session.configuration.preprocessing.fps;
+  const pending = inFlight(windows, jobs, session);
+  return <section className="monitor-latest">
+    <h2>Last analyzed</h2>
+    {job?.prediction && freshness ? <div className="latest-result" data-outdated={freshness.outdated || undefined}>
+      <p className="result-age" role="status">{captureStopped
+        ? `No current result · capture stopped; this input ended ${freshness.age.toFixed(1)} s before it`
+        : freshness.outdated
+        ? `No current result · this one ended ${age(freshness.age)}`
+        : `Input ended ${age(freshness.age)}`}</p>
+      <Result job={job} />
+    </div> : <div className="result-placeholder"><p>No prediction yet.</p></div>}
+    {(pending.length > 0 || session.state === "running") && <ul className="pipeline" aria-label="Windows in progress">
+      {pending.map(({ window, stage }) => <li key={window.id}><i data-tone="active" aria-hidden="true" /><span className="history-range">{window.start_seconds.toFixed(1)}–{window.end_seconds.toFixed(1)} s</span><span>{stage}</span></li>)}
+      {session.state === "running" && <li><i data-tone="idle" aria-hidden="true" /><span>Filling the next {windowSeconds.toFixed(1)} s window</span></li>}
+    </ul>}
+  </section>;
 }

@@ -35,9 +35,18 @@ test("live camera frames produce predictions and pause or reload leaves an expli
   // The mock labels every window "fall"; it must come from captured frames, with their timestamps.
   await expect(panel.locator(".result-label").first()).toHaveText("fall", { timeout: 30_000 });
   await expect(panel.getByText(/Actual frame timestamps/).first()).toContainText(" s");
+  // The result is dated against the live edge, shows the frames the model saw and the work still in flight.
+  const latest = panel.locator(".monitor-latest");
+  await expect(latest.getByText(/^(Input ended|No current result · this one ended) \d+\.\d s ago$/)).toBeVisible();
+  const seen = latest.getByRole("group", { name: "Frames the model saw" }).getByRole("img");
+  await expect(seen.first()).toBeVisible();
+  await expect.poll(() => seen.first().evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0);
+  await expect(latest.getByRole("list", { name: "Windows in progress" })).toContainText("Filling the next 1.5 s window");
 
   await panel.getByRole("button", { name: "Pause", exact: true }).click();
   await expect(panel.getByText(/System: paused/)).toBeVisible();
+  // A paused live session has no current result, however recent the last one was.
+  await expect(latest.getByText(/^No current result · capture stopped; this input ended \d+\.\d s before it$/)).toBeVisible();
   await page.reload();
   await expect(panel.getByText(/System: paused/)).toBeVisible();
   await expect(panel.getByText("Camera: off")).toBeVisible();
