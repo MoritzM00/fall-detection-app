@@ -13,7 +13,8 @@ from fall_detection.models import (
     check_context_window,
     estimate_request_tokens,
 )
-from fall_detection.prediction import THESIS_BASELINE_PROMPT, InferenceClient
+from fall_detection.prediction import InferenceClient
+from fall_detection.prompts import ZERO_SHOT
 from fall_detection.repository import Repository
 
 DEPLOYED_MAX_MODEL_LEN = 5120  # deploy/modal_vllm.py --max-model-len
@@ -45,8 +46,8 @@ def test_estimate_counts_odd_frames_small_crops_prompt_bytes_and_answer_budget()
         (32, 448, 32, True),
         (32, 576, 32, False),
         (32, 672, 32, False),
-        (16, 448, 2985, True),  # largest answer budget at the baseline (docs)
-        (16, 448, 2986, False),
+        (16, 448, 2660, True),  # largest answer budget for the zero-shot preset (docs)
+        (16, 448, 2661, False),
         (16, 448, 4096, False),
         (2, 224, 4096, True),  # the static 4096 cap still fits the smallest window
     ],
@@ -55,9 +56,7 @@ def test_deployed_context_window_accepts_known_fits_and_rejects_overflows(
     frames, size, max_tokens, fits
 ):
     def check():
-        check_context_window(
-            frames, size, THESIS_BASELINE_PROMPT, max_tokens, DEPLOYED_MAX_MODEL_LEN
-        )
+        check_context_window(frames, size, ZERO_SHOT.prompt, max_tokens, DEPLOYED_MAX_MODEL_LEN)
 
     if fits:
         check()
@@ -67,7 +66,7 @@ def test_deployed_context_window_accepts_known_fits_and_rejects_overflows(
 
 
 def test_unset_context_window_skips_the_check():
-    check_context_window(32, 672, THESIS_BASELINE_PROMPT, 4096, None)
+    check_context_window(32, 672, ZERO_SHOT.prompt, 4096, None)
 
 
 def test_max_model_len_setting_is_read_from_environment(monkeypatch):

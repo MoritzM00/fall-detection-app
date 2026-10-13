@@ -2,7 +2,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 import apps.mock_inference.main as mock_server
-from fall_detection.prediction import THESIS_BASELINE_PROMPT, build_inference_payload
+from fall_detection.prediction import build_inference_payload
+from fall_detection.prompts import ZERO_SHOT
 
 
 @pytest.fixture(autouse=True)
@@ -22,7 +23,7 @@ def test_mock_implements_used_chat_completion_contract(monkeypatch) -> None:
     payload = build_inference_payload(
         mock_server.MANIFEST.model,
         "data:video/mp4;base64,ZmFsbC1kZXRlY3Rpb24tc3ludGhldGljLWNvcnJpZG9yLXYx",
-        THESIS_BASELINE_PROMPT,
+        ZERO_SHOT.prompt,
     )
 
     response = client.post("/v1/chat/completions", json=payload)

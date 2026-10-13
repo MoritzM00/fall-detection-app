@@ -1,7 +1,7 @@
 import math
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from fall_detection.prediction import ActivityLabel
 
@@ -65,10 +65,29 @@ def check_context_window(
 
 
 class GenerationConfiguration(BaseModel):
-    """Validated generation parameters saved with one run."""
+    """Validated generation parameters saved with one run.
+
+    ``None`` means the request omitted the value and the server applied its own default;
+    runs saved before these fields existed read back as ``None``. Frozen because presets
+    share one instance across requests.
+    """
+
+    model_config = ConfigDict(frozen=True)
 
     temperature: float = Field(ge=0, le=2, allow_inf_nan=False)
     max_tokens: int = Field(ge=1, le=4096)
+    top_p: float | None = Field(default=None, gt=0, le=1, allow_inf_nan=False)
+    # -1 disables top-k filtering, as in vLLM and the research sampling configs.
+    top_k: int | None = Field(default=None, ge=-1, le=1000)
+    seed: int | None = Field(default=None, ge=0, le=2**31 - 1)
+
+    @field_validator("top_k")
+    @classmethod
+    def validate_top_k(cls, value: int | None) -> int | None:
+        """Reject 0, which vLLM versions disagree on; -1 is the explicit way to disable."""
+        if value == 0:
+            raise ValueError("top_k must be -1 (disabled) or at least 1")
+        return value
 
 
 class AnalysisJobCreate(BaseModel):
@@ -83,6 +102,9 @@ class AnalysisJobCreate(BaseModel):
     size: int = Field(default=448, ge=224, le=672)
     model: str | None = Field(default=None, min_length=1)
     prompt_text: str | None = Field(default=None, min_length=1, max_length=16000)
+    # Reasoning precedes the final answer line; omitted prompt and generation then
+    # resolve to the chain-of-thought preset.
+    chain_of_thought: bool = False
     generation: GenerationConfiguration | None = None
 
     @field_validator("prompt_text")
@@ -192,6 +214,7 @@ class RunConfiguration(BaseModel):
     model: str = Field(min_length=1)
     prompt_preset: str
     prompt_text: str
+    chain_of_thought: bool = False
     preprocessing: SamplingConfiguration
     generation: GenerationConfiguration
     backend_kind: Literal["mock", "vllm", "unknown"]

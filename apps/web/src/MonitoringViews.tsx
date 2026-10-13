@@ -3,6 +3,7 @@ import type { AnalysisJob, MonitoringSession, MonitoringWindow } from "./api";
 import { inPaintOrder } from "./coverage";
 import type { Tone } from "./coverage";
 import { formatTokenUsage } from "./tokens";
+import { Reasoning } from "./SubmittedResult";
 
 export const seconds = (n: number) => `${n.toFixed(3)} s`;
 const shortId = (value: string | null) => !value ? "unknown" : value.length > 24 ? `${value.slice(0, 24)}…` : value;
@@ -108,6 +109,7 @@ export function Result({ job }: { job: AnalysisJob }) {
         <div><dt>Request · pipeline</dt><dd>{prediction.request_duration_ms.toFixed(0)} ms · {prediction.total_duration_ms.toFixed(0)} ms</dd></div>
         <div><dt>Tokens</dt><dd>{formatTokenUsage(prediction)}</dd></div>
       </dl>}
+      {prediction && job.configuration?.chain_of_thought && <Reasoning raw={prediction.raw_response} />}
       {prediction && <p className="frame-times">Actual frame timestamps: {prediction.sampled_timestamps.map(seconds).join(", ")}</p>}
       {prediction?.backend_kind === "mock" && <p className="simulation-note">Simulated by fixture <span title={prediction.fixture_version ?? undefined}>{shortId(prediction.fixture_version)}</span>. Local timings include the mock's injected delay; they are not GPU throughput measurements.</p>}
       <p className="raw-response">Job {job.id} · configuration {job.configuration_id} · prepared input {job.prepared_input_id ?? "synthetic"}</p><pre className="saved-prompt">{JSON.stringify(job.configuration, null, 2)}</pre>

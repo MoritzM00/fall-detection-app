@@ -10,7 +10,8 @@ import apps.api.main as api
 from apps.api.request_guards import CLIENT_HEADERS
 from apps.api.upload_limit import MULTIPART_OVERHEAD_BYTES
 from fall_detection.config import Settings
-from fall_detection.prediction import PRESET_ID, THESIS_BASELINE_PROMPT, InferenceResponse
+from fall_detection.prediction import InferenceResponse
+from fall_detection.prompts import ZERO_SHOT, ZERO_SHOT_COT
 from fall_detection.repository import Repository
 
 LOCAL_API = "http://127.0.0.1"
@@ -91,9 +92,10 @@ def test_api_experiments_preserve_old_runs_and_drive_worker_payload(
     assert edited["configuration"]["prompt_preset"] == "custom"
     assert edited["configuration"]["prompt_text"] == prompt
     original = client.get(f"/analysis-jobs/{baseline['id']}").json()
-    assert original["configuration"]["prompt_text"] == THESIS_BASELINE_PROMPT
-    assert original["configuration"]["prompt_preset"] == PRESET_ID
-    assert original["configuration"]["generation"] == {"temperature": 0, "max_tokens": 32}
+    assert original["configuration"]["prompt_text"] == ZERO_SHOT.prompt
+    assert original["configuration"]["prompt_preset"] == ZERO_SHOT.id
+    assert original["configuration"]["chain_of_thought"] is False
+    assert original["configuration"]["generation"] == ZERO_SHOT.generation.model_dump()
 
     sent = []
 
@@ -124,6 +126,52 @@ def test_api_experiments_preserve_old_runs_and_drive_worker_payload(
         == baseline_result["prediction"]["sampled_timestamps"]
     )
     assert completed["configuration"] == edited["configuration"]
+
+
+def test_chain_of_thought_runs_use_the_research_preset_and_parse_after_reasoning(
+    client, api_instance, monkeypatch
+):
+    from apps.worker.main import process_next_job
+    from fall_detection.prediction import InferenceClient
+
+    _, repository, data_dir = api_instance
+    presets = client.get("/capabilities").json()["prompt_presets"]
+    assert [preset["id"] for preset in presets] == [ZERO_SHOT.id, ZERO_SHOT_COT.id]
+    assert presets[1]["chain_of_thought"] is True
+    assert presets[1]["generation"] == ZERO_SHOT_COT.generation.model_dump()
+    video = client.post("/videos/sample").json()
+    job = client.post(
+        "/analysis-jobs", json={"video_id": video["id"], "chain_of_thought": True}
+    ).json()
+    assert job["configuration"]["prompt_preset"] == ZERO_SHOT_COT.id
+    assert job["configuration"]["prompt_text"] == ZERO_SHOT_COT.prompt
+    assert job["configuration"]["chain_of_thought"] is True
+    assert job["configuration"]["generation"] == ZERO_SHOT_COT.generation.model_dump()
+    sent = []
+    reasoning = "The person drops abruptly without bracing.\nThe best answer is: fall"
+
+    def complete(_client, payload):
+        sent.append(payload)
+        return InferenceResponse(reasoning, "completion")
+
+    monkeypatch.setattr(InferenceClient, "complete", complete)
+    settings = replace(
+        Settings.from_env(),
+        data_dir=data_dir,
+        database_path=data_dir / "app.sqlite3",
+        backend_kind="mock",
+    )
+    assert process_next_job(settings, repository)
+    assert (sent[0]["temperature"], sent[0]["top_p"], sent[0]["top_k"], sent[0]["seed"]) == (
+        0.5,
+        0.95,
+        20,
+        0,
+    )
+    completed = client.get(f"/analysis-jobs/{job['id']}").json()
+    assert completed["state"] == "succeeded"
+    assert completed["prediction"]["label"] == "fall"
+    assert completed["prediction"]["raw_response"] == reasoning
 
 
 @pytest.mark.parametrize(

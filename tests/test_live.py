@@ -397,7 +397,7 @@ def test_migration_adds_live_schema_to_existing_databases(tmp_path):
     camera = repository.get_video("cam")
     assert camera is not None and camera.source == "live"
     with repository._connect() as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 6
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 7
         old = db.execute("SELECT * FROM monitoring_sessions WHERE id='old'").fetchone()
         assert (old["source_kind"], old["capture_fps"]) == ("recording", None)
 

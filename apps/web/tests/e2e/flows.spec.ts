@@ -78,7 +78,7 @@ test("sample, upload, and dataset sources reset editable sampling through one pa
   await expect(page.getByLabel("Frames", { exact: true })).toHaveValue("16");
   await expect(page.getByLabel("Sampling FPS")).toHaveValue("7.5");
   await expect(page.getByLabel("Crop size")).toHaveValue("448");
-  await expect(page.locator(".settings-summary")).toContainText("Thesis baseline");
+  await expect(page.locator(".settings-summary")).toContainText("Research zero-shot");
   await page.getByRole("button", { name: "Change source" }).click();
   await page.getByRole("button", { name: "Browse dataset" }).click();
   await expect(page.locator("#dataset-video option")).toHaveCount(1);
@@ -134,8 +134,8 @@ test("settings that exceed the served context window block the run until reset",
   });
   await expect(page.locator(".settings-summary")).toContainText("Invalid");
   await expect(page.locator(".analyze-button")).toBeDisabled();
-  await editSettings(page, () => page.getByRole("button", { name: "Reset to thesis baseline" }).click());
-  await expect(page.locator(".settings-summary")).toContainText("Thesis baseline");
+  await editSettings(page, () => page.getByRole("button", { name: "Reset to research defaults" }).click());
+  await expect(page.locator(".settings-summary")).toContainText("Research zero-shot");
   await expect(page.locator(".analyze-button")).toBeEnabled();
 });
 
@@ -247,12 +247,12 @@ test("edited prompt and generation survive submission and reload and compare sav
   expect(edited.prepared_input_id).toBe(baseline.prepared_input_id);
   expect(edited.configuration.prompt_preset).toBe("custom");
   expect(edited.configuration.prompt_text).toBe(prompt);
-  expect(edited.configuration.generation).toEqual({ temperature: 0.6, max_tokens: 80 });
+  expect(edited.configuration.generation).toEqual({ temperature: 0.6, max_tokens: 80, top_p: 0.8, top_k: 20, seed: 0 });
   await editSettings(page, async () => {
-    await page.getByRole("button", { name: "Reset to thesis baseline" }).click();
+    await page.getByRole("button", { name: "Reset to research defaults" }).click();
     await expect(page.getByLabel("Temperature", { exact: true })).toHaveValue("0");
   });
-  await expect(page.locator(".settings-summary")).toContainText("Thesis baseline");
+  await expect(page.locator(".settings-summary")).toContainText("Research zero-shot");
   await expect(page.locator(".result-card .result-label")).toHaveText("fall", { timeout: 20_000 });
   await page.reload();
   await expect(page.locator("#recent-run")).toHaveValue(edited.id);

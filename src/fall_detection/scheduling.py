@@ -386,13 +386,15 @@ class ReplayScheduler:
                     timestamp = self.repository.timestamp()
                     connection.execute(
                         """INSERT INTO configurations
-                        (id,schema_version,model,prompt_preset,prompt_text,preprocessing_json,
-                         generation_json,created_at,backend_kind,fixture_version) VALUES (?,2,?,?,?,?,?,?,?,?)""",
+                        (id,schema_version,model,prompt_preset,prompt_text,chain_of_thought,
+                         preprocessing_json,generation_json,created_at,backend_kind,fixture_version)
+                         VALUES (?,2,?,?,?,?,?,?,?,?,?)""",
                         (
                             configuration_id,
                             config.model,
                             config.prompt_preset,
                             config.prompt_text,
+                            config.chain_of_thought,
                             config.preprocessing.model_dump_json(),
                             config.generation.model_dump_json(),
                             timestamp,

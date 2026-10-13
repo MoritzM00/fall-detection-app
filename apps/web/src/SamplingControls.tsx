@@ -1,4 +1,4 @@
-import { isBaselineSampling } from "./SettingsDialog";
+import { SettingsGroup, isBaselineSampling } from "./SettingsDialog";
 
 type WindowProps = {
   startSeconds: number;
@@ -55,12 +55,11 @@ type SettingsProps = {
   onSizeChange: (size: number) => void;
 };
 
-export function SamplingSettings({
+export function PreprocessingSettings({
   frameCount, fps, size, rangeDuration, busy,
   onFrameCountChange, onFpsChange, onSizeChange,
 }: SettingsProps) {
-  return <section className="settings-section">
-    <h3>Sampling {!isBaselineSampling(frameCount, fps, size) && <small className="experimental">Experimental</small>}</h3>
+  return <SettingsGroup index="01" title="Preprocessing" hint="Which frames are cut from the window, and how." edited={!isBaselineSampling(frameCount, fps, size)}>
     <div className="setting-row"><label htmlFor="frame-count">Frames</label><input id="frame-count" type="number" min="2" max="32" step="1" value={frameCount} disabled={busy} onChange={(event) => {
       const next = event.currentTarget.valueAsNumber;
       if (Number.isInteger(next) && next >= 2 && next <= 32) onFrameCountChange(next);
@@ -71,6 +70,6 @@ export function SamplingSettings({
     }} /></div>
     <div className="setting-row"><label htmlFor="frame-size">Crop size</label><select id="frame-size" value={size} disabled={busy} onChange={(event) => onSizeChange(Number(event.currentTarget.value))}><option value={224}>224 × 224</option><option value={336}>336 × 336</option><option value={448}>448 × 448</option><option value={672}>672 × 672</option></select></div>
     <div className="setting-row"><span>Window length</span><strong>{rangeDuration.toFixed(2)} s</strong></div>
-    <p className="preview-note">Frame count and FPS set the window length. Editing the end time recalculates FPS.</p>
-  </section>;
+    <p className="preview-note">Frame count and FPS set the window length. Editing the end time recalculates FPS. Frames are resized on the short edge, then center-cropped.</p>
+  </SettingsGroup>;
 }

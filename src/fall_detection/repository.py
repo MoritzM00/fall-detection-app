@@ -14,7 +14,8 @@ from fall_detection.models import (
     SamplingConfiguration,
     VideoAsset,
 )
-from fall_detection.prediction import PRESET_ID, THESIS_BASELINE_PROMPT, PipelineResult
+from fall_detection.prediction import PipelineResult
+from fall_detection.prompts import default_preset, preset_id
 from fall_detection.schema import (
     JOB_SELECT,
     configuration_from_row,
@@ -152,7 +153,8 @@ class Repository:
         prepared_input_id: str | None = None,
         preprocessing: dict[str, object] | None = None,
         generation: dict[str, object] | None = None,
-        prompt_text: str = THESIS_BASELINE_PROMPT,
+        prompt_text: str | None = None,
+        chain_of_thought: bool = False,
         backend_kind: str = "mock",
         fixture_version: str | None = "sample-v1",
     ) -> AnalysisJob:
@@ -163,8 +165,13 @@ class Repository:
         sampling = SamplingConfiguration.model_validate(
             preprocessing or {"frames": 16, "fps": 7.5, "resize": 448, "crop": "center"}
         )
-        generation_settings = GenerationConfiguration.model_validate(
-            generation or {"temperature": 0, "max_tokens": 32}
+        preset = default_preset(chain_of_thought)
+        if prompt_text is None:
+            prompt_text = preset.prompt
+        generation_settings = (
+            GenerationConfiguration.model_validate(generation)
+            if generation is not None
+            else preset.generation
         )
         if backend_kind not in {"mock", "vllm"}:
             raise ValueError("Unsupported backend kind")
@@ -176,14 +183,15 @@ class Repository:
                 raise KeyError(video_id)
             connection.execute(
                 """INSERT INTO configurations
-                (id, schema_version, model, prompt_preset, prompt_text,
+                (id, schema_version, model, prompt_preset, prompt_text, chain_of_thought,
                  preprocessing_json, generation_json, created_at, backend_kind, fixture_version)
-                VALUES (?, 2, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                VALUES (?, 2, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     configuration_id,
                     model,
-                    PRESET_ID if prompt_text == THESIS_BASELINE_PROMPT else "custom",
+                    preset_id(prompt_text, chain_of_thought),
                     prompt_text,
+                    chain_of_thought,
                     sampling.model_dump_json(),
                     generation_settings.model_dump_json(),
                     timestamp,

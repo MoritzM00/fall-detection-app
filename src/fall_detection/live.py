@@ -49,6 +49,7 @@ class LiveSessionCreate(BaseModel):
     size: int = Field(default=448, ge=224, le=672)
     model: str | None = Field(default=None, min_length=1)
     prompt_text: str | None = Field(default=None, min_length=1, max_length=16000)
+    chain_of_thought: bool = False
     generation: GenerationConfiguration | None = None
     stride_seconds: float = Field(default=2, gt=0, le=30, allow_inf_nan=False)
     expiration_seconds: float = Field(default=5, gt=0, le=300, allow_inf_nan=False)

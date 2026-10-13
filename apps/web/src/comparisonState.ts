@@ -6,6 +6,11 @@ export function sameWindow(left: AnalysisJob, right: AnalysisJob): boolean {
     && Math.abs(left.end_seconds - right.end_seconds) <= 0.001;
 }
 
+/** A sampling value the request left to the server, as older runs did. */
+function optional(value: number | null | undefined): string {
+  return value == null ? "Server default" : String(value);
+}
+
 export function comparisonRows(left: AnalysisJob, right: AnalysisJob) {
   const fields = (job: AnalysisJob): [string, string][] => {
     const config = job.configuration;
@@ -17,7 +22,11 @@ export function comparisonRows(left: AnalysisJob, right: AnalysisJob) {
       ["Model", config?.model ?? "Unavailable"],
       ["Prompt preset", config?.prompt_preset ?? "Unavailable"],
       ["Prompt", config?.prompt_text ?? "Unavailable"],
+      ["Chain of thought", config ? (config.chain_of_thought ? "Yes" : "No") : "Unavailable"],
       ["Temperature", config ? String(config.generation.temperature) : "Unavailable"],
+      ["Top-p", config ? optional(config.generation.top_p) : "Unavailable"],
+      ["Top-k", config ? optional(config.generation.top_k) : "Unavailable"],
+      ["Seed", config ? optional(config.generation.seed) : "Unavailable"],
       ["Max tokens", config ? String(config.generation.max_tokens) : "Unavailable"],
       ["Frames / FPS / crop", config ? `${config.preprocessing.frames} / ${config.preprocessing.fps} / ${config.preprocessing.resize}px ${config.preprocessing.crop}` : "Unavailable"],
       ["Prepared input", job.prepared_input_id ?? "No saved frame bundle"],
