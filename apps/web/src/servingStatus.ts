@@ -15,6 +15,8 @@ export function describeServing(status: ServingStatus | null): ServingView {
       return { text: `GPU warming up${seconds}`, tone: "busy", title: "Waiting for vLLM to report healthy", canWarm: false, canStop: false };
     case "ready":
       return { text: "GPU ready", tone: "ok", title: `vLLM answered its health check${seconds}.`, canWarm: false, canStop: true };
+    case "stopping":
+      return { text: "GPU stopping", tone: "busy", title: "Containers were told to stop and are shutting down", canWarm: false, canStop: false };
     case "running":
       return { text: "GPU container up", tone: "busy", title: `A container is running (backlog ${status.backlog ?? 0}); it may still be starting.${failed}`, canWarm: true, canStop: true };
     case "idle":

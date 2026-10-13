@@ -211,6 +211,80 @@ def test_shutdown_stops_containers_and_clears_readiness(settings):
     assert snapshot["warmup"]["state"] == "idle"
 
 
+def test_shutdown_reports_stopping_until_the_containers_are_gone(settings, monkeypatch):
+    stats = [ContainerStats(containers=1, backlog=0)]
+
+    def read(_app):
+        if stats[0] is None:
+            raise ConnectionError("Modal API unavailable")
+        return stats[0]
+
+    status = ServingStatus(settings, stats_reader=read, stop=lambda _app: 1, cache_seconds=0)
+    assert status.shutdown()["state"] == "stopping"
+    stats[0] = ContainerStats(containers=0, backlog=0)
+    assert status.snapshot()["state"] == "idle"
+    stats[0] = ContainerStats(containers=1, backlog=0)
+    assert status.snapshot()["state"] == "running"
+
+    status.shutdown()
+    stats[0] = ContainerStats(containers=1, backlog=1)
+    assert status.snapshot()["state"] == "running"
+
+    stats[0] = ContainerStats(containers=1, backlog=0)
+    status.shutdown()
+    stats[0] = None
+    assert status.snapshot()["state"] == "unknown"
+    stats[0] = ContainerStats(containers=1, backlog=0)
+    assert status.snapshot()["state"] == "stopping"
+    later = time.monotonic() + serving_status.STOPPING_GRACE_SECONDS + 1
+    monkeypatch.setattr(serving_status.time, "monotonic", lambda: later)
+    assert status.snapshot()["state"] == "running"
+
+
+def test_shutdown_blocks_warmups_of_every_model_until_the_stop_returns(settings):
+    other_endpoint = replace(settings.endpoints[0], model="other-model")
+    entered, release = threading.Event(), threading.Event()
+    seen = {}
+
+    def stop(_app):
+        entered.set()
+        release.wait(5)
+        return 1
+
+    def stats(_app):
+        return ContainerStats(containers=1, backlog=0)
+
+    current = ServingStatus(settings, stats_reader=stats, stop=stop, cache_seconds=0)
+    other = ServingStatus(
+        settings, stats_reader=stats, warm=lambda _s: 1.0, endpoint=other_endpoint, cache_seconds=0
+    )
+    worker = threading.Thread(target=lambda: seen.update(result=current.shutdown((other,))))
+    worker.start()
+    try:
+        assert entered.wait(5)
+        assert other.snapshot()["state"] == "stopping"
+        with pytest.raises(ValueError, match="shutdown is in progress"):
+            other.start_warmup()
+        with pytest.raises(ShutdownBlockedError, match="already in progress"):
+            other.shutdown((current,))
+    finally:
+        release.set()
+        worker.join(5)
+    assert seen["result"]["state"] == "stopping"
+    other.start_warmup()
+
+
+def test_refused_shutdown_releases_its_claim(settings):
+    status = ServingStatus(
+        settings,
+        stats_reader=lambda _app: ContainerStats(containers=1, backlog=1),
+        warm=lambda _s: 1.0,
+    )
+    with pytest.raises(ShutdownBlockedError, match="in flight"):
+        status.shutdown()
+    assert status.start_warmup()["warmup"]["state"] in {"warming", "ready"}
+
+
 @pytest.mark.parametrize(("running", "backlog"), [(1, 0), (0, 2)])
 def test_shutdown_refuses_while_requests_are_in_flight(settings, running, backlog):
     stopped = []
