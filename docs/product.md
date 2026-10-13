@@ -5,13 +5,13 @@
 - Upload a supported video and inspect duration.
 - Select a sampled analysis window of up to 30 seconds within the clip; changing FPS or frame count remains an experiment within this hard limit.
 - Preview sampled frames and timestamps, including the center crop.
-- Choose the advertised served model, edit temperature/max tokens and prompt text, reset to the baseline prompt/generation settings, and edit sampling settings. The current deployment advertises one model.
-- Show the fully resolved prompt before running. Baseline runs require the fixed answer format; custom prompts also support a single canonical label. Other formats or ambiguous answers fail explicitly. New runs require at least 16 output tokens, a conservative budget rather than a guarantee against truncation.
+- Settings are grouped into preprocessing (frames, FPS, crop), experiment (served model, prompt strategy, exact prompt text) and LLM sampling (temperature, top-p, top-k, seed, max tokens, with an estimate of the context window used). The prompt strategy chooses between the research zero-shot and chain-of-thought presets, each with its research sampling values. Reset restores the research defaults of the chosen strategy. The current deployment advertises one model.
+- Show the fully resolved prompt before running. Preset runs require the fixed answer format; custom prompts also support a single canonical label. Chain-of-thought runs show their reasoning separately and parse only the final line. Other formats or ambiguous answers fail explicitly. New runs require at least 16 output tokens, a conservative budget rather than a guarantee against truncation.
 - Display label, raw response, processing time, status, and configuration snapshot.
 - Rerun with changed settings without overwriting the previous run.
 - Compare saved runs for the same source and time window; highlight configuration differences and report whether prepared-frame identity matches. Recent terminal history is limited to 50 runs.
 
-Editable experiments are allowed, but thesis defaults form a named reproducible preset. Do not present edited prompts or preprocessing as equivalent to the validated baseline.
+Editable experiments are allowed, but the research presets are named and reproducible. Do not present edited prompts, sampling or preprocessing as equivalent to a research preset.
 
 ## Monitoring — proposed, not implemented
 
@@ -19,7 +19,7 @@ Editable experiments are allowed, but thesis defaults form a named reproducible 
 - Show playback, latest timestamped prediction, prediction history, and processing lag.
 - Distinguish queued, processing, failed, skipped, disconnected, and stale states.
 - Highlight `fall` and `fallen` while preserving the other activity labels.
-- Make clear that a prediction refers to an earlier input window and, under the baseline prompt, its first part.
+- Make clear that a prediction refers to an earlier input window and, under the zero-shot preset, its first part.
 - Keep session configuration fixed until the user explicitly starts a new configuration segment.
 
 ## Scope boundaries

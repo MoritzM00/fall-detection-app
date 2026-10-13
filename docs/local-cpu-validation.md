@@ -33,7 +33,7 @@ This establishes local CPU compatibility for the exercised video request and cus
 
 ## Repeat the successful custom-prompt test
 
-From the application repository, create a temporary prompt file:
+From the application repository, create a temporary prompt file. `THESIS_BASELINE_PROMPT` was the paraphrased `thesis-baseline-v1` prompt; it has since been replaced by the research presets in `fall_detection.prompts` and is available in Git history before that change.
 
 ```sh
 .venv/bin/python - <<'PY'
