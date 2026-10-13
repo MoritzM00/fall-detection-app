@@ -214,6 +214,12 @@ def _migrate_monitoring(connection: sqlite3.Connection) -> None:
         connection.execute("ALTER TABLE monitoring_sessions ADD COLUMN capture_fps REAL")
     if "last_frame_at" not in columns:
         connection.execute("ALTER TABLE monitoring_sessions ADD COLUMN last_frame_at TEXT")
+    # Windows tables created before the column existed; their rows are version 1.
+    window_columns = {row[1] for row in connection.execute("PRAGMA table_info(monitoring_windows)")}
+    if "schema_version" not in window_columns:
+        connection.execute(
+            "ALTER TABLE monitoring_windows ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 1"
+        )
     # Client-chosen run ordinal; NULL for runs stored before clients sent one.
     run_columns = {row[1] for row in connection.execute("PRAGMA table_info(live_runs)")}
     if "run_order" not in run_columns:

@@ -415,6 +415,21 @@ def test_migration_adds_run_order_to_existing_live_runs(tmp_path):
         assert row["run_order"] is None
 
 
+def test_migration_adds_schema_version_to_existing_monitoring_windows(live):
+    """Window history stays readable for a database whose windows table lacks the column."""
+    client, settings, repository, _ = live
+    session = create(client)
+    run(client, session["id"], "start")
+    send(client, session["id"], [(i, i * 0.25) for i in range(9)])
+    drain(settings, repository)
+    with repository._connect() as db:
+        db.execute("ALTER TABLE monitoring_windows DROP COLUMN schema_version")
+    repository.initialize()
+    response = client.get(f"/monitoring-sessions/{session['id']}/windows")
+    assert response.status_code == 200
+    assert response.json() and all(row["schema_version"] == 1 for row in response.json())
+
+
 def test_a_gap_inside_one_batch_is_still_explicit(live):
     client, settings, repository, _ = live
     session = create(client)
