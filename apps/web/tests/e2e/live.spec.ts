@@ -45,6 +45,8 @@ test("live camera frames produce predictions and pause or reload leaves an expli
 
   await panel.getByRole("button", { name: "Pause", exact: true }).click();
   await expect(panel.getByText(/System: paused/)).toBeVisible();
+  // A paused live session has no current result, however recent the last one was.
+  await expect(latest.getByText(/^No current result · capture stopped; this input ended \d+\.\d s before it$/)).toBeVisible();
   await page.reload();
   await expect(panel.getByText(/System: paused/)).toBeVisible();
   await expect(panel.getByText("Camera: off")).toBeVisible();

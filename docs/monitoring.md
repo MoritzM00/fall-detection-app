@@ -157,7 +157,9 @@ so the panel dates it: how long ago its window ended relative to the live edge, 
 how far it lies behind playback. When that age exceeds expiration plus stride plus
 the result's own pipeline time (the oldest a result can be while the pipeline keeps
 up), the panel says **No current result** and dims a non-fall label so it cannot read
-as a current all-clear; a fall or fallen label stays prominent. Below it, the panel
+as a current all-clear; a fall or fallen label stays prominent. A live result's age
+adds the wall time since the watermark last moved, so a stalled upload or stale poll
+still ages it, and a paused or ended live session always shows **No current result**. Below it, the panel
 lists windows still in flight (waiting to prepare, preparing, waiting for the model,
 model running) and, while running, the window being filled. A stale poll is marked
 on the System status. The baseline describes the first

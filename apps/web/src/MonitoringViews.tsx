@@ -138,14 +138,18 @@ type LatestProps = { job: AnalysisJob | null; session: MonitoringSession; positi
  * sent, and inference takes time on top of that.
  */
 export function LatestResult({ job, session, position, live, windows, jobs }: LatestProps) {
-  const freshness = job?.prediction ? resultAge(job.end_seconds, position, { expirationSeconds: session.expiration, strideSeconds: session.stride, processingSeconds: job.prediction.total_duration_ms / 1000 }) : null;
+  // A paused or ended live session's watermark no longer tracks the present.
+  const captureStopped = live && session.state !== "running";
+  const freshness = job?.prediction ? resultAge(job.end_seconds, position, { expirationSeconds: session.expiration, strideSeconds: session.stride, processingSeconds: job.prediction.total_duration_ms / 1000 }, captureStopped) : null;
   const age = (value: number) => live ? `${value.toFixed(1)} s ago` : `${value.toFixed(1)} s behind playback`;
   const windowSeconds = (session.configuration.preprocessing.frames - 1) / session.configuration.preprocessing.fps;
   const pending = inFlight(windows, jobs, session);
   return <section className="monitor-latest">
     <h2>Last analyzed</h2>
     {job?.prediction && freshness ? <div className="latest-result" data-outdated={freshness.outdated || undefined}>
-      <p className="result-age" role="status">{freshness.outdated
+      <p className="result-age" role="status">{captureStopped
+        ? `No current result · capture stopped; this input ended ${freshness.age.toFixed(1)} s before it`
+        : freshness.outdated
         ? `No current result · this one ended ${age(freshness.age)}`
         : `Input ended ${age(freshness.age)}`}</p>
       <Result job={job} />

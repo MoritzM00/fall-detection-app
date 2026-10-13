@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createLiveSession, createSession } from "./api";
 import type { Capabilities, ExperimentSettings, MonitoringSession } from "./api";
 import { SourceSelection } from "./SourceSelection";
@@ -108,6 +108,11 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
   const seek = <input aria-label="Seek recording" type="range" min="0" max={duration} step="0.1" value={position} disabled={busy || !session || !connected} onChange={event => commands.seek(Number(event.target.value))} />;
   // Recordings show the media clock; a live session's position is the server watermark.
   const shown = live ? session?.position ?? 0 : position;
+  // The watermark only moves while frames arrive, so a stalled upload or a stale poll would
+  // freeze a live result's age; add the wall time since the watermark last moved.
+  const watermark = useRef({ position: -1, at: 0 });
+  if (live && session && session.position !== watermark.current.position) watermark.current = { position: session.position, at: poll.now };
+  const liveEdge = live && session?.state === "running" ? shown + Math.max(0, poll.now - watermark.current.at) / 1000 : shown;
   const span = live ? { from: Math.max(0, shown - LIVE_SPAN_SECONDS + 10), to: Math.max(shown, LIVE_SPAN_SECONDS - 10) + 10 } : { from: 0, to: duration };
   const partial = windows.length >= 100 && !poll.historyComplete;
   const older = () => void poll.older();
@@ -157,7 +162,7 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
         {id && capture.error && <p className="error-message" role="alert">{capture.error}</p>}
         {error && <p className="error-message" role="alert">{error} <button onClick={() => retry.current ? void send(retry.current.command, true) : poll.refresh()}>Retry connection / command</button></p>}
         {id ? <>
-          {session ? <LatestResult job={latest ?? null} session={session} position={shown} live={live} windows={windows} jobs={jobs} /> : <section className="monitor-latest"><h2>Last analyzed</h2><div className="result-placeholder"><p>No prediction yet.</p></div></section>}
+          {session ? <LatestResult job={latest ?? null} session={session} position={liveEdge} live={live} windows={windows} jobs={jobs} /> : <section className="monitor-latest"><h2>Last analyzed</h2><div className="result-placeholder"><p>No prediction yet.</p></div></section>}
           {summary}
         </> : <>
           {summary}

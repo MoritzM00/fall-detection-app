@@ -21,6 +21,8 @@ test("a result is outdated once it is older than expiration, stride and its own 
   assert.deepEqual(resultAge(10, 19, policy), { age: 9, outdated: true });
   // A position behind the window (a seek back) is not a negative age.
   assert.deepEqual(resultAge(10, 8, policy), { age: 0, outdated: false });
+  // A live session that stopped capturing has no current result, however recent the last one was.
+  assert.deepEqual(resultAge(10, 12, policy, true), { age: 2, outdated: true });
 });
 
 test("in-flight windows follow their job state and ignore other generations and finished work", () => {

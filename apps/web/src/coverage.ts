@@ -12,11 +12,12 @@ export function inPaintOrder<T extends { tone: Tone; start: number }>(items: T[]
  * the playback clock), and whether it is older than a result can be while the pipeline
  * keeps up: a window may still start up to the expiration after it ends, its own
  * processing comes on top, and the next result is due one stride later. Past that the
- * page must not let an old non-fall label read as a current all-clear.
+ * page must not let an old non-fall label read as a current all-clear. Once live capture
+ * has stopped, nothing describes the present, so any result is outdated.
  */
-export function resultAge(endSeconds: number, position: number, policy: { expirationSeconds: number; strideSeconds: number; processingSeconds: number }) {
+export function resultAge(endSeconds: number, position: number, policy: { expirationSeconds: number; strideSeconds: number; processingSeconds: number }, captureStopped = false) {
   const age = Math.max(0, position - endSeconds);
-  return { age, outdated: age > policy.expirationSeconds + policy.strideSeconds + policy.processingSeconds };
+  return { age, outdated: captureStopped || age > policy.expirationSeconds + policy.strideSeconds + policy.processingSeconds };
 }
 
 type WindowLike = { generation: number; segment_id: string; state: string; job_id: string | null; end_seconds: number };
