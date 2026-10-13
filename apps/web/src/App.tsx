@@ -96,7 +96,7 @@ export default function App() {
         ? <span className="serving-badges">{capabilities.models.map((model) => <ServingBadge key={model} model={model} labelled={capabilities.models.length > 1} />)}</span>
         : <span className={`system-state ${capabilities ? "" : "offline"}`} title={capabilities ? "Results come from a mock backend, not a model." : capabilityError ?? undefined}><i /> {capabilities ? "Local simulation" : "Backend unavailable"}</span>}
     </header>
-    {privacyNotice(capabilities) && <p className="privacy-notice" role="note">{privacyNotice(capabilities)}</p>}
+    {privacyNotice(capabilities) && <p className="privacy-notice" role="note" title={capabilities?.inference_host ?? undefined}>{privacyNotice(capabilities)}</p>}
 
     <div hidden={mode !== "clip"} id="top">
     <h1 className="sr-only">Clip analysis</h1>

@@ -7,6 +7,6 @@ export function privacyNotice(capabilities: Pick<Capabilities, "simulated" | "in
   if (!capabilities || capabilities.simulated || !capabilities.inference_host) return null;
   const host = capabilities.inference_host;
   if (LOCAL_HOSTS.has(host)) return null;
-  const transport = capabilities.inference_encrypted ? "encrypted in transit (HTTPS)" : "NOT encrypted in transit";
-  return `Video frames are sent to ${host} for inference: ${transport}, and readable by the hosting provider while they are processed. Only use footage you are allowed to share there.`;
+  const transport = capabilities.inference_encrypted ? "" : " without encryption";
+  return `Video frames are sent${transport} to a remote GPU server, where the hosting provider can see them during analysis. Only use footage you are allowed to share.`;
 }
