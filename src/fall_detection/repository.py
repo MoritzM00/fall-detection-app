@@ -320,8 +320,8 @@ class Repository:
                 """INSERT INTO predictions
                 (id, job_id, label, raw_response, sampled_timestamps_json, backend_kind,
                  model, fixture_version, request_duration_ms, total_duration_ms, completed_at,
-                 prompt_tokens, completion_tokens)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                 prompt_tokens, completion_tokens, reasoning, answer)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     str(uuid4()),
                     job_id,
@@ -336,6 +336,8 @@ class Repository:
                     completed_at,
                     result.prompt_tokens,
                     result.completion_tokens,
+                    result.reasoning,
+                    result.answer,
                 ),
             )
             self._attempt_event(connection, job_id, "succeeded", completed_at)

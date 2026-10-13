@@ -116,7 +116,7 @@ def test_api_experiments_preserve_old_runs_and_drive_worker_payload(
     assert process_next_job(settings, repository)
     assert process_next_job(settings, repository)
     assert sent[1]["model"] == "custom-model"
-    assert sent[1]["messages"][0]["content"][0]["text"] == prompt
+    assert sent[1]["messages"][0]["content"][1]["text"] == prompt
     assert sent[1]["temperature"] == 0.6 and sent[1]["max_tokens"] == 80
     completed = client.get(f"/analysis-jobs/{edited['id']}").json()
     assert completed["prediction"]["label"] == "walk"
@@ -172,6 +172,8 @@ def test_chain_of_thought_runs_use_the_research_preset_and_parse_after_reasoning
     assert completed["state"] == "succeeded"
     assert completed["prediction"]["label"] == "fall"
     assert completed["prediction"]["raw_response"] == reasoning
+    assert completed["prediction"]["reasoning"] == "The person drops abruptly without bracing."
+    assert completed["prediction"]["answer"] == "The best answer is: fall"
 
 
 @pytest.mark.parametrize(

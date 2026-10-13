@@ -195,6 +195,9 @@ class PredictionResult(BaseModel):
     # Server-reported usage; None when the backend did not report it.
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    # What the parser read the label from; None on predictions saved before it was kept.
+    reasoning: str | None = None
+    answer: str | None = None
 
 
 class SamplingConfiguration(BaseModel):

@@ -56,8 +56,9 @@ class PromptPreset:
     generation: GenerationConfiguration
 
 
+# v2: the request sends the video before the prompt text, as research does; v1 sent it after.
 ZERO_SHOT = PromptPreset(
-    id="research-zeroshot-v1",
+    id="research-zeroshot-v2",
     title="Zero-shot",
     description="Answers with one label directly.",
     prompt=build_prompt(clip_overlap_note=True, chain_of_thought=False),
@@ -66,7 +67,7 @@ ZERO_SHOT = PromptPreset(
 )
 
 ZERO_SHOT_COT = PromptPreset(
-    id="research-zeroshot-cot-v1",
+    id="research-zeroshot-cot-v2",
     title="Chain of thought",
     description="Reasons step by step, then gives the label.",
     prompt=build_prompt(clip_overlap_note=False, chain_of_thought=True),

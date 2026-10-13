@@ -6,43 +6,55 @@ from fall_detection.prediction import (
     ACTIVITY_LABELS,
     InferenceClient,
     InferenceServiceError,
+    ParsedAnswer,
     PredictionParseError,
     build_inference_payload,
     parse_activity_label,
+    parse_answer,
     require_encrypted_transport,
     sample_timestamps,
 )
 
 
+@pytest.mark.parametrize("chain_of_thought", [False, True])
 @pytest.mark.parametrize("label", ACTIVITY_LABELS)
-def test_parser_accepts_every_canonical_label(label: str) -> None:
-    assert parse_activity_label(f"The best answer is: {label}") == label
+def test_parser_accepts_every_canonical_label(label: str, chain_of_thought: bool) -> None:
+    for response in (f"The best answer is: {label}", f" \n{label}\n"):
+        assert parse_activity_label(response, chain_of_thought=chain_of_thought) == label
 
 
-@pytest.mark.parametrize("label", ACTIVITY_LABELS)
-def test_custom_parser_accepts_single_canonical_labels_without_relaxing_baseline(label):
-    assert parse_activity_label(f" \n{label}\n", allow_bare_label=True) == label
-    assert parse_activity_label(f"The best answer is: {label}", allow_bare_label=True) == label
-    with pytest.raises(PredictionParseError):
-        parse_activity_label(label)
-
-
-@pytest.mark.parametrize("response", ["unknown", "walk or fall", '{"label":"walk"}', "walk."])
-def test_custom_parser_rejects_ambiguous_or_unsupported_formats(response):
-    with pytest.raises(PredictionParseError):
-        parse_activity_label(response, allow_bare_label=True)
+@pytest.mark.parametrize(
+    ("response", "label"),
+    [
+        # Formatting the research parser tolerates: case, punctuation, markdown, word forms.
+        ("The best answer is: fall.", "fall"),
+        ("**The best answer is: fall**", "fall"),
+        ("the best answer is - Sits Down", "sit_down"),
+        # The research -ing form does not double consonants: "sitting down" reads as sitting.
+        ("The best answer is: sitting down", "sitting"),
+        ("The best answer is: standing up", "stand_up"),
+        ("The best answer is: lie-down", "lie_down"),
+        ("The best answer is: walking. The person keeps a steady pace.", "walk"),
+        ('{"label":"walk"}', "walk"),
+        ("The person is kneeling.", "kneeling"),
+    ],
+)
+def test_parser_reads_the_answer_like_the_research_keyword_parser(response, label):
+    assert parse_activity_label(response) == label
 
 
 @pytest.mark.parametrize(
     "response",
     [
-        "fall",
+        "unknown",
         "The best answer is: unknown",
         "The best answer is: fall or fallen",
+        "walk or fall",
         "The best answer is: ",
+        "",
     ],
 )
-def test_parser_rejects_invalid_output_instead_of_using_other(response: str) -> None:
+def test_parser_fails_instead_of_using_other(response: str) -> None:
     with pytest.raises(PredictionParseError):
         parse_activity_label(response)
 
@@ -54,31 +66,52 @@ def test_parser_rejects_invalid_output_instead_of_using_other(response: str) -> 
         "<think>Sudden downward motion.</think>\n\nThe best answer is: fall\n",
         # Qwen chat templates may open the think tag in the prompt itself.
         "Sudden downward motion, no bracing.\n</think>\nThe best answer is: fall",
-        "The best answer is: fall",
+        "<think>The person is standing, then drops.</think>\nfall",
+        "Downward motion, then stillness.\n\n**Final Answer:** fall",
+        "Downward motion. The answer is fall.",
+        "The best answer is: fall\nOn reflection the person may be sitting.",
     ],
 )
-def test_chain_of_thought_parser_reads_the_final_answer_after_reasoning(response):
+def test_chain_of_thought_parser_reads_the_answer_after_reasoning(response):
     assert parse_activity_label(response, chain_of_thought=True) == "fall"
 
 
 @pytest.mark.parametrize(
     "response",
     [
-        "The best answer is: fall\nOn reflection the person may be sitting.",
         "<think>Sudden downward motion. The best answer is: fall",
         "<think>Reasoning only.</think>",
-        "The person falls. The best answer is: fall",
+        "The person was standing and then sitting.",
         "",
     ],
 )
-def test_chain_of_thought_parser_fails_without_a_final_answer_line(response):
+def test_chain_of_thought_parser_fails_without_one_answer(response):
     with pytest.raises(PredictionParseError):
         parse_activity_label(response, chain_of_thought=True)
 
 
-def test_reasoning_is_rejected_unless_chain_of_thought_was_requested():
+def test_parsed_answer_separates_reasoning_from_the_answer():
+    parsed = parse_answer(
+        "<think>Drops fast.</think>\nNo bracing.\n\nThe best answer is: fall.\n",
+        chain_of_thought=True,
+    )
+    assert parsed == ParsedAnswer("fall", "Drops fast.\n\nNo bracing.", "The best answer is: fall")
+    assert parse_answer("The best answer is: walk") == ParsedAnswer(
+        "walk", None, "The best answer is: walk"
+    )
+    assert parse_answer(" walk\n") == ParsedAnswer("walk", None, "walk")
+
+
+def test_only_the_best_answer_marker_counts_without_chain_of_thought():
+    # Research applies the other markers only to chain-of-thought content.
     with pytest.raises(PredictionParseError):
-        parse_activity_label("Sudden downward motion.\nThe best answer is: fall")
+        parse_activity_label("Not sitting. Final answer: fall")
+    assert parse_activity_label("Not sitting. Final answer: fall", chain_of_thought=True) == "fall"
+
+
+def test_payload_puts_the_video_before_the_prompt():
+    content = build_inference_payload("m", "data:", "p")["messages"][0]["content"]
+    assert [part["type"] for part in content] == ["video_url", "text"]
 
 
 def test_payload_sends_only_the_sampling_values_that_were_set():

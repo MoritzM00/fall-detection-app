@@ -13,7 +13,7 @@ from fall_detection.models import (
     VideoAsset,
 )
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 
 def enable_wal(connection: sqlite3.Connection) -> None:
@@ -82,7 +82,9 @@ def migrate(connection: sqlite3.Connection, timestamp: str) -> None:
             total_duration_ms REAL NOT NULL,
             completed_at TEXT NOT NULL,
             prompt_tokens INTEGER,
-            completion_tokens INTEGER
+            completion_tokens INTEGER,
+            reasoning TEXT,
+            answer TEXT
         )""",
     ):
         connection.execute(statement)
@@ -141,6 +143,10 @@ def migrate(connection: sqlite3.Connection, timestamp: str) -> None:
     for column in ("prompt_tokens", "completion_tokens"):
         if column not in prediction_columns:
             connection.execute(f"ALTER TABLE predictions ADD COLUMN {column} INTEGER")
+    # Older predictions keep only their raw response; the parsed parts were not saved.
+    for column in ("reasoning", "answer"):
+        if column not in prediction_columns:
+            connection.execute(f"ALTER TABLE predictions ADD COLUMN {column} TEXT")
     connection.execute(
         """UPDATE jobs SET state = 'failed', error =
         'Worker interrupted before claim ownership was recorded. Retry this run.',
@@ -220,7 +226,7 @@ JOB_SELECT = """SELECT j.*, c.model AS c_model, c.prompt_preset AS c_prompt_pres
     p.backend_kind AS p_backend_kind, p.model AS p_model, p.fixture_version AS p_fixture_version,
     p.request_duration_ms AS p_request_duration_ms, p.total_duration_ms AS p_total_duration_ms,
     p.completed_at AS p_completed_at, p.prompt_tokens AS p_prompt_tokens,
-    p.completion_tokens AS p_completion_tokens
+    p.completion_tokens AS p_completion_tokens, p.reasoning AS p_reasoning, p.answer AS p_answer
     FROM jobs j LEFT JOIN configurations c ON c.id = j.configuration_id
     LEFT JOIN predictions p ON p.job_id = j.id"""
 
@@ -292,4 +298,6 @@ def prediction_from_row(row: sqlite3.Row, prefix: str = "") -> PredictionResult:
         completed_at=row[f"{prefix}completed_at"],
         prompt_tokens=row[f"{prefix}prompt_tokens"],
         completion_tokens=row[f"{prefix}completion_tokens"],
+        reasoning=row[f"{prefix}reasoning"],
+        answer=row[f"{prefix}answer"],
     )

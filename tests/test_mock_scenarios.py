@@ -154,7 +154,7 @@ def test_prepared_validation(set_manifest, mutation):
     elif mutation in {"fps", "duration"}:
         metadata[mutation] = "invalid"
     else:
-        video = body["messages"][0]["content"][1]["video_url"]
+        video = body["messages"][0]["content"][0]["video_url"]
         if mutation == "bytes":
             video["url"] = "data:video/jpeg;base64,bW9jaw=="
         elif mutation == "png":

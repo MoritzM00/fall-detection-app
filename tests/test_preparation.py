@@ -157,7 +157,7 @@ def test_job_references_prepared_input_and_worker_sends_selected_frames(
 
     monkeypatch.setattr(worker.InferenceClient, "complete", fake_completion)
     assert worker.process_next_job(settings, repository)
-    video_url = sent["messages"][0]["content"][1]["video_url"]["url"]
+    video_url = sent["messages"][0]["content"][0]["video_url"]["url"]
     assert video_url == to_vllm_jpeg_data_url(data_dir, prepared)
     assert sent["media_io_kwargs"]["video"]["fps"] == 5
     assert sent["media_io_kwargs"]["video"]["frames_indices"] == list(range(6))
