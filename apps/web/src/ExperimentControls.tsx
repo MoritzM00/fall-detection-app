@@ -32,10 +32,10 @@ export function ExperimentSettingsGroup({ capabilities, settings, busy, onChange
           onChange={() => onChange(experimentFromPreset(capabilities, preset, settings.model))} />
         <span className="strategy-title">{preset.title}</span>
         <span className="strategy-description">{preset.description}</span>
-        <span className="strategy-meta">temp {preset.generation.temperature} · ≤ {preset.generation.max_tokens.toLocaleString("en-US")} tokens</span>
+        <span className="strategy-meta">temp {preset.generation.temperature}, ≤ {preset.generation.max_tokens.toLocaleString("en-US")} tokens</span>
       </label>)}</div>
     </fieldset>
-    <div className="prompt-label"><label htmlFor={prefix + "-prompt-text"}>Resolved prompt</label><span>{presetPrompt ? presetPrompt.id : `Custom · based on ${strategy.title.toLowerCase()}`}</span></div>
+    <div className="prompt-label"><label htmlFor={prefix + "-prompt-text"}>Resolved prompt</label><span>{presetPrompt ? presetPrompt.id : `Custom (based on ${strategy.title.toLowerCase()})`}</span></div>
     <textarea id={prefix + "-prompt-text"} rows={10} maxLength={16000} spellCheck={false} value={settings.prompt_text} disabled={busy} onChange={(event) => onChange({ ...settings, prompt_text: event.target.value })} />
     <p className="preview-note">{settings.chain_of_thought
       ? <>This exact text follows the frames. The model reasons first; the label is read from its answer after “The best answer is:” or “Final answer:”.</>

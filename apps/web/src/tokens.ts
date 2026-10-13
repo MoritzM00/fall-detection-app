@@ -5,5 +5,5 @@ export function formatTokenUsage(prediction: Pick<Prediction, "prompt_tokens" | 
   const { prompt_tokens: prompt, completion_tokens: completion } = prediction;
   if (prompt == null && completion == null) return "Not reported";
   const count = (value: number | null | undefined) => (value == null ? "?" : value.toLocaleString("en-US"));
-  return `${count(prompt)} prompt · ${count(completion)} completion`;
+  return `${count(prompt)} prompt and ${count(completion)} completion`;
 }

@@ -19,7 +19,7 @@ test("choosing a thinking model turns the unchanged zero-shot preset into chain 
   assert.equal(thinking.chain_of_thought, true);
   assert.equal(thinking.generation.max_tokens, 4096);
   assert.equal(matchingPreset(capabilities, thinking)?.id, "cot");
-  assert.equal(presetTitle(capabilities, matchingPreset(capabilities, thinking)!, thinking.model), "Chain of thought · Thinking");
+  assert.equal(presetTitle(capabilities, matchingPreset(capabilities, thinking)!, thinking.model), "Chain of thought (Thinking)");
   // Edited settings and the way back keep everything but the model.
   const edited = { ...baselineExperiment(capabilities), prompt_text: "Custom." };
   assert.deepEqual(withModel(capabilities, edited, "qwen3-vl-8b-thinking"), { ...edited, model: "qwen3-vl-8b-thinking" });

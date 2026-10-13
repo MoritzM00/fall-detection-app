@@ -105,6 +105,7 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
   const windowSeconds = session ? (session.configuration.preprocessing.frames - 1) / session.configuration.preprocessing.fps : (frames - 1) / fps;
   const stale = !connected || (poll.updated > 0 && poll.now - poll.updated > 3000);
   const systemState = connected ? session?.state ?? "recovering" : "disconnected";
+  const systemNotes = [busy && "updating", session?.recovery_reason, stale && connected && "stale status"].filter(Boolean);
   const seek = <input aria-label="Seek recording" type="range" min="0" max={duration} step="0.1" value={position} disabled={busy || !session || !connected} onChange={event => commands.seek(Number(event.target.value))} />;
   // Recordings show the media clock; a live session's position is the server watermark.
   const shown = live ? session?.position ?? 0 : position;
@@ -117,7 +118,7 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
   const partial = windows.length >= 100 && !poll.historyComplete;
   const older = () => void poll.older();
   const cameraPreview = capture.stream ? <video className="live-feed" ref={capture.attach} autoPlay muted playsInline /> : <div className="replay-placeholder"><span>Camera off</span><button className="button primary" disabled={busy} onClick={() => void capture.connect()}>Connect camera</button></div>;
-  const cameraStatus = !capture.stream ? "off" : session?.state !== "running" ? "connected" : capture.stats.fps === null ? "starting" : `${capture.stats.fps.toFixed(1)} fps · upload lag ${capture.stats.lagSeconds?.toFixed(1) ?? "–"} s`;
+  const cameraStatus = !capture.stream ? "off" : session?.state !== "running" ? "connected" : capture.stats.fps === null ? "starting" : `${capture.stats.fps.toFixed(1)} fps, upload lag ${capture.stats.lagSeconds?.toFixed(1) ?? "–"} s`;
   const summary = <SettingsSummary preset={preset && baseline && capabilities && summarySettings ? presetTitle(capabilities, preset, summarySettings.model) : null} invalid={!session && settings !== null && !configValid} detail={summarySettings ? settingsSummary(...summarySampling, summarySettings.chain_of_thought) : "Backend settings unavailable"} disabled={!settings} onEdit={() => setSettingsOpen(true)} />;
   return <section className="monitoring" aria-label="Monitoring" data-generation={session?.generation}>
     <h1 className="sr-only">Monitoring</h1>
@@ -141,19 +142,19 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
             <p className="preview-note">Frames are captured at {LIVE_CAPTURE_FPS} fps and kept in the local data directory until you delete them. Use test footage of yourself; do not record other people without their consent.</p>
           </>}
         </> : <>
-          <div className="panel-heading"><h2>{video?.filename ?? "Recovering recording…"}</h2><p className="playback-clock">{live ? `Live · ${seconds(shown)} captured` : `Playback ${seconds(Math.min(position, duration))} / ${seconds(duration)}`}</p></div>
+          <div className="panel-heading"><h2>{video?.filename ?? "Recovering recording…"}</h2><p className="playback-clock">{live ? `Live: ${seconds(shown)} captured` : `Playback ${seconds(Math.min(position, duration))} / ${seconds(duration)}`}</p></div>
           <div className="replay-screen">
             {live && cameraPreview}
             {live && capture.stream && session?.state === "running" && <span className="live-indicator">Live</span>}
             {video && video.source !== "synthetic" && video.source !== "live" && <video ref={media} src={`/api/videos/${video.id}/media`} onLoadedMetadata={event => { event.currentTarget.currentTime = current.current?.position ?? 0; }} onEnded={event => { const saved = current.current; void send({ action: "position", position_seconds: saved?.duration ?? event.currentTarget.currentTime }); }} onError={() => { poll.setError("Recording playback unavailable"); void send({ action: "pause" }); }} />}
-            {video?.source === "synthetic" && <div className="replay-placeholder"><strong>{seconds(Math.min(position, duration))}</strong><span>Synthetic recording · simulated playback clock</span></div>}
+            {video?.source === "synthetic" && <div className="replay-placeholder"><strong>{seconds(Math.min(position, duration))}</strong><span>Synthetic recording with a simulated playback clock</span></div>}
           </div>
           {session && <CoverageTimeline windows={windows.filter(window => window.generation === session.generation)} jobs={jobs} from={span.from} to={span.to} position={shown} partial={partial} onLoadOlder={older} seek={live ? null : seek} />}
           <ReplayControls session={session} busy={busy} connected={connected} ended={ended} onBegin={action => void begin(action)} onPause={() => { media.current?.pause(); void send({ action: "pause" }); }} onStop={() => { media.current?.pause(); void send({ action: "stop" }); }} />
           <div className="replay-status">
-            <p role="status" data-tone={stale ? "failed" : toneOf(systemState)}>System: {systemState}{busy ? " · updating" : ""}{session?.recovery_reason ? ` · ${session.recovery_reason}` : ""}{stale && connected ? " · stale status" : ""}</p>
-            <p role="status" data-tone={toneOf(inferenceState)}>Inference: {inferenceState}{newestWindow?.reason ? ` · ${newestWindow.reason}` : ""}</p>
-            {live && <p data-tone={!capture.stream ? "failed" : session?.state === "running" ? "done" : "idle"}>Camera: {cameraStatus}{capture.stats.queued > captureFps ? ` · ${capture.stats.queued} frames queued` : ""}</p>}
+            <p role="status" data-tone={stale ? "failed" : toneOf(systemState)}>System: {systemState}{systemNotes.length > 0 ? ` (${systemNotes.join(", ")})` : ""}</p>
+            <p role="status" data-tone={toneOf(inferenceState)}>Inference: {inferenceState}{newestWindow?.reason ? ` (${newestWindow.reason})` : ""}</p>
+            {live && <p data-tone={!capture.stream ? "failed" : session?.state === "running" ? "done" : "idle"}>Camera: {cameraStatus}{capture.stats.queued > captureFps ? ` (${capture.stats.queued} frames queued)` : ""}</p>}
           </div>
           {session && <History windows={windows} jobs={jobs} session={session} more={partial} onLoadOlder={older} />}
         </>}
@@ -195,8 +196,11 @@ export function MonitoringReplay({ capabilities }: { capabilities: Capabilities 
       {settings && !settingsValid && <p className="error-message" role="alert">Use 2–32 frames, a sampling FPS above 0 and up to {maxFps}, a window of at most 30 s, a nonblank prompt, temperature from 0 to 2, top-p above 0 and up to 1, top-k of −1 or 1–1000, a non-negative integer seed, and an integer token limit from {minTokens} to {maxTokens}.</p>}
       {session && <section className="settings-section">
         <h3>Running segment</h3>
-        <div className="setting-row"><span>Generation · segment</span><strong>{session.generation} · {session.segment_id.slice(0, 8)}</strong></div>
-        <div className="setting-row"><span>Window · stride · expiration</span><strong>{windowSeconds.toFixed(2)} s · {session.stride} s · {session.expiration} s</strong></div>
+        <div className="setting-row"><span>Generation</span><strong>{session.generation}</strong></div>
+        <div className="setting-row"><span>Segment</span><strong>{session.segment_id.slice(0, 8)}</strong></div>
+        <div className="setting-row"><span>Window</span><strong>{windowSeconds.toFixed(2)} s</strong></div>
+        <div className="setting-row"><span>Stride</span><strong>{session.stride} s</strong></div>
+        <div className="setting-row"><span>Expiration</span><strong>{session.expiration} s</strong></div>
         <details className="plain-details"><summary>Saved segment settings</summary><pre className="saved-prompt">{JSON.stringify(session.configuration, null, 2)}</pre></details>
       </section>}
       {capabilities && <ActivityLabels labels={capabilities.labels} />}

@@ -152,7 +152,7 @@ test("monitoring exposes timed failure, coverage gaps, disconnect and restart re
   disconnected = true;
   await expect(panel.getByText(/System: disconnected/)).toBeVisible();
   disconnected = false; session = { ...session, recovery_reason: "process_restart" };
-  await expect(panel.getByText(/System: paused · process_restart/)).toBeVisible();
+  await expect(panel.getByText(/System: paused \(process_restart/)).toBeVisible();
   await panel.getByRole("button", { name: "Restart / retry inference" }).click();
   await expect(panel).toHaveAttribute("data-generation", "1");
   await expect(panel.locator("summary").filter({ hasText: /historical/ }).first()).toBeVisible();

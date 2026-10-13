@@ -38,7 +38,7 @@ export function modelLabel(model: string): string {
 
 /** A preset's title, naming the model when it is not the default one. */
 export function presetTitle(capabilities: Capabilities, preset: PromptPreset, model: string): string {
-  return model === capabilities.models[0] ? preset.title : `${preset.title} · ${modelLabel(model)}`;
+  return model === capabilities.models[0] ? preset.title : `${preset.title} (${modelLabel(model)})`;
 }
 
 export function experimentValid(settings: ExperimentSettings, capabilities: Capabilities | null): boolean {
@@ -58,7 +58,7 @@ export function generationSummary(generation: GenerationSettings): string {
   if (generation.top_k != null) parts.push(`top-k ${generation.top_k === -1 ? "off" : generation.top_k}`);
   if (generation.seed != null) parts.push(`seed ${generation.seed}`);
   parts.push(`max ${generation.max_tokens} tokens`);
-  return parts.join(" · ");
+  return parts.join(", ");
 }
 
 export function isThinkingModel(capabilities: Capabilities, model: string): boolean {
