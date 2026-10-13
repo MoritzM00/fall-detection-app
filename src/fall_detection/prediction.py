@@ -352,19 +352,22 @@ def build_inference_payload(
     prompt: str,
     video_metadata: dict[str, Any] | None = None,
     generation: dict[str, Any] | None = None,
+    video_first: bool = True,
 ) -> dict[str, Any]:
-    """Build the online video request shared by mock and vLLM serving."""
+    """Build the online video request shared by mock and vLLM serving.
+
+    The video precedes the prompt text, as in the research zero-shot conversation, unless a
+    configuration saved before that change asks for its original text-first order.
+    """
     settings = generation or {}
+    video = {"type": "video_url", "video_url": {"url": video_data_url}}
+    text = {"type": "text", "text": prompt}
     payload = {
         "model": model,
         "messages": [
             {
                 "role": "user",
-                # Video before text, as in the research zero-shot conversation.
-                "content": [
-                    {"type": "video_url", "video_url": {"url": video_data_url}},
-                    {"type": "text", "text": prompt},
-                ],
+                "content": [video, text] if video_first else [text, video],
             }
         ],
         "temperature": settings.get("temperature", 0),
@@ -393,6 +396,7 @@ def run_pipeline(
     generation: dict[str, Any] | None = None,
     frame_count: int = 16,
     chain_of_thought: bool = False,
+    video_first: bool = True,
 ) -> PipelineResult:
     """Execute one traceable prediction from selected input to validated label."""
     total_started = perf_counter()
@@ -401,7 +405,9 @@ def run_pipeline(
         if sampled_timestamps is not None
         else sample_timestamps(start_seconds, end_seconds, frame_count)
     )
-    payload = build_inference_payload(model, video_data_url, prompt, video_metadata, generation)
+    payload = build_inference_payload(
+        model, video_data_url, prompt, video_metadata, generation, video_first=video_first
+    )
     request_started = perf_counter()
     response = client.complete(payload)
     request_duration_ms = (perf_counter() - request_started) * 1000

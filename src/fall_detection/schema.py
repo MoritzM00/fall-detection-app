@@ -137,6 +137,11 @@ def migrate(connection: sqlite3.Connection, timestamp: str) -> None:
         connection.execute(
             "ALTER TABLE configurations ADD COLUMN chain_of_thought INTEGER NOT NULL DEFAULT 0"
         )
+    # Earlier runs sent the prompt text before the video; retries keep that order.
+    if "video_first" not in config_columns:
+        connection.execute(
+            "ALTER TABLE configurations ADD COLUMN video_first INTEGER NOT NULL DEFAULT 0"
+        )
     prediction_columns = {
         row["name"] for row in connection.execute("PRAGMA table_info(predictions)")
     }
@@ -219,6 +224,7 @@ def _migrate_monitoring(connection: sqlite3.Connection) -> None:
 # One read statement returns a job with its configuration snapshot and result.
 JOB_SELECT = """SELECT j.*, c.model AS c_model, c.prompt_preset AS c_prompt_preset,
     c.prompt_text AS c_prompt_text, c.chain_of_thought AS c_chain_of_thought,
+    c.video_first AS c_video_first,
     c.preprocessing_json AS c_preprocessing_json,
     c.generation_json AS c_generation_json, c.backend_kind AS c_backend_kind,
     c.fixture_version AS c_fixture_version, p.id AS p_id, p.label AS p_label,
@@ -276,6 +282,7 @@ def configuration_from_row(row: sqlite3.Row, prefix: str = "") -> RunConfigurati
         prompt_preset=row[f"{prefix}prompt_preset"],
         prompt_text=row[f"{prefix}prompt_text"],
         chain_of_thought=bool(row[f"{prefix}chain_of_thought"]),
+        video_first=bool(row[f"{prefix}video_first"]),
         preprocessing=SamplingConfiguration.model_validate(preprocessing),
         generation=GenerationConfiguration.model_validate_json(row[f"{prefix}generation_json"]),
         backend_kind=row[f"{prefix}backend_kind"],

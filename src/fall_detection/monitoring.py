@@ -152,6 +152,7 @@ class Monitoring(ReplayScheduler):
             prompt_preset=preset_id(prompt, request.chain_of_thought),
             prompt_text=prompt,
             chain_of_thought=request.chain_of_thought,
+            video_first=True,
             preprocessing=SamplingConfiguration(
                 frames=request.frame_count, fps=request.fps, resize=request.size
             ),

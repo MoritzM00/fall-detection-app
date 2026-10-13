@@ -148,6 +148,7 @@ def process_next_job(settings: Settings, repository: Repository) -> bool:
             generation=config.generation.model_dump(),
             frame_count=config.preprocessing.frames,
             chain_of_thought=config.chain_of_thought,
+            video_first=config.video_first,
         )
         accepted = save_result(
             lambda: repository.complete_job(

@@ -109,9 +109,11 @@ def test_only_the_best_answer_marker_counts_without_chain_of_thought():
     assert parse_activity_label("Not sitting. Final answer: fall", chain_of_thought=True) == "fall"
 
 
-def test_payload_puts_the_video_before_the_prompt():
+def test_payload_puts_the_video_before_the_prompt_unless_saved_otherwise():
     content = build_inference_payload("m", "data:", "p")["messages"][0]["content"]
     assert [part["type"] for part in content] == ["video_url", "text"]
+    legacy = build_inference_payload("m", "data:", "p", video_first=False)
+    assert [part["type"] for part in legacy["messages"][0]["content"]] == ["text", "video_url"]
 
 
 def test_payload_sends_only_the_sampling_values_that_were_set():

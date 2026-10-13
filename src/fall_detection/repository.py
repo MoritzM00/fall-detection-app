@@ -184,8 +184,9 @@ class Repository:
             connection.execute(
                 """INSERT INTO configurations
                 (id, schema_version, model, prompt_preset, prompt_text, chain_of_thought,
-                 preprocessing_json, generation_json, created_at, backend_kind, fixture_version)
-                VALUES (?, 2, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                 video_first, preprocessing_json, generation_json, created_at, backend_kind,
+                 fixture_version)
+                VALUES (?, 2, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)""",
                 (
                     configuration_id,
                     model,

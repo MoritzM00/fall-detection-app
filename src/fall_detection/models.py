@@ -218,6 +218,9 @@ class RunConfiguration(BaseModel):
     prompt_preset: str
     prompt_text: str
     chain_of_thought: bool = False
+    # Request content order: the video before the prompt text, as in research. False for
+    # configurations saved before 2026-10-13, which sent the text first and still do.
+    video_first: bool = False
     preprocessing: SamplingConfiguration
     generation: GenerationConfiguration
     backend_kind: Literal["mock", "vllm", "unknown"]

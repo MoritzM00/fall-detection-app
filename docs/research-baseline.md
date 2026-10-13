@@ -32,7 +32,7 @@ Inspected on 2026-10-13. `src/fall_detection/prompts.py` copies the component te
 
 Both research sampling configs also set presence and frequency penalty 0 and repetition penalty 1.0. These are neutral values, so the app does not send them.
 
-The app sends the video before the prompt text, as the research zero-shot turn does (`conversation.py`). The `-v1` preset IDs sent the text first.
+The app sends the video before the prompt text, as the research zero-shot turn does (`conversation.py`). Configurations saved before this change, including the `-v1` preset IDs, record `video_first: false` and keep sending the text first.
 
 Known differences that remain unverified:
 

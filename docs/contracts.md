@@ -49,7 +49,7 @@ Preview generation may itself become asynchronous. Media playback should support
 
 ## Model boundary
 
-Worker sends the selected served-model name and generation settings to vLLM with one user message whose content is the video, then the prompt text, in the order of the research zero-shot conversation. Preset IDs moved from `-v1` to `-v2` with this order; `-v1` runs sent the text first. The response envelope is JSON.
+Worker sends the selected served-model name and generation settings to vLLM with one user message whose content is the video, then the prompt text, in the order of the research zero-shot conversation. Each configuration records this as `video_first` (column added by schema migration 8). Configurations saved earlier read back `false` and keep sending the text first, including retries and monitoring segments created before the change, so a run's saved identity always matches what was sent. Preset IDs moved from `-v1` to `-v2` with the new order. The response envelope is JSON.
 
 The label is read the way the research parsers (`falldet` `KeywordOutputParser` and `CoTOutputParser`) read it, except that the app never guesses:
 
